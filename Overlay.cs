@@ -16,6 +16,7 @@ internal sealed class Overlay : Form
     internal bool InteractionSuspended { get; set; }
     internal event Action? SettingsRequested;
     private long hoverStarted, lastInside;
+    private long lastSettingsRequest = -1000;
     internal bool HoverHighlighted { get; private set; }
     internal bool DetailsVisible => details.Visible;
     internal Rectangle DetailsBounds => details.Bounds;
@@ -56,7 +57,21 @@ internal sealed class Overlay : Form
         hoverTimer.Start();
         MouseDown += (_, e) => { EnsureAboveTaskbar(); if (e.Button == MouseButtons.Left) { dragging = true; Capture = true; dragStart = Cursor.Position; locationStart = Location; } };
         MouseMove += (_, _) => { if (dragging) Location = new(locationStart.X + Cursor.Position.X - dragStart.X, locationStart.Y); };
-        MouseUp += (_, _) => { dragging = false; Capture = false; Location = new(Math.Clamp(Left, screen.Bounds.Left, Math.Max(screen.Bounds.Left, screen.Bounds.Right - Width)), Top); EnsureAboveTaskbar(); };
+        MouseUp += (_, e) =>
+        {
+            dragging = false; Capture = false;
+            Location = new(Math.Clamp(Left, screen.Bounds.Left, Math.Max(screen.Bounds.Left, screen.Bounds.Right - Width)), Top);
+            EnsureAboveTaskbar();
+            if (e.Button == MouseButtons.Right) RequestSettings();
+        };
+    }
+    private void RequestSettings()
+    {
+        // Hover suspension must not block reactivating an already open settings window.
+        if (IsDisposed || Environment.TickCount64 - lastSettingsRequest < 200) return;
+        lastSettingsRequest = Environment.TickCount64;
+        details.Hide(); HoverHighlighted = false; RenderSurface();
+        SettingsRequested?.Invoke();
     }
     private void CheckHover()
     {
@@ -97,8 +112,7 @@ internal sealed class Overlay : Form
     {
         if (m.Msg == 0x007B)
         {
-            details.Hide();
-            if (!InteractionSuspended) SettingsRequested?.Invoke();
+            RequestSettings();
             m.Result = IntPtr.Zero; return;
         }
         // WS_EX_NOACTIVATE alone does not cover every mouse activation path.

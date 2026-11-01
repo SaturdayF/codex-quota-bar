@@ -18,7 +18,10 @@ internal static class LayeredSurface
     {
         var image = new Bitmap(Math.Max(1, size.Width), Math.Max(1, size.Height), PixelFormat.Format32bppPArgb);
         using var g = Graphics.FromImage(image);
-        g.Clear(Color.Transparent);
+        // Alpha-zero pixels in a layered window pass mouse input to the taskbar.
+        // A visually imperceptible 1/255-alpha input surface keeps gaps clickable,
+        // including a fast right-click before the hover timer has fired.
+        g.Clear(Color.FromArgb(1, Color.Black));
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
         if (hover)

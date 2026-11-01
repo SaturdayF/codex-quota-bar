@@ -34,8 +34,8 @@ internal static class SelfTests
             using (var idle = LayeredSurface.Paint(new(184, 32), general, "gauges", true, false, true, false))
             using (var hover = LayeredSurface.Paint(new(184, 32), general, "gauges", true, false, true, true))
             {
-                Check(idle.GetPixel(92, 16).A == 0, "idle widget backdrop is fully transparent");
-                Check(hover.GetPixel(92, 16).A is > 0 and < 255 && hover.GetPixel(0, 0).A == 0, "hover backdrop is translucent with transparent rounded corners");
+                Check(idle.GetPixel(92, 16).A == 1, "invisible input surface prevents right-click through transparent gaps");
+                Check(hover.GetPixel(92, 16).A is > 1 and < 255 && hover.GetPixel(0, 0).A <= 1, "hover backdrop is translucent with visually transparent rounded corners");
                 Check(Enumerable.Range(4, 22).Any(x => Enumerable.Range(4, 23).Any(y => hover.GetPixel(x, y).A == 255)), "gauge marks stay opaque on translucent hover background");
             }
             foreach (var dpi in new[] { 96, 120, 144, 192 })
