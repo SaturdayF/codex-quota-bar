@@ -11,7 +11,7 @@ internal sealed class Overlay : Form
     private readonly Func<Point> pointer;
     private readonly bool showLetters;
     private readonly string style;
-    private readonly bool animateReset;
+    private readonly StylePreferences preferences;
     private readonly QuotaAnimation animation = new();
     private readonly System.Windows.Forms.Timer animationTimer = new() { Interval = 16 };
     private bool positioning;
@@ -39,13 +39,13 @@ internal sealed class Overlay : Form
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(Point point, uint flags);
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
 
-    public Overlay(Screen screen, ContextMenuStrip menu, Func<Point>? pointer = null, bool showLetters = true, string style = "gauges", bool animateReset = true)
+    public Overlay(Screen screen, ContextMenuStrip menu, Func<Point>? pointer = null, bool showLetters = true, string style = "gauges", bool animateReset = true, StylePreferences? preferences = null)
     {
         this.screen = screen;
         this.pointer = pointer ?? (() => Cursor.Position);
         this.showLetters = showLetters;
         this.style = WidgetStyles.Normalize(style);
-        this.animateReset = animateReset;
+        this.preferences = preferences is null ? new() { Animate = animateReset } : preferences with { };
         animationTimer.Tick += (_, _) =>
         {
             if (!animation.Running(Environment.TickCount64)) animationTimer.Stop();
@@ -138,7 +138,7 @@ internal sealed class Overlay : Form
     public void UpdateState(DisplayState current)
     {
         animation.Update(current, Environment.TickCount64, DateTimeOffset.UtcNow,
-            animateReset && style == "gauges" && QuotaAnimation.MotionEnabled);
+            preferences.Animate && QuotaAnimation.MotionEnabled);
         if (animation.Running(Environment.TickCount64)) animationTimer.Start();
         state = current;
         if (IsHandleCreated) PositionAtTaskbar(resetHorizontal: false);
@@ -186,7 +186,7 @@ internal sealed class Overlay : Form
         if (IsDisposed || !IsHandleCreated || ClientSize.Width < 1 || ClientSize.Height < 1) return;
         var now = Environment.TickCount64;
         using var image = LayeredSurface.Paint(ClientSize, state.Quotas, style, showLetters, state.Stale, Artwork.LightTheme, HoverHighlighted,
-            animation.Fill(true, state.Quotas.Hour, now), animation.Fill(false, state.Quotas.Week, now));
+            animation.Progress(true, now), animation.Progress(false, now), preferences);
         LayeredSurface.Present(Handle, Location, image);
     }
     protected override void Dispose(bool disposing)

@@ -1,6 +1,6 @@
 namespace CodexQuotaBar;
 
-// First valid data and server-confirmed renewal animate rings; numbers stay actual.
+// First valid data and confirmed renewal provide progress; raw quotas remain actual.
 internal sealed class QuotaAnimation
 {
     [System.Runtime.InteropServices.DllImport("user32.dll")]
@@ -33,9 +33,13 @@ internal sealed class QuotaAnimation
         (after.ResetsAt is null || after.ResetsAt >= reset);
     internal double? Fill(bool hour, QuotaWindow? target, long now)
     {
+        return target is null || Progress(hour, now) is not { } progress ? null : target.Remaining * progress;
+    }
+    internal double? Progress(bool hour, long now)
+    {
         var start = hour ? hourStarted : weekStarted;
-        if (target is null || !Active(start, now)) return null;
+        if (!Active(start, now)) return null;
         var progress = Math.Clamp((now - start) / (double)Duration, 0, 1);
-        return target.Remaining * (1 - Math.Pow(1 - progress, 3));
+        return 1 - Math.Pow(1 - progress, 3);
     }
 }

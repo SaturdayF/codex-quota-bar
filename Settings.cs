@@ -11,6 +11,9 @@ internal sealed class Settings
     public bool ShowDialLetters { get; set; } = true;
     public string WidgetStyle { get; set; } = "gauges";
     public bool AnimateQuotaReset { get; set; } = true;
+    public Dictionary<string, StylePreferences> StyleOptions { get; set; } = [];
+    public StylePreferences ForStyle(string style) => StyleOptions?.GetValueOrDefault(WidgetStyles.Normalize(style))
+        ?? new StylePreferences { Animate = AnimateQuotaReset };
     public static string DataDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexQuotaBar");
     public static string FilePath => Path.Combine(DataDirectory, "settings.json");
     public static Settings Load()
@@ -19,6 +22,7 @@ internal sealed class Settings
         {
             var loaded = JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new();
             loaded.Displays ??= [];
+            loaded.StyleOptions ??= [];
             return loaded;
         }
         catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { return new(); }
@@ -39,6 +43,13 @@ internal sealed class Settings
         // A disconnected selected monitor falls back to the primary, without losing the saved choice.
         return selected.Length == 0 ? all.Where(s => s.Primary) : selected;
     }
+}
+
+internal sealed record StylePreferences
+{
+    public bool ShowRemaining { get; set; } = true;
+    public bool ShowPercent { get; set; } = true;
+    public bool Animate { get; set; } = true;
 }
 
 internal static class Startup

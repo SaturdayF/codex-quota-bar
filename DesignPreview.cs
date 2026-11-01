@@ -5,6 +5,7 @@ internal static class DesignPreview
     internal static void Render(string directory)
     {
         Directory.CreateDirectory(directory);
+        RenderStyles(directory);
         var sample = new Quotas(new(68, DateTimeOffset.UtcNow.AddHours(2)), new(27, DateTimeOffset.UtcNow.AddDays(3)), "plus");
         var state = new DisplayState(sample, DateTimeOffset.UtcNow, null);
         using var normal = new HoverDetails(); using var pro = new HoverDetails();
@@ -54,5 +55,31 @@ internal static class DesignPreview
         settings.DrawToBitmap(settingsImage, new Rectangle(Point.Empty, settings.Size));
         settingsImage.Save(Path.Combine(directory, "settings-preview.png"));
         settings.Hide();
+    }
+    private static void RenderStyles(string directory)
+    {
+        using var board = new Bitmap(1140, 710);
+        using var g = Graphics.FromImage(board); g.Clear(Color.FromArgb(247, 247, 247));
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        using var title = new Font("Microsoft YaHei UI", 17, FontStyle.Bold, GraphicsUnit.Pixel);
+        using var text = new Font("Microsoft YaHei UI", 12, FontStyle.Regular, GraphicsUnit.Pixel);
+        using var ink = new SolidBrush(Color.FromArgb(30, 30, 30));
+        g.DrawString("七种样式 · 全部使用模拟额度 25% / 75%", title, ink, 24, 18);
+        var names = new[] { "余量显示", "完整纯色", "隐藏百分号", "动画中途" };
+        for (var column = 0; column < 4; column++) g.DrawString(names[column], text, ink, 168 + 240 * column, 57);
+        for (var row = 0; row < WidgetStyles.Choices.Length; row++)
+        {
+            var style = WidgetStyles.Choices[row]; var y = 95 + row * 82;
+            g.DrawString(style.Name, text, ink, 24, y + 6);
+            for (var column = 0; column < 4; column++)
+            {
+                var size = WidgetStyles.SizeFor(style.Id, false, 96);
+                using var image = LayeredSurface.Paint(size, new(new(25, null), new(75, null)), style.Id, true, false, true, false,
+                    column == 3 ? .5 : null, column == 3 ? .5 : null, new() { ShowRemaining = column != 1, ShowPercent = column != 2 });
+                g.DrawImageUnscaled(image, 168 + 240 * column, y);
+            }
+        }
+        g.DrawString("纯数字无图形余量开关；其动画为 0 → 真实值。其余样式仅图形参与动画。", text, ink, 24, 680);
+        board.Save(Path.Combine(directory, "style-options-preview.png"));
     }
 }

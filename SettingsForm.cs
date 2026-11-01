@@ -32,6 +32,7 @@ internal sealed class SettingsForm : Form
         ClientSize = new(900, 650); MinimumSize = new(800, 620);
         BackColor = surface; ForeColor = ink;
         var settings = initialSettings ?? Settings.Load();
+        var draftStyles = WidgetStyles.Choices.ToDictionary(c => c.Id, c => settings.ForStyle(c.Id) with { });
         var shell = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
         shell.ColumnStyles.Add(new(SizeType.Absolute, 190)); shell.ColumnStyles.Add(new(SizeType.Percent, 100));
         shell.RowStyles.Add(new(SizeType.Percent, 100));
@@ -73,6 +74,11 @@ internal sealed class SettingsForm : Form
         styles.SelectedIndex = Array.FindIndex(WidgetStyles.Choices, c => c.Id == WidgetStyles.Normalize(settings.WidgetStyle));
         Row(appearance, "任务栏样式", "选择额度的呈现方式。", styles);
         var letters = new SettingsToggle { Checked = settings.ShowDialLetters, AccessibleName = "仪表中间显示 H 和 W" };
+        var remaining = new SettingsToggle { AccessibleName = "在图标上展示余量" };
+        var percent = new SettingsToggle { AccessibleName = "显示百分号" };
+        var animate = new SettingsToggle { AccessibleName = "启动与额度重置动画" };
+        var selectedStyle = WidgetStyles.Choices[styles.SelectedIndex].Id;
+        var loadingStyle = false;
         var preview = new SettingsPreviewPanel { Height = 76, BackColor = sidebar, Margin = new(0, 12, 0, 8) };
         long previewStarted = -1;
         preview.Paint += (_, e) =>
@@ -81,24 +87,44 @@ internal sealed class SettingsForm : Form
             var selected = WidgetStyles.Choices[styles.SelectedIndex].Id;
             var size = WidgetStyles.SizeFor(selected, false, preview.DeviceDpi);
             var progress = previewStarted < 0 ? 1 : Math.Clamp((Environment.TickCount64 - previewStarted) / (double)QuotaAnimation.Duration, 0, 1);
-            var fill = 100 * (1 - Math.Pow(1 - progress, 3));
-            WidgetStyles.Draw(e.Graphics, new RectangleF((preview.Width - size.Width) / 2f, (preview.Height - size.Height) / 2f, size.Width, size.Height), new(new(100, null), new(100, null)), selected, letters.Checked, false, light, fill, fill);
+            var fill = previewStarted < 0 ? (double?)null : 1 - Math.Pow(1 - progress, 3);
+            WidgetStyles.Draw(e.Graphics, new RectangleF((preview.Width - size.Width) / 2f, (preview.Height - size.Height) / 2f, size.Width, size.Height), new(new(68, null), new(27, null)), selected, letters.Checked, false, light, fill, fill, draftStyles[selected]);
         };
         appearance.Controls.Add(preview);
         appearance.Controls.Add(Label("预览使用模拟数据", 8, false, new(0, 0, 0, 18), muted));
         Row(appearance, "仪表中间显示 H 和 W", "H 表示 5 小时额度，W 表示周额度。", letters);
-        var animate = new SettingsToggle { Checked = settings.AnimateQuotaReset, AccessibleName = "启动与额度重置动画" };
-        Row(appearance, "启动与额度重置动画", "首次读取或额度重置后，圆环平滑填充至剩余额度。", animate);
+        Row(appearance, "在图标上展示余量", "关闭后保持完整纯色图形；此选项按样式分别保存。", remaining);
+        Row(appearance, "显示百分号", "关闭后只显示数字，所有样式均可独立设置。", percent);
+        Row(appearance, "启动与额度重置动画", "图形渐满；纯数字从 0 递增至真实剩余额度。", animate);
         var demo = Button("预览重置动画"); demo.AutoSize = true; demo.Margin = new(0, 14, 0, 0);
         demo.Click += (_, _) => { previewStarted = Environment.TickCount64; previewTimer.Start(); preview.Invalidate(); };
         previewTimer.Tick += (_, _) => { preview.Invalidate(); if (Environment.TickCount64 - previewStarted >= QuotaAnimation.Duration) { previewTimer.Stop(); previewStarted = -1; } };
         appearance.Controls.Add(demo);
         void StyleChanged()
         {
-            var gauges = WidgetStyles.Choices[styles.SelectedIndex].Id == "gauges";
-            letters.Enabled = gauges; animate.Enabled = gauges; demo.Enabled = gauges;
+            selectedStyle = WidgetStyles.Choices[styles.SelectedIndex].Id;
+            loadingStyle = true;
+            var options = draftStyles[selectedStyle];
+            remaining.Checked = options.ShowRemaining; percent.Checked = options.ShowPercent; animate.Checked = options.Animate;
+            loadingStyle = false;
+            letters.Enabled = selectedStyle == "gauges";
+            remaining.Enabled = selectedStyle != "plain";
+            demo.Enabled = options.Animate;
+            previewTimer.Stop(); previewStarted = -1;
             preview.Invalidate();
         }
+        void OptionsChanged()
+        {
+            if (loadingStyle) return;
+            var options = draftStyles[selectedStyle];
+            options.ShowRemaining = remaining.Checked; options.ShowPercent = percent.Checked; options.Animate = animate.Checked;
+            demo.Enabled = options.Animate;
+            if (!options.Animate) { previewTimer.Stop(); previewStarted = -1; }
+            preview.Invalidate();
+        }
+        remaining.CheckedChanged += (_, _) => OptionsChanged();
+        percent.CheckedChanged += (_, _) => OptionsChanged();
+        animate.CheckedChanged += (_, _) => OptionsChanged();
         styles.SelectedIndexChanged += (_, _) => StyleChanged();
         letters.CheckedChanged += (_, _) => preview.Invalidate();
         StyleChanged();
@@ -136,7 +162,7 @@ internal sealed class SettingsForm : Form
             {
                 var chosen = modes[display.SelectedIndex];
                 settings.CodexPath = string.IsNullOrWhiteSpace(path.Text) ? null : path.Text.Trim();
-                settings.ShowDialLetters = letters.Checked; settings.AnimateQuotaReset = animate.Checked;
+                settings.ShowDialLetters = letters.Checked; settings.StyleOptions = draftStyles;
                 settings.WidgetStyle = WidgetStyles.Choices[styles.SelectedIndex].Id;
                 settings.DisplayMode = chosen.Mode; settings.Displays = chosen.Id is null ? [] : [chosen.Id];
                 settings.Save(); Startup.Set(startup.Checked); DialogResult = DialogResult.OK; Close();
@@ -171,7 +197,7 @@ internal sealed class SettingsForm : Form
         Text = text, AutoSize = true, Font = new Font(Font.FontFamily, size, bold ? FontStyle.Bold : FontStyle.Regular),
         ForeColor = color ?? ink, Margin = margin, MaximumSize = new(550, 0)
     };
-    private Button Button(string text) => new()
+    private Button Button(string text) => new RoundedSettingsButton()
     {
         Text = text, FlatStyle = FlatStyle.Flat, FlatAppearance = { BorderSize = 0, MouseOverBackColor = sidebar },
         BackColor = sidebar, ForeColor = ink, Height = 34, Width = 112, Cursor = Cursors.Hand, UseVisualStyleBackColor = false
@@ -209,7 +235,7 @@ internal sealed class SettingsToggle : CheckBox
     protected override void OnPaint(PaintEventArgs e)
     {
         e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-        var light = Artwork.LightTheme; var scale = DeviceDpi / 96f;
+        var light = Artwork.LightTheme; var scale = Math.Min(Width / 42f, Height / 26f);
         var rect = new RectangleF(1, (Height - 22 * scale) / 2, Width - 2, 22 * scale);
         using var path = HoverDetails.Round(rect, 11 * scale);
         using var track = new SolidBrush(!Enabled ? Color.Gray : Checked ? (light ? Color.FromArgb(32, 32, 32) : Color.FromArgb(225, 225, 225)) : (light ? Color.FromArgb(201, 201, 201) : Color.FromArgb(86, 86, 86)));

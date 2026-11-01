@@ -15,6 +15,9 @@ internal static class SelfTests
     {
         try
         {
+            var previousContext = SynchronizationContext.Current;
+            try { StyleTests.Run(Check); }
+            finally { SynchronizationContext.SetSynchronizationContext(previousContext); }
             var now = DateTimeOffset.UtcNow;
             var animation = new QuotaAnimation();
             DisplayState Sample(double h, double w, DateTimeOffset reset) => new(new(new(h, reset), new(w, reset), "plus"), now, null);

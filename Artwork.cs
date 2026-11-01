@@ -6,7 +6,7 @@ namespace CodexQuotaBar;
 
 internal static class Artwork
 {
-    public static void Gauge(Graphics g, RectangleF area, QuotaWindow? window, string letter, Color accent, bool showLetter, bool stale, bool light, double? ringRemaining = null)
+    public static void Gauge(Graphics g, RectangleF area, QuotaWindow? window, string letter, Color accent, bool showLetter, bool stale, bool light, double? ringRemaining = null, bool showPercent = true)
     {
         var scale = area.Height / 30f;
         var size = 23 * scale;
@@ -32,7 +32,7 @@ internal static class Artwork
             g.FillPath(text, glyph);
         }
         var numberArea = new RectangleF(circle.Right + 6 * scale, area.Y, Math.Max(1, area.Right - circle.Right - 6 * scale), area.Height);
-        var label = Quotas.Label(window);
+        var label = Quotas.Label(window, showPercent);
         var fontSize = 17 * scale;
         while (fontSize > 10 * scale)
         {

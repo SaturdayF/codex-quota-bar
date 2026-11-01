@@ -6,6 +6,7 @@ artifacts/
 *.log
 settings.json
 codex_temp/
+codex_tmp/
 harness_tmp/
 auth.json
 .env

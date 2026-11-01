@@ -37,7 +37,7 @@ internal sealed record Quotas(QuotaWindow? Hour, QuotaWindow? Week, string? Plan
         return new(hour, week, plan);
     }
 
-    public static string Label(QuotaWindow? w) => w is null ? "--" : Math.Floor(w.Remaining).ToString("0", CultureInfo.InvariantCulture) + "%";
+    public static string Label(QuotaWindow? w, bool showPercent = true) => w is null ? "--" : Math.Floor(w.Remaining).ToString("0", CultureInfo.InvariantCulture) + (showPercent ? "%" : "");
 }
 
 internal sealed record DisplayState(Quotas Quotas, DateTimeOffset? Updated, string? Error)
