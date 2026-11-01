@@ -10,8 +10,11 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>assets/app.ico</ApplicationIcon>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="src/**/*.cs" />
+    <Compile Include="tests/**/*.cs" />
     <EmbeddedResource Include="assets/app.ico" LogicalName="CodexQuotaBar.AppIcon" />
   </ItemGroup>
 </Project>

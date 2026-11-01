@@ -40,6 +40,15 @@ Python 素材工具需要 Pillow，仅开发时使用。图标脚本依赖 Windo
 
 ## 打包
 
+用户随后要求将可选目录的安装器与小 ZIP 也归入 0.1.0。此补充使用 `v0.1.0-installer.1` 源码标签，原 `v0.1.0` 标签不动；经明确授权替换该 Release 的大 ZIP 下载。
+
+```powershell
+./scripts/build-installer.ps1 -InnoCompiler C:/path/to/ISCC.exe
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/Installer.Tests.ps1
+```
+
+详见 [安装器说明](../installer/README.md)。完整 EXE 使用 LZMA2 压缩，包含私有运行时；Portable ZIP 不含运行时，需全局 .NET 10 Desktop Runtime x64。两者不是相同依赖条件下的等价包。
+
 ```powershell
 ./scripts/publish.ps1
 # 已有离线 SDK/运行时的备选方式
@@ -56,3 +65,5 @@ python scripts/package-release.py
 ## 发布规则
 
 完成测试和素材检查后提交，创建带说明的 `vX.Y.Z` Git 标签；发布完整 ZIP 及其 SHA-256 校验文件。`v0.1.0` 封存后不得重写标签、修改该版本发布包。后续修改先将版本提升至 `0.2.0`，并在 CHANGELOG 中记录，不直接修补旧版本。
+
+本次 0.1.0 安装器补充及下载替换是用户明确要求的例外。未来其他功能仍按 0.2.0 推进。

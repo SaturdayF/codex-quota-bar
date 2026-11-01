@@ -38,4 +38,8 @@ foreach ($image in @('settings-preview.png','style-options-preview.png','color-p
     Copy-Item -LiteralPath (Join-Path $projectRoot "docs/$image") -Destination (Join-Path $outputDirectory 'docs') -Force
 }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/DEVELOPMENT.md') -Destination (Join-Path $outputDirectory 'docs') -Force
+if (Test-Path -LiteralPath (Join-Path $projectRoot 'installer/README.md')) {
+    New-Item -ItemType Directory -Path (Join-Path $outputDirectory 'installer') -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'installer/README.md') -Destination (Join-Path $outputDirectory 'installer') -Force
+}
 Write-Host "Output: $outputDirectory"

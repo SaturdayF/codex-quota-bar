@@ -4,6 +4,7 @@ Usage: python scripts/github-release.py v0.1.0 <commit> <zip> <sha256-file>
 The tag must already exist on origin. Does not overwrite a published release.
 """
 import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -14,7 +15,8 @@ ROOT = Path(__file__).resolve().parent.parent
 REPO = "SaturdayF/codex-quota-bar"
 
 def main():
-    tag, commit, *paths = sys.argv[1:]
+    refresh = len(sys.argv) > 1 and sys.argv[1] == "--refresh-existing"
+    tag, commit, *paths = sys.argv[2:] if refresh else sys.argv[1:]
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
     credential = subprocess.run(["git", "-c", f"safe.directory={ROOT.as_posix()}", "credential", "fill"],
         input="protocol=https\nhost=github.com\n\n", text=True, capture_output=True, env=env, check=True)
@@ -29,7 +31,46 @@ def main():
         headers = {"Authorization": "Bearer " + token, "User-Agent": "CodexQuotaBar-Release",
                    "Accept": "application/vnd.github+json", "Content-Type": content_type}
         with request.urlopen(request.Request(url, data=body, headers=headers, method=method), timeout=180) as response:
-            return json.load(response)
+            payload = response.read()
+            return json.loads(payload) if payload else None
+    if refresh:
+        if tag != "v0.1.0-installer.1":
+            raise RuntimeError("Existing-release refresh is authorized only for the 0.1.0 installer supplement")
+        release = api(f"/repos/{REPO}/releases/tags/v0.1.0")
+        allowed = {"CodexQuotaBar-v0.1.0-Setup.exe", "CodexQuotaBar-v0.1.0-Portable-win-x64.zip", "SHA256SUMS-installer.txt"}
+        if {Path(path).name for path in paths} != allowed:
+            raise RuntimeError("Unexpected replacement asset set")
+        expected = {}
+        for item in paths:
+            file = Path(item)
+            digest = "sha256:" + hashlib.sha256(file.read_bytes()).hexdigest()
+            expected[file.name] = digest
+            existing = next((a for a in release["assets"] if a["name"] == file.name), None)
+            if existing:
+                if existing.get("digest") != digest:
+                    raise RuntimeError("Existing new asset differs; review before replacement")
+                continue
+            upload = release["upload_url"].split("{")[0] + "?name=" + parse.quote(file.name)
+            api(upload, file.read_bytes(), "POST", "application/octet-stream")
+            print("Uploaded", file.name, flush=True)
+        confirmed = api(f"/repos/{REPO}/releases/{release['id']}")
+        for name, digest in expected.items():
+            if not any(a["name"] == name and a.get("digest") == digest for a in confirmed["assets"]):
+                raise RuntimeError("New asset digest verification failed; old downloads retained")
+        # User explicitly requested smaller packages to be republished. Only remove the
+        # exact original large ZIP and checksum after all replacement assets are verified.
+        originals = {"CodexQuotaBar-v0.1.0-win-x64.zip": "sha256:c567760f2721b4c01b3239909e3677b9075195d95cf1952cb6e62fbfd690a8aa",
+                     "SHA256SUMS.txt": "sha256:792cda034f0dbeab45270c84ce7dd1f870d960c9518d3b6608095b9436d75f50"}
+        for asset in confirmed["assets"]:
+            if asset["name"] in originals:
+                if asset.get("digest") != originals[asset["name"]]:
+                    raise RuntimeError("Original asset changed unexpectedly; no deletion")
+                api(f"/repos/{REPO}/releases/assets/{asset['id']}", method="DELETE")
+                print("Replaced old asset", asset["name"], flush=True)
+        body = (ROOT / "docs/releases/v0.1.0-installer.md").read_text(encoding="utf-8").replace("{SOURCE_COMMIT}", commit)
+        updated = api(f"/repos/{REPO}/releases/{release['id']}", {"body": body}, "PATCH")
+        print("Updated", updated["html_url"], flush=True)
+        return
     try:
         release = api(f"/repos/{REPO}/releases/tags/{tag}")
         if not release["draft"]:

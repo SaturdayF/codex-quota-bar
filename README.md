@@ -27,6 +27,8 @@
 
 ### 七种外观
 
+此外提供可直接运行、可修改安装路径的离线 EXE 安装器，以及适用于已有运行时电脑的小 Portable ZIP。
+
 图形可以按真实剩余比例显示，也可以保持完整纯色；百分号与动画按样式分别保存。
 
 ![七种样式与选项对照](docs/style-options-preview.png)
@@ -53,15 +55,13 @@
 
 ## 安装与使用
 
-1. 从 [Releases](https://github.com/SaturdayF/codex-quota-bar/releases) 下载 Windows x64 完整包并解压。
-2. 在解压目录运行安装脚本：
-
-   ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
-   ```
+1. 下载 [CodexQuotaBar-v0.1.0-Setup.exe](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.1.0/CodexQuotaBar-v0.1.0-Setup.exe)，双击运行。
+2. 在“选择目标位置”页输入路径或点击“浏览”，选择本工具专用文件夹；可选择登录启动和安装完成后启动。
 3. 打开 ChatGPT 或 Codex 桌面应用，组件会自动显示。右键组件打开设置；也可从开始菜单打开 **Codex Quota Bar Settings**。
 
-安装位于当前用户的 `%LOCALAPPDATA%\Programs\CodexQuotaBar\0.1.0`，不需要管理员权限。安装脚本会注册当前用户登录启动项并启动监听器。也可以直接运行解压目录中的 `CodexQuotaBar.exe` 使用便携版；请保留同目录 DLL、JSON 与 `runtime` 文件夹。
+默认安装到当前用户的 `%LOCALAPPDATA%\Programs\CodexQuotaBar\0.1.0`，也可选择其他磁盘上的目录；目录需当前用户可写。安装 EXE 附带运行时，安装时不联网下载依赖，无需自行安装 .NET。
+
+已有 **.NET 10 Desktop Runtime x64** 的用户可下载 [小体积 Portable ZIP](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.1.0/CodexQuotaBar-v0.1.0-Portable-win-x64.zip)，解压后运行 `CodexQuotaBar.exe`。此 ZIP **不包含运行时**，不能在未安装该依赖的电脑直接运行。普通用户建议选择 EXE。
 
 需要本机 **Codex CLI 已通过 ChatGPT 账户登录**；也可使用桌面应用附带的 CLI。自动识别失败时，在“高级”页指定 `codex.exe`。数据来自 **Codex CLI 的登录账户**：如果 ChatGPT 与 Codex 登录不同账户，看到的额度可能不同。
 
@@ -71,7 +71,9 @@
 
 “高级 → 退出额度工具”只结束运行。安装版可点击 **“高级 → 卸载程序”**，确认后退出并移除本版本的程序、登录启动项、设置快捷方式和本工具设置。不会卸载 ChatGPT / Codex，也不会删除它们的登录数据。
 
-也可以运行安装目录中的脚本：
+EXE 安装版还可从 Windows“已安装的应用”卸载。卸载器按安装记录删除自定义目录中的程序文件，不递归删除用户额外放入的无关文件。
+
+早期使用 PowerShell 安装的版本，仍可以运行原安装目录中的脚本：
 
 ```powershell
 # 卸载程序，保留本工具设置
@@ -99,7 +101,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1 -RemoveS
 
 ## 版本与项目结构
 
-`v0.1.0` 作为本轮功能基线封存，保留 Git 标签、发布包和 SHA-256 校验文件。后续修改进入 `0.2.0`，不覆盖旧标签或替换旧发布包。
+原始 `v0.1.0` 源码标签保留。按用户要求，可选路径的安装 EXE 与小 ZIP 也归入同一 `0.1.0` Release，替换原大 ZIP 下载；安装器补充代码由 `v0.1.0-installer.1` 标签标识。后续其他功能修改进入 `0.2.0`。
 
 ```text
 src/             运行代码、设置界面和渲染
@@ -107,6 +109,7 @@ tests/           状态、图形、交互与卸载检查
 assets/          应用图标及可编辑的矢量源文件
 docs/            实现插图、开发说明和发布记录
 scripts/         安装、卸载、打包及文档素材生成
+installer/       可选目录的原生 EXE 安装器配置
 version.props    版本号来源
 artifacts/       本地发布包（不提交）
 ```

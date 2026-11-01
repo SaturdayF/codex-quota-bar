@@ -21,7 +21,18 @@ internal static class StyleTests
             && !Uninstaller.IsInstalled(Path.Combine(installed, "other.exe"), installed)
             && !Uninstaller.IsInstalled(Path.Combine(installed, "nested", "CodexQuotaBar.exe"), installed)
             && !Uninstaller.IsInstalled(null, installed), "one-click uninstall only recognizes exact installed executable");
-        check(AppBrand.Version == "0.1.0" && AppBrand.Icon.Width > 0, "frozen version and embedded interlocked icon available");
+        check(AppBrand.Version == "0.1.0" && AppBrand.Icon.Width > 0, "release version and embedded interlocked icon available");
+        var nativeFixture = Path.Combine(Path.GetTempPath(), "Quota-Native-Test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(nativeFixture);
+        try
+        {
+            File.WriteAllText(Path.Combine(nativeFixture, "unins000.exe"), "fixture");
+            File.WriteAllLines(Path.Combine(nativeFixture, "installer.ini"), ["[Installation]", "Product=CodexQuotaBar", "Version=" + AppBrand.Version]);
+            check(Uninstaller.NativeInstalled(nativeFixture), "native uninstaller recognized at custom directory");
+            File.WriteAllText(Path.Combine(nativeFixture, "installer.ini"), "Product=OtherApp");
+            check(!Uninstaller.NativeInstalled(nativeFixture), "unrelated uninstaller is not used");
+        }
+        finally { File.Delete(Path.Combine(nativeFixture, "unins000.exe")); File.Delete(Path.Combine(nativeFixture, "installer.ini")); Directory.Delete(nativeFixture); }
         var quitName = @"Local\CodexQuotaBar.Test." + Guid.NewGuid().ToString("N");
         using (var quitSignal = new EventWaitHandle(false, EventResetMode.ManualReset, quitName))
         {
