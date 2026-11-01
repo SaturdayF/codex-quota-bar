@@ -11,6 +11,9 @@ internal sealed class Overlay : Form
     private readonly Func<Point> pointer;
     private readonly bool showLetters;
     private readonly string style;
+    private readonly bool animateReset;
+    private readonly QuotaAnimation animation = new();
+    private readonly System.Windows.Forms.Timer animationTimer = new() { Interval = 16 };
     private bool positioning;
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     internal bool InteractionSuspended { get; set; }
@@ -36,12 +39,18 @@ internal sealed class Overlay : Form
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(Point point, uint flags);
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
 
-    public Overlay(Screen screen, ContextMenuStrip menu, Func<Point>? pointer = null, bool showLetters = true, string style = "gauges")
+    public Overlay(Screen screen, ContextMenuStrip menu, Func<Point>? pointer = null, bool showLetters = true, string style = "gauges", bool animateReset = true)
     {
         this.screen = screen;
         this.pointer = pointer ?? (() => Cursor.Position);
         this.showLetters = showLetters;
         this.style = WidgetStyles.Normalize(style);
+        this.animateReset = animateReset;
+        animationTimer.Tick += (_, _) =>
+        {
+            if (!animation.Running(Environment.TickCount64)) animationTimer.Stop();
+            RenderSurface();
+        };
         Text = "Codex Quota Bar";
         FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true;
         AutoScaleMode = AutoScaleMode.None;
@@ -128,6 +137,9 @@ internal sealed class Overlay : Form
     protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x08000000 | 0x00000080 | 0x00080000; return p; } }
     public void UpdateState(DisplayState current)
     {
+        animation.Update(current, Environment.TickCount64, DateTimeOffset.UtcNow,
+            animateReset && style == "gauges" && QuotaAnimation.MotionEnabled);
+        if (animation.Running(Environment.TickCount64)) animationTimer.Start();
         state = current;
         if (IsHandleCreated) PositionAtTaskbar(resetHorizontal: false);
         details.UpdateState(state);
@@ -172,12 +184,14 @@ internal sealed class Overlay : Form
     private void RenderSurface()
     {
         if (IsDisposed || !IsHandleCreated || ClientSize.Width < 1 || ClientSize.Height < 1) return;
-        using var image = LayeredSurface.Paint(ClientSize, state.Quotas, style, showLetters, state.Stale, Artwork.LightTheme, HoverHighlighted);
+        var now = Environment.TickCount64;
+        using var image = LayeredSurface.Paint(ClientSize, state.Quotas, style, showLetters, state.Stale, Artwork.LightTheme, HoverHighlighted,
+            animation.Fill(true, state.Quotas.Hour, now), animation.Fill(false, state.Quotas.Week, now));
         LayeredSurface.Present(Handle, Location, image);
     }
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { hoverTimer.Dispose(); details.Dispose(); }
+        if (disposing) { hoverTimer.Dispose(); animationTimer.Dispose(); details.Dispose(); }
         base.Dispose(disposing);
     }
 }

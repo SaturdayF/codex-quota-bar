@@ -6,7 +6,7 @@ namespace CodexQuotaBar;
 
 internal static class Artwork
 {
-    public static void Gauge(Graphics g, RectangleF area, QuotaWindow? window, string letter, Color accent, bool showLetter, bool stale, bool light)
+    public static void Gauge(Graphics g, RectangleF area, QuotaWindow? window, string letter, Color accent, bool showLetter, bool stale, bool light, double? ringRemaining = null)
     {
         var scale = area.Height / 30f;
         var size = 23 * scale;
@@ -14,7 +14,8 @@ internal static class Artwork
         using var track = new Pen(light ? Color.FromArgb(182, 192, 204) : Color.FromArgb(87, 99, 117), 2.5f * scale);
         using var ink = new Pen(stale ? Color.Gray : accent, 2.5f * scale);
         g.DrawEllipse(track, circle);
-        if (window is not null && window.Remaining > 0) g.DrawArc(ink, circle, -90, (float)(window.Remaining * 3.6));
+        var fill = ringRemaining ?? window?.Remaining ?? 0;
+        if (window is not null && fill > 0) g.DrawArc(ink, circle, -90, (float)(Math.Clamp(fill, 0, 100) * 3.6));
         using var text = new SolidBrush(stale ? (light ? Color.DimGray : Color.Silver) : light ? Color.FromArgb(30, 38, 48) : Color.FromArgb(240, 244, 250));
         using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
         using var labelFont = new Font("Segoe UI", 10 * scale, FontStyle.Bold, GraphicsUnit.Pixel);

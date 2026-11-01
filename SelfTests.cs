@@ -15,6 +15,34 @@ internal static class SelfTests
     {
         try
         {
+            var now = DateTimeOffset.UtcNow;
+            var animation = new QuotaAnimation();
+            DisplayState Sample(double h, double w, DateTimeOffset reset) => new(new(new(h, reset), new(w, reset), "plus"), now, null);
+            var old = Sample(4, 12, now.AddSeconds(-1));
+            animation.Update(old, 0, now, true);
+            Check(animation.Running(0) && animation.Fill(true, old.Quotas.Hour, 0) == 0, "first successful read animates from an empty ring");
+            var renewed = Sample(100, 97, now.AddHours(5));
+            animation.Update(renewed, 100, now, true);
+            Check(animation.Fill(true, renewed.Quotas.Hour, 100) == 0 && animation.Fill(false, renewed.Quotas.Week, 100) == 0, "both renewed windows start empty");
+            var middle = animation.Fill(true, renewed.Quotas.Hour, 700);
+            Check(middle is > 0 and < 100 && renewed.Quotas.Hour?.Remaining == 100, "ring interpolates without changing true percentage");
+            animation.Update(renewed, 700, now, true);
+            Check(animation.Fill(true, renewed.Quotas.Hour, 700) == middle, "repeated polling does not restart animation");
+            Check(!animation.Running(1300) && animation.Fill(false, renewed.Quotas.Week, 1300) is null, "animation completes and returns to actual remaining value");
+            var single = new QuotaAnimation(); single.Update(old, 0, now, false);
+            var hourOnly = renewed with { Quotas = renewed.Quotas with { Week = old.Quotas.Week } };
+            single.Update(hourOnly, 100, now, true);
+            Check(single.Fill(true, hourOnly.Quotas.Hour, 100) == 0 && single.Fill(false, hourOnly.Quotas.Week, 100) is null, "only renewed window animates");
+            single.Update(hourOnly, 120, now, false);
+            Check(!single.Running(120), "animation preference disables running animation");
+            var future = new QuotaAnimation(); future.Update(Sample(4, 12, now.AddMinutes(2)), 0, now, false); future.Update(renewed, 100, now, true);
+            Check(!future.Running(100), "percentage correction before reset does not animate");
+            var failed = new QuotaAnimation(); failed.Update(old, 0, now, false); failed.Update(renewed with { Error = "offline" }, 100, now, true);
+            Check(!failed.Running(100), "failed read cannot confirm renewal");
+            var waiting = new QuotaAnimation(); waiting.Update(DisplayState.Empty, 0, now, true);
+            Check(!waiting.Running(0), "waiting for startup data does not animate fabricated values");
+            waiting.Update(renewed with { Quotas = renewed.Quotas with { PlanType = "pro", Hour = null } }, 100, now, true);
+            Check(waiting.Fill(true, null, 100) is null && waiting.Fill(false, renewed.Quotas.Week, 100) == 0, "Pro startup animates only available weekly ring");
             var swapped = Parse("""{"rateLimits":{"primary":{"windowDurationMins":10080,"usedPercent":57},"secondary":{"windowDurationMins":300,"usedPercent":28}}}""");
             Check(swapped.Hour?.Remaining == 72 && swapped.Week?.Remaining == 43, "window durations, not primary/secondary positions");
             Check(Parse("""{"rateLimits":{"primary":{"windowDurationMins":300,"usedPercent":101}}}""").Hour?.Remaining == 0, "over-limit clamping");

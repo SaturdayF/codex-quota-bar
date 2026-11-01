@@ -82,7 +82,7 @@ internal sealed class QuotaContext : ApplicationContext
             hourIcon.Visible = weekIcon.Visible = false;
             foreach (var screen in selected)
             {
-                var overlay = new Overlay(screen, menu, showLetters: settings.ShowDialLetters, style: settings.WidgetStyle);
+                var overlay = new Overlay(screen, menu, showLetters: settings.ShowDialLetters, style: settings.WidgetStyle, animateReset: settings.AnimateQuotaReset);
                 // WM_CONTEXTMENU is already delivered on this UI thread.
                 overlay.SettingsRequested += () => QueueSettings(Screen.FromControl(overlay));
                 overlays.Add(overlay);

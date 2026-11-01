@@ -11,7 +11,7 @@ internal static class WidgetStyles
         var cell = Normalize(style) switch { "gauges" => 92, "badges" => 94, "outlined" => 74, "ticks" => 82, _ => 68 };
         return new((int)(cell * (weekOnly ? 1 : 2) * dpi / 96f), (int)(32 * dpi / 96f));
     }
-    internal static void Draw(Graphics g, RectangleF bounds, Quotas quotas, string style, bool letters, bool stale, bool light)
+    internal static void Draw(Graphics g, RectangleF bounds, Quotas quotas, string style, bool letters, bool stale, bool light, double? hourFill = null, double? weekFill = null)
     {
         style = Normalize(style);
         var count = quotas.WeekOnly ? 1 : 2;
@@ -21,7 +21,7 @@ internal static class WidgetStyles
         {
             var (window, letter, accent) = windows[i];
             var area = new RectangleF(bounds.Left + width * i + 4, bounds.Top + 2, width - 8, bounds.Height - 4);
-            if (style == "gauges") { Artwork.Gauge(g, area, window, letter, accent, letters, stale, light); continue; }
+            if (style == "gauges") { Artwork.Gauge(g, area, window, letter, accent, letters, stale, light, letter == "H" ? hourFill : weekFill); continue; }
             if (style == "underline") { Artwork.Draw(g, area, Quotas.Label(window), accent, stale, light); continue; }
             var scale = bounds.Height / 32f;
             using var ink = new SolidBrush(stale ? Color.Gray : light ? Color.FromArgb(32, 32, 32) : Color.FromArgb(245, 245, 245));
