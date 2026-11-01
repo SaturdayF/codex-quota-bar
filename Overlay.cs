@@ -6,7 +6,13 @@ internal sealed class Overlay : Form
 {
     private readonly Screen screen;
     private DisplayState state = DisplayState.Empty;
-    private readonly ToolTip tip = new() { AutoPopDelay = 15000 };
+    private readonly System.Windows.Forms.Timer hoverTimer = new() { Interval = 75 };
+    private readonly HoverDetails details = new();
+    private readonly Func<Point> pointer;
+    private long hoverStarted, lastInside;
+    internal bool HoverHighlighted { get; private set; }
+    internal bool DetailsVisible => details.Visible;
+    internal Rectangle DetailsBounds => details.Bounds;
     private bool dragging;
     private Point dragStart;
     private Point locationStart;
@@ -24,9 +30,10 @@ internal sealed class Overlay : Form
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(Point point, uint flags);
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
 
-    public Overlay(Screen screen, ContextMenuStrip menu)
+    public Overlay(Screen screen, ContextMenuStrip menu, Func<Point>? pointer = null)
     {
         this.screen = screen;
+        this.pointer = pointer ?? (() => Cursor.Position);
         Text = "Codex Quota Bar";
         FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true;
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -40,9 +47,36 @@ internal sealed class Overlay : Form
             }
         };
         ContextMenuStrip = menu;
+        hoverTimer.Tick += (_, _) => CheckHover();
+        hoverTimer.Start();
         MouseDown += (_, e) => { EnsureAboveTaskbar(); if (e.Button == MouseButtons.Left) { dragging = true; Capture = true; dragStart = Cursor.Position; locationStart = Location; } };
         MouseMove += (_, _) => { if (dragging) Location = new(locationStart.X + Cursor.Position.X - dragStart.X, locationStart.Y); };
         MouseUp += (_, _) => { dragging = false; Capture = false; Location = new(Math.Clamp(Left, screen.Bounds.Left, Math.Max(screen.Bounds.Left, screen.Bounds.Right - Width)), Top); EnsureAboveTaskbar(); };
+    }
+    private void CheckHover()
+    {
+        if (!Visible) { details.Hide(); return; }
+        var now = Environment.TickCount64;
+        var point = pointer();
+        var onWidget = Bounds.Contains(point);
+        var inside = onWidget || (details.Visible && details.Bounds.Contains(point));
+        if (inside)
+        {
+            lastInside = now;
+            if (!HoverHighlighted) { HoverHighlighted = true; hoverStarted = now; Invalidate(); }
+            if (!dragging && onWidget && now - hoverStarted >= 225 && !details.Visible)
+            {
+                details.UpdateState(state);
+                details.Place(Bounds, screen.WorkingArea);
+                details.Show();
+                details.Place(Bounds, screen.WorkingArea);
+            }
+        }
+        else if (HoverHighlighted && now - lastInside > 180)
+        {
+            HoverHighlighted = false; details.Hide(); Invalidate();
+        }
+        if (dragging) details.Hide();
     }
     protected override void OnHandleCreated(EventArgs e)
     {
@@ -70,7 +104,7 @@ internal sealed class Overlay : Form
     public void UpdateState(DisplayState current)
     {
         state = current;
-        tip.SetToolTip(this, state.Tooltip(true) + "\n\n" + state.Tooltip(false) + (state.Error is null ? "" : "\n" + state.Error));
+        details.UpdateState(state);
         Invalidate();
         EnsureAboveTaskbar();
     }
@@ -100,10 +134,19 @@ internal sealed class Overlay : Form
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
+        if (HoverHighlighted)
+        {
+            using var border = new Pen(Artwork.LightTheme ? Color.FromArgb(83, 108, 137) : Color.FromArgb(176, 196, 223));
+            e.Graphics.DrawRectangle(border, 0, 0, ClientSize.Width - 1, ClientSize.Height - 1);
+        }
         e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.SingleBitPerPixelGridFit;
         var half = ClientSize.Width / 2f;
         Artwork.Draw(e.Graphics, new(2, 1, half - 4, ClientSize.Height - 2), Quotas.Label(state.Quotas.Hour), Artwork.HourColor, state.Stale, Artwork.LightTheme);
         Artwork.Draw(e.Graphics, new(half + 2, 1, half - 4, ClientSize.Height - 2), Quotas.Label(state.Quotas.Week), Artwork.WeekColor, state.Stale, Artwork.LightTheme);
     }
-    protected override void Dispose(bool disposing) { if (disposing) tip.Dispose(); base.Dispose(disposing); }
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) { hoverTimer.Dispose(); details.Dispose(); }
+        base.Dispose(disposing);
+    }
 }

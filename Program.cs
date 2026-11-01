@@ -9,6 +9,7 @@ internal static class Program
     {
         if (args.Contains("--fake-server")) return SelfTests.FakeServer();
         ApplicationConfiguration.Initialize();
+        if (args.Contains("--hover-test")) return HoverTests.Run();
         if (args.Contains("--self-test")) return SelfTests.Run().GetAwaiter().GetResult();
         if (args.Contains("--probe"))
         {
