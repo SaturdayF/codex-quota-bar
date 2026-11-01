@@ -73,9 +73,10 @@ internal sealed class QuotaContext : ApplicationContext
         if (signature != layout)
         {
             layout = signature; ClearOverlays();
-            var primary = selected.Any(s => s.Primary);
-            hourIcon.Visible = weekIcon.Visible = primary;
-            foreach (var screen in selected.Where(s => !s.Primary))
+            // Windows decides which NotifyIcons go into overflow. Use the same visible
+            // taskbar surface on every selected display rather than depending on pinning.
+            hourIcon.Visible = weekIcon.Visible = false;
+            foreach (var screen in selected)
             {
                 var overlay = new Overlay(screen, menu);
                 overlays.Add(overlay);

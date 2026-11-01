@@ -10,6 +10,13 @@ internal sealed class Overlay : Form
     private bool dragging;
     private Point dragStart;
     private Point locationStart;
+    private readonly Color clearKey = Color.FromArgb(255, 0, 255);
+    private IntPtr foregroundHook;
+    private readonly WinEventCallback foregroundCallback;
+    private delegate void WinEventCallback(IntPtr hook, uint eventId, IntPtr window, int objectId, int childId, uint thread, uint time);
+    [DllImport("user32.dll")] private static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr module, WinEventCallback callback, uint process, uint thread, uint flags);
+    [DllImport("user32.dll")] private static extern bool UnhookWinEvent(IntPtr hook);
+    [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] private static extern IntPtr FindWindow(string className, string? windowName);
     [DllImport("user32.dll")] private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string className, string? title);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out Rect rect);
@@ -24,10 +31,39 @@ internal sealed class Overlay : Form
         FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true;
         AutoScaleMode = AutoScaleMode.Dpi;
         DoubleBuffered = true;
+        BackColor = TransparencyKey = clearKey;
+        foregroundCallback = (_, _, _, _, _, _, _) =>
+        {
+            if (!IsDisposed && IsHandleCreated)
+            {
+                try { BeginInvoke(new Action(EnsureAboveTaskbar)); } catch (InvalidOperationException) { }
+            }
+        };
         ContextMenuStrip = menu;
-        MouseDown += (_, e) => { if (e.Button == MouseButtons.Left) { dragging = true; dragStart = Cursor.Position; locationStart = Location; } };
+        MouseDown += (_, e) => { EnsureAboveTaskbar(); if (e.Button == MouseButtons.Left) { dragging = true; Capture = true; dragStart = Cursor.Position; locationStart = Location; } };
         MouseMove += (_, _) => { if (dragging) Location = new(locationStart.X + Cursor.Position.X - dragStart.X, locationStart.Y); };
-        MouseUp += (_, _) => { dragging = false; Location = new(Math.Clamp(Left, screen.Bounds.Left, Math.Max(screen.Bounds.Left, screen.Bounds.Right - Width)), Top); };
+        MouseUp += (_, _) => { dragging = false; Capture = false; Location = new(Math.Clamp(Left, screen.Bounds.Left, Math.Max(screen.Bounds.Left, screen.Bounds.Right - Width)), Top); EnsureAboveTaskbar(); };
+    }
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        foregroundHook = SetWinEventHook(3, 3, IntPtr.Zero, foregroundCallback, 0, 0, 0);
+    }
+    protected override void OnHandleDestroyed(EventArgs e)
+    {
+        if (foregroundHook != IntPtr.Zero) { UnhookWinEvent(foregroundHook); foregroundHook = IntPtr.Zero; }
+        base.OnHandleDestroyed(e);
+    }
+    protected override void WndProc(ref Message m)
+    {
+        // WS_EX_NOACTIVATE alone does not cover every mouse activation path.
+        if (m.Msg == 0x0021) { m.Result = new IntPtr(3); return; } // WM_MOUSEACTIVATE / MA_NOACTIVATE
+        base.WndProc(ref m);
+    }
+    public void EnsureAboveTaskbar()
+    {
+        if (!IsDisposed && IsHandleCreated && Visible)
+            SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0, 0x0013); // TOPMOST, no move/resize/activation
     }
     protected override bool ShowWithoutActivation => true;
     protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x08000000 | 0x00000080; return p; } }
@@ -36,6 +72,7 @@ internal sealed class Overlay : Form
         state = current;
         tip.SetToolTip(this, state.Tooltip(true) + "\n\n" + state.Tooltip(false) + (state.Error is null ? "" : "\n" + state.Error));
         Invalidate();
+        EnsureAboveTaskbar();
     }
     public void PositionAtTaskbar()
     {
@@ -45,7 +82,8 @@ internal sealed class Overlay : Form
         var taskbar = TaskbarBounds(screen);
         // Reserve space for clock/tray; users may drag horizontally to fit their taskbar.
         Location = new(Math.Max(bounds.Left, bounds.Right - Width - (int)(235 * scale)), taskbar is { } bar ? bar.Top + Math.Max(0, (bar.Height - Height) / 2) : screen.WorkingArea.Bottom - Height - 4);
-        BackColor = Artwork.LightTheme ? Color.FromArgb(234, 237, 242) : Color.FromArgb(36, 39, 46);
+        BackColor = TransparencyKey = clearKey;
+        EnsureAboveTaskbar();
     }
     private static Rectangle? TaskbarBounds(Screen screen)
     {
@@ -60,7 +98,7 @@ internal sealed class Overlay : Form
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+        e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.SingleBitPerPixelGridFit;
         var half = ClientSize.Width / 2f;
         Artwork.Draw(e.Graphics, new(2, 1, half - 4, ClientSize.Height - 2), Quotas.Label(state.Quotas.Hour), Artwork.HourColor, state.Stale, Artwork.LightTheme);
         Artwork.Draw(e.Graphics, new(half + 2, 1, half - 4, ClientSize.Height - 2), Quotas.Label(state.Quotas.Week), Artwork.WeekColor, state.Stale, Artwork.LightTheme);

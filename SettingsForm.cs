@@ -25,7 +25,7 @@ internal sealed class SettingsForm : Form
         foreach (var item in modes) display.Items.Add(item.Label);
         display.SelectedIndex = Math.Max(0, modes.FindIndex(m => m.Mode == settings.DisplayMode && (m.Id is null || settings.Displays.Contains(m.Id))));
         grid.Controls.Add(display, 0, 4); grid.SetColumnSpan(display, 2);
-        var help = new Label { Text = "主屏使用系统托盘；副屏使用自绘双数字，可横向拖动位置。\n系统托盘若收起，可在 Windows 任务栏设置中设为始终显示。", AutoSize = true, Margin = new(0, 14, 0, 8) };
+        var help = new Label { Text = "各屏幕均直接显示透明双数字，可横向拖动位置。\n右键数字查看详情或切换显示屏幕。", AutoSize = true, Margin = new(0, 14, 0, 8) };
         grid.Controls.Add(help, 0, 5); grid.SetColumnSpan(help, 2);
         var save = new Button { Text = "保存", AutoSize = true, Anchor = AnchorStyles.Right };
         save.Click += (_, _) =>
