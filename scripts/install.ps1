@@ -15,9 +15,9 @@ foreach ($file in @('CodexQuotaBar.exe','CodexQuotaBar.dll','CodexQuotaBar.deps.
 }
 if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'runtime')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'runtime') -Destination $destination -Recurse -Force }
 $installedExe = Join-Path $destination 'CodexQuotaBar.exe'
-$runKey = 'HKCU:/Software/Microsoft/Windows/CurrentVersion/Run'
-New-Item -Path $runKey -Force | Out-Null
-New-ItemProperty -Path $runKey -Name CodexQuotaBar -Value ('"' + $installedExe + '"') -PropertyType String -Force | Out-Null
+$runKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Run')
+try { $runKey.SetValue('CodexQuotaBar', ('"' + $installedExe + '"'), [Microsoft.Win32.RegistryValueKind]::String) }
+finally { $runKey.Dispose() }
 $menuDirectory = Join-Path ([Environment]::GetFolderPath('Programs')) 'Codex Quota Bar'
 New-Item -ItemType Directory -Path $menuDirectory -Force | Out-Null
 $shell = New-Object -ComObject WScript.Shell
