@@ -15,7 +15,7 @@ foreach ($folder in @($payload,(Join-Path $root 'artifacts/native-win-x64'))) {
     Copy-Item -LiteralPath (Join-Path $root 'native/USER_GUIDE.md') -Destination (Join-Path $folder 'README.md') -Force
 }
 if (@(Get-ChildItem -LiteralPath $payload -Directory).Count) { throw 'Native payload must not contain runtime directories' }
-& $InnoCompiler '/DAppVersion=0.2.0' ('/DPayloadDir=' + $payload) (Join-Path $root 'installer/setup.iss')
+& $InnoCompiler '/DAppVersion=0.2.1' ('/DPayloadDir=' + $payload) (Join-Path $root 'installer/setup.iss')
 if ($LASTEXITCODE -ne 0) { throw 'Native installer compilation failed' }
 python (Join-Path $PSScriptRoot 'package-native.py')
 if ($LASTEXITCODE -ne 0) { throw 'Native ZIP packaging failed' }

@@ -1,6 +1,6 @@
 # 原生版开发与验证
 
-0.2.0 使用 C++17、Win32 和 Windows 自带 GDI+，无需 .NET。C++ 标准库和线程运行库静态链接。历史 C# 源码仍在 `src/`，不参与原生构建；完整旧构建流程可从 `v0.1.0-installer.1` 标签查阅。
+0.2.0 使用 C++17、Win32 和 Windows 自带 GDI+，无需 .NET。C++ 标准库和线程运行库静态链接。历史 C# 源码已从当前工作树清理；完整旧构建流程可从 `v0.1.0-installer.1` 标签查阅。
 
 ## 构建
 
@@ -23,7 +23,9 @@ Start-Process $app -ArgumentList '--render-ui codex_tmp/native-previews' -Wait
 
 核心检查涵盖额度窗口筛选、异常值、旧配置兼容、未知配置字段保留、动画重置、所有样式在多个 DPI / Pro 布局下的实际渲染像素、真实子进程 JSON-RPC 管道和原生卸载标记。
 
-UI 检查在已连接的显示屏创建真实窗口，以合成消息和注入坐标测试右键设置、首帧居中、悬浮恢复、样式切换、色板、缩放、隐藏与最小化恢复，不移动用户鼠标、不写用户设置、不改启动项。测试用额度为模拟数据。隐藏启动测试覆盖后台启动标志影响首次设置窗口显示的情况。
+UI 检查在已连接的显示屏创建真实窗口，以合成消息和注入坐标测试右键设置、首帧居中、悬浮恢复、样式切换、色板、缩放、隐藏与最小化恢复，不移动用户鼠标、不写用户设置、不改启动项。测试用额度为模拟数据。隐藏启动测试覆盖后台启动标志影响首次设置窗口显示的情况。0.2.1 新增缩短窗口后多位置滚动检查，对比移动后子窗口的实际像素与完整重绘结果，避免仅用 WM_PRINTCLIENT 掩盖残影。设置布局使用无像素复制的定位，并在完成后重绘所有子控件。
+
+设置与详情使用 Windows Codex 系统 UI 字体栈对应的 Segoe UI，中文使用 Microsoft YaHei UI，开启灰度文字抗锯齿。没有复制或分发 Codex 的私有字体资源。
 
 ```powershell
 # 只读实际账户额度；输出属于私人数据，不提交到仓库
@@ -43,11 +45,11 @@ Start-Process $app -ArgumentList '--preview --smoke-ui' -Wait
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/NativeInstaller.Tests.ps1
 ```
 
-生成 `artifacts/releases/v0.2.0` 中的 Setup EXE、Portable ZIP 和 SHA256SUMS.txt。测试真实安装到带中文和空格的独立目录，再执行原生卸载，检查保留无关文件；`/ISOLATEDTEST=1` 禁止修改用户启动项、快捷方式、卸载注册项、设置和既有监听器。绝不对用户真实安装运行卸载测试。
+生成 `artifacts/releases/v0.2.1` 中的 Setup EXE、Portable ZIP 和 SHA256SUMS.txt。测试真实安装到带中文和空格的独立目录，再执行原生卸载，检查保留无关文件；`/ISOLATEDTEST=1` 禁止修改用户启动项、快捷方式、卸载注册项、设置和既有监听器。绝不对用户真实安装运行卸载测试。
 
 0.2.0 默认使用自己的版本目录，不把旧 .NET 目录混入新负载。旧安装目录保留，设置继续使用 `%LOCALAPPDATA%/CodexQuotaBar/settings.json`。安装版设置中的卸载按钮只认同目录、相同产品与版本的 Inno 卸载器，启动前再次确认。卸载旧安装前退出程序；旧卸载器可能清理共用的启动项，可在新版本中重新启用。
 
-旧 `publish.ps1` / `build-installer.ps1` / `package-portable.py` 等保留用于历史 .NET 实现，不用于 0.2.0。不要把新原生目录交给旧发布脚本。
+旧 .NET 发布脚本、测试和未采用的图标方案已清理，历史版本通过 `v0.1.0-installer.1` 标签恢复。`scripts/design-icons.py` 只生成已选定的白底双环图标。
 
 ## 发布与限制
 

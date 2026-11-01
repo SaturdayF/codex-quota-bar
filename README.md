@@ -4,9 +4,9 @@
 
 把 Codex 的 **5 小时额度、周额度**放到 Windows 任务栏上。打开 ChatGPT 或 Codex 桌面应用时自动出现，鼠标悬停查看详情，右键调整外观和行为。
 
-**当前版本：v0.2.0 · C++ 原生版，无需 .NET** · [下载发布包](https://github.com/SaturdayF/codex-quota-bar/releases) · [版本记录](CHANGELOG.md) · [开发说明](docs/DEVELOPMENT.md)
+**当前版本：v0.2.1 · C++ 原生版，无需 .NET** · [下载发布包](https://github.com/SaturdayF/codex-quota-bar/releases) · [版本记录](CHANGELOG.md) · [开发说明](docs/DEVELOPMENT.md)
 
-支持 Windows 10/11 x64。这是独立的 Windows 伴随工具，与 OpenAI 无隶属关系。下文插图由本工具的界面或渲染代码生成；外观与七样式图来自 0.2.0，其余动画、色板和详情图保留自 0.1.0，**额度和重置时间为模拟数据**。
+支持 Windows 10/11 x64。这是独立的 Windows 伴随工具，与 OpenAI 无隶属关系。下文插图由本工具的界面或渲染代码生成；设置与详情图来自 0.2.1，七样式图来自 0.2.0，动画和色板图保留自 0.1.0，**额度和重置时间为模拟数据**。
 
 ## 已实现的功能
 
@@ -49,21 +49,21 @@
 
 ### 悬浮详情
 
-常态保持透明；悬浮时出现 Windows 任务栏按钮式底色，并展开详细额度卡。鼠标可移入卡片继续查看。
+常态保持透明；悬浮时出现 Windows 任务栏按钮式底色，并展开详细额度卡。鼠标可移入卡片继续查看。设置与详情采用 Segoe UI / 微软雅黑 UI 字体，正文与辅助文字分别为 16 / 14 逻辑像素，随屏幕 DPI 缩放。
 
-![普通账户和 Pro 账户的详情示例](docs/dial-ui-preview.png)
+<img src="docs/native-details-preview.png" width="372" alt="两种额度的详情卡（模拟数据）" /> <img src="docs/native-details-pro-preview.png" width="372" alt="Pro 周额度详情卡（模拟数据）" />
 
 ## 安装与使用
 
-1. 下载 [CodexQuotaBar-v0.2.0-Setup.exe](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.2.0/CodexQuotaBar-v0.2.0-Setup.exe)，双击运行。
+1. 下载 [CodexQuotaBar-v0.2.1-Setup.exe](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.2.1/CodexQuotaBar-v0.2.1-Setup.exe)，双击运行。
 2. 在“选择目标位置”页输入路径或点击“浏览”，选择本工具专用文件夹；可选择登录启动和安装完成后启动。
 3. 打开 ChatGPT 或 Codex 桌面应用，组件会自动显示。右键组件打开设置；也可从开始菜单打开 **Codex Quota Bar Settings**。
 
-默认安装到当前用户的 `%LOCALAPPDATA%\Programs\CodexQuotaBar\0.2.0`，也可选择其他磁盘上的目录；目录需当前用户可写。0.2.0 使用 C++、Win32 和系统自带 GDI+，不包含 .NET，也不依赖全局 .NET 或另装 C++ 运行库。
+默认安装到当前用户的 `%LOCALAPPDATA%\Programs\CodexQuotaBar\0.2.1`，也可选择其他磁盘上的目录；目录需当前用户可写。0.2.1 使用 C++、Win32 和系统自带 GDI+，不包含 .NET，也不依赖全局 .NET 或另装 C++ 运行库。
 
-也可下载 [Portable ZIP](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.2.0/CodexQuotaBar-v0.2.0-Portable-win-x64.zip)，解压后直接运行 `CodexQuotaBar.exe`。不需要安装额外运行时；便携版在设置中提供登录启动开关。
+也可下载 [Portable ZIP](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.2.1/CodexQuotaBar-v0.2.1-Portable-win-x64.zip)，解压后直接运行 `CodexQuotaBar.exe`。不需要安装额外运行时；便携版在设置中提供登录启动开关。
 
-0.1.0 安装和原始源码仍保留在历史 Release / 标签中。升级时退出旧监听器再启动新版本；0.2.0 继续读取原有设置，不删除旧安装目录。
+0.1.0 安装和原始源码仍保留在历史 Release / 标签中。升级时退出旧监听器再启动新版本；0.2.1 继续读取原有设置，不删除旧安装目录。
 
 需要本机 **Codex CLI 已通过 ChatGPT 账户登录**；也可使用桌面应用附带的 CLI。自动识别失败时，在“高级”页指定 `codex.exe`。数据来自 **Codex CLI 的登录账户**：如果 ChatGPT 与 Codex 登录不同账户，看到的额度可能不同。
 
@@ -75,16 +75,7 @@
 
 EXE 安装版还可从 Windows“已安装的应用”卸载。卸载器按安装记录删除自定义目录中的程序文件，不递归删除用户额外放入的无关文件。
 
-以下 PowerShell 命令仅适用于历史 0.1.0 脚本安装，不适用于原生便携版：
-
-```powershell
-# 卸载程序，保留本工具设置
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
-# 同时删除本工具设置
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1 -RemoveSettings
-```
-
-便携版的一键卸载按钮不可用：退出后删除解压目录即可。若曾运行安装脚本，应通过安装版入口卸载。
+便携版的一键卸载按钮不可用：退出后删除解压目录即可。历史 0.1.0 的安装和卸载脚本请从对应 Git 标签查阅。
 
 ## 读取方式与隐私
 
@@ -103,18 +94,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1 -RemoveS
 
 ## 版本与项目结构
 
-0.2.0 将运行程序迁移到 C++ 原生实现，保留之前的功能与设置格式。原始 `v0.1.0`、安装器补充 `v0.1.0-installer.1` 和已有下载不变；后续修改使用新版本。
+0.2.0 将运行程序迁移到 C++ 原生实现；0.2.1 修复设置控件重绘，放大设置与详情文字，并清理旧实现文件。历史源码可通过 Git 标签恢复。原始 `v0.1.0`、安装器补充 `v0.1.0-installer.1` 和已有下载不变；后续修改使用新版本。
 
 ```text
 native/          C++ 运行代码、原生设置、绘图与检查
 native/vendor/   固定版本 JSON 头文件及原作者许可
-src/             历史 0.1.0 C# 源码（不参与原生构建）
 tests/           安装与卸载验证脚本
 assets/          应用图标及可编辑的矢量源文件
 docs/            实现插图、开发说明和发布记录
-scripts/         安装、卸载、打包及文档素材生成
+scripts/         原生构建、打包、发布与图标生成
 installer/       可选目录的原生 EXE 安装器配置
-version.props    历史 .NET 构建版本号；原生版本在 native/core.hpp 和资源中
 artifacts/       本地发布包（不提交）
 ```
 

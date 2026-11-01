@@ -4,7 +4,7 @@ from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 payload = ROOT / "artifacts/native-win-x64"
 release = ROOT / "artifacts/releases" / f"v{VERSION}"
 release.mkdir(parents=True, exist_ok=True)

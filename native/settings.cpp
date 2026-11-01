@@ -71,7 +71,7 @@ SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
                               nullptr, GetModuleHandleW(nullptr), this);
     background = CreateSolidBrush(lightTheme() ? RGB(255, 255, 255) : RGB(32, 32, 32));
     sidebar = CreateSolidBrush(lightTheme() ? RGB(247, 247, 247) : RGB(26, 26, 26));
-    font = CreateFontW(-px(13), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+    font = CreateFontW(-px(15), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
     createControls();
     selectPage(0);
@@ -91,7 +91,7 @@ SettingsWindow::~SettingsWindow() {
 HWND SettingsWindow::button(const wchar_t *text, int id, int p) {
     HWND parent = p < 0 ? window : content;
     HWND w =
-        CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, 0, 0, 1, 1,
+        CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | BS_OWNERDRAW, 0, 0, 1, 1,
                         parent, reinterpret_cast<HMENU>(INT_PTR(id)), GetModuleHandleW(nullptr), nullptr);
     SetPropW(w, L"QuotaPage", reinterpret_cast<HANDLE>(INT_PTR(p + 2)));
     SendMessageW(w, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
@@ -106,7 +106,7 @@ void SettingsWindow::createControls() {
     button(L"取消", Cancel, -1);
     auto control = [&](const wchar_t *cls, const wchar_t *text, int id, int p, DWORD style) {
         HWND w = CreateWindowExW(cls == std::wstring(L"EDIT") ? WS_EX_CLIENTEDGE : 0, cls, text,
-                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | style, 0, 0, 1, 1, content,
+                                 WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | style, 0, 0, 1, 1, content,
                                  reinterpret_cast<HMENU>(INT_PTR(id)), GetModuleHandleW(nullptr), nullptr);
         SetPropW(w, L"QuotaPage", reinterpret_cast<HANDLE>(INT_PTR(p + 2)));
         SendMessageW(w, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
@@ -169,6 +169,9 @@ void SettingsWindow::styleChanged() {
         InvalidateRect(GetDlgItem(content, id), nullptr, TRUE);
 }
 void SettingsWindow::layout() {
+    // Moving overlapping child HWNDs with MoveWindow(TRUE) copies stale pixels.
+    // Reposition without copying, then repaint the complete child tree once.
+    SendMessageW(content, WM_SETREDRAW, FALSE, 0);
     RECT r;
     GetClientRect(window, &r);
     int w = r.right, h = r.bottom;
@@ -185,7 +188,8 @@ void SettingsWindow::layout() {
     SetScrollInfo(content, SB_VERT, &si, TRUE);
     auto place = [&](int id, double x, double y, double ww, double hh) {
         HWND ctrl = GetDlgItem(content, id);
-        MoveWindow(ctrl, px(x), px(y - scroll), px(ww), px(hh), TRUE);
+        SetWindowPos(ctrl, nullptr, px(x), px(y - scroll), px(ww), px(hh),
+                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
     };
     int right = contentWidth - 224;
     for (int i = 0; i < 3; ++i)
@@ -210,8 +214,8 @@ void SettingsWindow::layout() {
     place(Refresh, contentWidth - 124, 273, 110, 34);
     place(Exit, contentWidth - 146, 339, 132, 34);
     place(Uninstall, contentWidth - 124, 405, 110, 34);
-    InvalidateRect(window, nullptr, TRUE);
-    InvalidateRect(content, nullptr, TRUE);
+    SendMessageW(content, WM_SETREDRAW, TRUE, 0);
+    RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
 void SettingsWindow::selectPage(int index) {
     page = index;
@@ -238,7 +242,7 @@ void SettingsWindow::reveal(HMONITOR requested) {
         if (font)
             DeleteObject(font);
         font =
-            CreateFontW(-px(13), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+            CreateFontW(-px(15), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                         CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
         for (HWND w : controls)
             SendMessageW(w, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
@@ -275,8 +279,8 @@ void SettingsWindow::draw(HDC dc, bool inner) {
         if (!inner) {
             SolidBrush b(side);
             g.FillRectangle(&b, RectF(0, 0, 196, float(rect.bottom / d)));
-            drawText(g, L"设置", RectF(26, 22, 150, 44), 27, ink, true);
-            drawText(g, L"Codex Quota Bar\n0.2.0", RectF(24, rect.bottom / d - 80, 155, 58), 11, muted);
+            drawUiText(g, L"设置", RectF(26, 22, 150, 44), 27, ink, true);
+            drawUiText(g, L"Codex Quota Bar\n0.2.1", RectF(24, rect.bottom / d - 80, 155, 58), 14, muted);
             Pen line(light ? Color(255, 235, 235, 235) : Color(255, 55, 55, 55));
             g.DrawLine(&line, 218.f, rect.bottom / d - 78, rect.right / d - 28, rect.bottom / d - 78);
         } else {
@@ -285,18 +289,18 @@ void SettingsWindow::draw(HDC dc, bool inner) {
             const wchar_t *subtitles[] = {L"调整任务栏组件的显示方式。",
                                           L"管理显示屏幕，以及应用的启动与退出。",
                                           L"配置额度读取来源，或手动刷新额度。"};
-            drawText(g, headings[page], RectF(0, 0, float(contentWidth), 40), 25, ink, true);
-            drawText(g, subtitles[page], RectF(0, 43, float(contentWidth), 26), 12, muted);
+            drawUiText(g, headings[page], RectF(0, 0, float(contentWidth), 40), 25, ink, true);
+            drawUiText(g, subtitles[page], RectF(0, 43, float(contentWidth), 26), 14, muted);
             auto row = [&](float y, const wchar_t *title, const wchar_t *description, float reserve = 240) {
-                drawText(g, title, RectF(0, y, float(contentWidth) - reserve, 25), 14, ink);
-                drawText(g, description, RectF(0, y + 25, float(contentWidth) - reserve, 25), 11, muted);
+                drawUiText(g, title, RectF(0, y, float(contentWidth) - reserve, 25), 16, ink);
+                drawUiText(g, description, RectF(0, y + 25, float(contentWidth) - reserve, 25), 14, muted);
                 Pen p(light ? Color(255, 237, 237, 237) : Color(255, 55, 55, 55));
                 g.DrawLine(&p, 0.f, y + 59, float(contentWidth) - 14, y + 59);
             };
             if (page == 0) {
                 row(82, L"任务栏样式", L"选择额度的呈现方式。");
                 row(148, L"显示大小", L"整体缩放，过大时适配任务栏高度。");
-                drawText(g, std::to_wstring(int(std::round(draft.scale * 100))) + L"%",
+                drawUiText(g, std::to_wstring(int(std::round(draft.scale * 100))) + L"%",
                          RectF(contentWidth - 70.f, 151, 56, 32), 13, muted, false, true);
                 row(214, L"图标颜色", L"分别选择两种额度的颜色。", 310);
                 fillRound(g, RectF(0, 286, contentWidth - 14.f, 62), 6, side);
@@ -311,7 +315,7 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                            RectF((contentWidth - 14 - layout.width) / 2.f, 286 + (62 - layout.height) / 2.f,
                                  float(layout.width), float(layout.height)),
                            q, draft, false, light, progress, progress);
-                drawText(g, L"预览使用模拟数据", RectF(0, 350, float(contentWidth), 24), 10, muted);
+                drawUiText(g, L"预览使用模拟数据", RectF(0, 350, float(contentWidth), 24), 12, muted);
                 row(380, L"仪表中间显示 H 和 W", L"H 表示 5 小时额度，W 表示周额度。", 110);
                 row(446, L"在图标上展示余量", L"关闭后保持完整纯色图形；按样式分别保存。", 110);
                 row(512, L"显示百分号", L"关闭后只显示数字；按样式分别保存。", 110);
@@ -320,14 +324,14 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 row(82, L"显示屏幕", L"选择任务栏组件出现的位置。");
                 row(148, L"随 Windows 登录启动", L"启动轻量监听器，自动跟随应用。", 110);
                 row(214, L"跟随应用运行", L"任一应用运行时显示，两者完全退出后停止读取。", 80);
-                drawText(g, L"自动", RectF(contentWidth - 80.f, 214, 65, 30), 13, muted, false, true);
+                drawUiText(g, L"自动", RectF(contentWidth - 80.f, 214, 65, 30), 13, muted, false, true);
                 row(280, L"Pro 账户", L"识别为 Pro 时，仅显示周额度。", 80);
-                drawText(g, L"自动", RectF(contentWidth - 80.f, 280, 65, 30), 13, muted, false, true);
-                drawText(g, L"悬浮查看详情 · 右键打开设置 · 左键横向拖动",
-                         RectF(0, 365, float(contentWidth), 32), 12, muted);
+                drawUiText(g, L"自动", RectF(contentWidth - 80.f, 280, 65, 30), 13, muted, false, true);
+                drawUiText(g, L"悬浮查看详情 · 右键打开设置 · 左键横向拖动",
+                         RectF(0, 365, float(contentWidth), 32), 14, muted);
             } else {
-                drawText(g, L"Codex CLI 路径", RectF(0, 82, float(contentWidth), 26), 14, ink);
-                drawText(g, L"留空时自动查找已安装的 Codex。", RectF(0, 108, float(contentWidth), 26), 11,
+                drawUiText(g, L"Codex CLI 路径", RectF(0, 82, float(contentWidth), 26), 16, ink);
+                drawUiText(g, L"留空时自动查找已安装的 Codex。", RectF(0, 108, float(contentWidth), 26), 14,
                          muted);
                 row(200, L"自动刷新间隔", L"保存后立即生效。");
                 row(266, L"额度读取", L"读取失败时自动退避重试。");
@@ -335,8 +339,8 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 row(398, L"卸载",
                     nativeInstalled(executable().parent_path()) ? L"删除本工具及设置，卸载前会再次确认。"
                                                                 : L"便携版退出后删除解压目录即可。");
-                drawText(g, L"通过本机 Codex 读取，不保存登录信息。", RectF(0, 483, float(contentWidth), 32),
-                         12, muted);
+                drawUiText(g, L"通过本机 Codex 读取，不保存登录信息。", RectF(0, 483, float(contentWidth), 32),
+                         14, muted);
             }
         }
     }
@@ -404,7 +408,7 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
                 textArea.X += 12 * d;
                 textArea.Width -= 18 * d;
             }
-            drawText(g, controlText(item.hwndItem), textArea, 13 * d, text, id == Save, !nav);
+            drawUiText(g, controlText(item.hwndItem), textArea, 15 * d, text, id == Save, !nav);
         }
         if (item.itemState & ODS_FOCUS) {
             GraphicsPath p;
@@ -745,13 +749,13 @@ LRESULT CALLBACK SettingsWindow::paletteProcedure(HWND w, UINT msg, WPARAM wp, L
             g.ScaleTransform(self->dpi / 96.f, self->dpi / 96.f);
             g.SetSmoothingMode(SmoothingModeAntiAlias);
             fillRound(g, RectF(8, 8, 278, 30), 5, header);
-            drawText(g, L"自动", RectF(44, 8, 235, 30), 14, ink);
+            drawUiText(g, L"自动", RectF(44, 8, 235, 30), 16, ink);
             SolidBrush automatic(parseColor(self->colorHour ? "#219E86" : "#648DE6", Color::Black));
             g.FillRectangle(&automatic, RectF(18, 14, 18, 18));
             for (auto pair : {std::make_pair(41, L"主题颜色"), std::make_pair(216, L"标准色")}) {
                 SolidBrush b(header);
                 g.FillRectangle(&b, RectF(8, float(pair.first), 278, 25));
-                drawText(g, pair.second, RectF(16, float(pair.first), 264, 25), 13, ink);
+                drawUiText(g, pair.second, RectF(16, float(pair.first), 264, 25), 13, ink);
             }
             int selection = int(reinterpret_cast<INT_PTR>(GetPropW(w, L"Selection")));
             for (int i = 0; i < 70; ++i) {
@@ -765,7 +769,7 @@ LRESULT CALLBACK SettingsWindow::paletteProcedure(HWND w, UINT msg, WPARAM wp, L
                         selection == i ? 2 : 1);
                 g.DrawRectangle(&pen, RectF(float(x), float(y), 21, 21));
             }
-            drawText(g, L"其他颜色…", RectF(16, 278, 264, 28), 13, ink);
+            drawUiText(g, L"其他颜色…", RectF(16, 278, 264, 28), 13, ink);
         }
         BitBlt(dc, 0, 0, r.right, r.bottom, image.dc, 0, 0, SRCCOPY);
         EndPaint(w, &ps);
@@ -881,7 +885,7 @@ LRESULT CALLBACK SettingsWindow::procedure(HWND w, UINT msg, WPARAM wp, LPARAM l
         self->dpi = HIWORD(wp);
         if (self->font)
             DeleteObject(self->font);
-        self->font = CreateFontW(-self->px(13), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+        self->font = CreateFontW(-self->px(15), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                  OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH,
                                  L"Microsoft YaHei UI");
         for (HWND ctrl : self->controls)

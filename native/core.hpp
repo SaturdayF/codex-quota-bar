@@ -33,8 +33,8 @@ namespace quota {
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 using namespace Gdiplus;
-constexpr wchar_t Version[] = L"0.2.0";
-constexpr char VersionUtf8[] = "0.2.0";
+constexpr wchar_t Version[] = L"0.2.1";
+constexpr char VersionUtf8[] = "0.2.1";
 constexpr UINT StateMessage = WM_APP + 1, SettingsMessage = WM_APP + 2, RebuildMessage = WM_APP + 3;
 std::wstring wide(const std::string &s);
 std::string utf8(const std::wstring &s);

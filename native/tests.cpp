@@ -200,6 +200,13 @@ int uiTests(const fs::path &dir) {
         overlay.tick(&point);
         check(overlay.hover && IsWindowVisible(overlay.details),
               "hover backdrop and details monitor " + std::to_string(i));
+        overlay.showDetails(dir / (L"details-monitor-" + std::to_wstring(i) + L".png"));
+        if (i == 0) {
+            auto regular = overlay.state;
+            overlay.state.q.plan = "pro";
+            overlay.showDetails(dir / L"details-pro.png");
+            overlay.state = regular;
+        }
         SendMessageW(overlay.window, WM_RBUTTONUP, 0, 0);
         pumpUntil([&] { return app.settingsWindow && IsWindowVisible(app.settingsWindow->window); });
         check(app.settingsWindow && IsWindowVisible(app.settingsWindow->window),
@@ -257,6 +264,44 @@ int uiTests(const fs::path &dir) {
     settings.selectPage(2);
     settings.capture(dir / L"settings-advanced.png");
     settings.selectPage(0);
+    settings.capture(dir / L"settings-appearance.png");
+    // Inspect the actual child-window pixels after partial clipping and scrolling,
+    // rather than only WM_PRINTCLIENT, which always constructs a clean picture.
+    settings.previewStart = -1;
+    auto readControl = [&](HWND child) {
+        RECT r{};
+        GetClientRect(child, &r);
+        Surface image(r.right, r.bottom);
+        HDC dc = GetDC(child);
+        BitBlt(image.dc, 0, 0, r.right, r.bottom, dc, 0, 0, SRCCOPY);
+        ReleaseDC(child, dc);
+        GdiFlush();
+        return std::vector<BYTE>(image.pixels, image.pixels + r.right * r.bottom * 4);
+    };
+    RECT originalBounds{};
+    GetWindowRect(settings.window, &originalBounds);
+    SetWindowPos(settings.window, nullptr, 0, 0, originalBounds.right - originalBounds.left,
+                 settings.px(520), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    for (int offset : {19, 93, 157, 211, 37, 0}) {
+        settings.scroll = offset;
+        settings.layout();
+        for (int id : {202, 203, 205, 206, 207, 208}) {
+            HWND child = GetDlgItem(settings.content, id);
+            RECT r{}, client{};
+            GetWindowRect(child, &r);
+            GetClientRect(settings.content, &client);
+            MapWindowPoints(settings.content, nullptr, reinterpret_cast<POINT *>(&client), 2);
+            if (r.top < client.top || r.bottom > client.bottom) continue;
+            auto moved = readControl(child);
+            RedrawWindow(child, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            check(moved == readControl(child), "scroll repaint matches clean control " +
+                  std::to_string(id) + " at " + std::to_string(offset));
+        }
+    }
+    SetWindowPos(settings.window, nullptr, 0, 0, originalBounds.right - originalBounds.left,
+                 originalBounds.bottom - originalBounds.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    settings.scroll = 0;
+    settings.layout();
     settings.capture(dir / L"settings-appearance.png");
     ShowWindow(settings.window, SW_MINIMIZE);
     settings.reveal(nullptr);

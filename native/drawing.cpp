@@ -51,13 +51,15 @@ void fillRound(Graphics &g, RectF r, float radius, Color c) {
     SolidBrush brush(c);
     g.FillPath(&brush, &p);
 }
-void drawText(Graphics &g, const std::wstring &text, RectF area, float size, Color c, bool bold,
-              bool centered, bool glyph) {
+static void textImpl(Graphics &g, const std::wstring &text, RectF area, float size, Color c, bool bold,
+              bool centered, bool glyph, bool ui = false) {
     FontFamily family(L"Segoe UI");
     FontFamily chinese(L"Microsoft YaHei UI");
     FontFamily *f = &family;
     if (std::any_of(text.begin(), text.end(), [](wchar_t x) { return x > 0x2fff; }))
         f = &chinese;
+    if (ui)
+        g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
     SolidBrush brush(c);
     StringFormat format;
     format.SetFormatFlags(StringFormatFlagsNoWrap);
@@ -93,6 +95,18 @@ void drawText(Graphics &g, const std::wstring &text, RectF area, float size, Col
         }
         size -= .5f;
     }
+}
+void drawText(Graphics &g, const std::wstring &text, RectF area, float size, Color c, bool bold,
+              bool centered, bool glyph) {
+    textImpl(g, text, area, size, c, bold, centered, glyph);
+}
+void drawUiText(Graphics &g, const std::wstring &text, RectF area, float size, Color c, bool bold,
+                bool centered) {
+    // Codex desktop uses the system UI stack (Segoe UI on Windows).
+    // Use Microsoft YaHei UI for CJK strings, avoiding the GDI+ serif fallback.
+    auto previous = g.GetTextRenderingHint();
+    textImpl(g, text, area, size, c, bold, centered, false, true);
+    g.SetTextRenderingHint(previous);
 }
 static void progressOutline(Graphics &g, GraphicsPath &path, Color track, Color accent, float width,
                             double fill) {

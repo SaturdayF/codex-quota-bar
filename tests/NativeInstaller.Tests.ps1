@@ -1,7 +1,7 @@
 ﻿param([string]$SetupExe)
 $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
-if (-not $SetupExe) { $SetupExe = Join-Path $project 'artifacts/releases/v0.2.0/CodexQuotaBar-v0.2.0-Setup.exe' }
+if (-not $SetupExe) { $SetupExe = Join-Path $project 'artifacts/releases/v0.2.1/CodexQuotaBar-v0.2.1-Setup.exe' }
 $temporaryRoot = [IO.Path]::GetFullPath((Join-Path $project 'codex_tmp'))
 $fixture = [IO.Path]::GetFullPath((Join-Path $temporaryRoot ('native-install-' + [Guid]::NewGuid().ToString('N'))))
 if ((Split-Path -Parent $fixture) -ne $temporaryRoot) { throw 'Unsafe fixture path' }

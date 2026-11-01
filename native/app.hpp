@@ -21,7 +21,7 @@ struct Overlay {
     void position(bool reset = false);
     void render();
     void tick(const POINT *simulatedPointer = nullptr);
-    void showDetails();
+    void showDetails(const fs::path &capture = {});
     void hideDetails();
     static LRESULT CALLBACK procedure(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK detailProcedure(HWND, UINT, WPARAM, LPARAM);

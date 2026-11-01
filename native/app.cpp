@@ -74,9 +74,9 @@ void Overlay::hideDetails() {
     if (details)
         ShowWindow(details, SW_HIDE);
 }
-void Overlay::showDetails() {
+void Overlay::showDetails(const fs::path &capture) {
     float d = monitor.dpi / 96.f;
-    int width = int(324 * d), height = int((state.q.weekOnly() ? 234 : 318) * d);
+    int width = int(372 * d), height = int((state.q.weekOnly() ? 270 : 370) * d);
     width = std::min(width, int(monitor.work.right - monitor.work.left));
     int left =
         std::clamp<LONG>(x, monitor.work.left, std::max(monitor.work.left, monitor.work.right - width));
@@ -95,42 +95,44 @@ void Overlay::showDetails() {
         roundPath(border, RectF(1, 1, width - 2.f, height - 2.f), 8 * d);
         Pen pen(light ? Color(255, 218, 218, 218) : Color(255, 75, 75, 75), 1);
         g.DrawPath(&pen, &border);
-        drawText(g, L"Codex 额度", RectF(20 * d, 12 * d, width - 40 * d, 32 * d), 17 * d, ink, true);
-        drawText(g, state.q.weekOnly() ? L"Pro · 每周额度" : L"5 小时与每周额度",
-                 RectF(20 * d, 44 * d, width - 40 * d, 22 * d), 11 * d, muted);
+        drawUiText(g, L"Codex 额度", RectF(20 * d, 12 * d, width - 40 * d, 32 * d), 20 * d, ink, true);
+        drawUiText(g, state.q.weekOnly() ? L"Pro · 每周额度" : L"5 小时与每周额度",
+                 RectF(20 * d, 44 * d, width - 40 * d, 26 * d), 14 * d, muted);
         int row = 0;
         for (bool hour : {true, false}) {
             if (hour && state.q.weekOnly())
                 continue;
             auto q = hour ? state.q.hour : state.q.week;
-            float yy = (78 + row * 84) * d;
+            float yy = (86 + row * 100) * d;
             Color c = parseColor(hour ? settings.hourColor : settings.weekColor, Color(255, 33, 158, 134));
-            drawText(g, hour ? L"5 小时" : L"每周", RectF(20 * d, yy, 100 * d, 25 * d), 13 * d, ink, true);
+            drawUiText(g, hour ? L"5 小时" : L"每周", RectF(20 * d, yy, 100 * d, 25 * d), 16 * d, ink, true);
             std::wostringstream precise;
             if (q)
                 precise << std::fixed << std::setprecision(2) << q->remaining << L"%";
             else
                 precise << L"--";
-            drawText(g, precise.str(), RectF(155 * d, yy, width - 175 * d, 25 * d), 20 * d, c, true, true);
-            fillRound(g, RectF(20 * d, yy + 32 * d, width - 40 * d, 4 * d), 2 * d,
+            drawUiText(g, precise.str(), RectF(155 * d, yy, width - 175 * d, 32 * d), 24 * d, c, true, true);
+            fillRound(g, RectF(20 * d, yy + 40 * d, width - 40 * d, 4 * d), 2 * d,
                       light ? Color(255, 222, 225, 230) : Color(255, 73, 78, 85));
             if (q && q->remaining > 0)
-                fillRound(g, RectF(20 * d, yy + 32 * d, (width - 40 * d) * float(q->remaining / 100), 4 * d),
+                fillRound(g, RectF(20 * d, yy + 40 * d, (width - 40 * d) * float(q->remaining / 100), 4 * d),
                           2 * d, c);
-            drawText(g, L"重置 " + timeLabel(q ? q->resets : 0),
-                     RectF(20 * d, yy + 41 * d, width - 40 * d, 22 * d), 11 * d, muted);
+            drawUiText(g, L"重置 " + timeLabel(q ? q->resets : 0),
+                     RectF(20 * d, yy + 51 * d, width - 40 * d, 26 * d), 14 * d, muted);
             ++row;
         }
-        float footer = (78 + row * 84) * d;
-        drawText(g,
+        float footer = (86 + row * 100) * d;
+        drawUiText(g,
                  L"更新 " + (state.updated ? timeLabel(state.updated, false) : L"尚无") + L"   ·   " +
                      std::to_wstring(state.interval) + L" 秒刷新",
-                 RectF(20 * d, footer, width - 40 * d, 23 * d), 11 * d, muted);
+                 RectF(20 * d, footer, width - 40 * d, 28 * d), 14 * d, muted);
         std::wstring status =
             state.error.empty() ? (state.stale() ? L"数据已过期，等待更新" : L"右键打开设置") : state.error;
-        drawText(g, status, RectF(20 * d, footer + 25 * d, width - 40 * d, 25 * d), 11 * d,
+        drawUiText(g, status, RectF(20 * d, footer + 30 * d, width - 40 * d, 28 * d), 14 * d,
                  state.stale() ? Color(255, 170, 110, 55) : muted);
     }
+    if (!capture.empty())
+        image.save(capture);
     image.present(details, left, top);
     ShowWindow(details, SW_SHOWNOACTIVATE);
     SetWindowPos(details, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
