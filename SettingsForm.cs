@@ -5,11 +5,11 @@ internal sealed class SettingsForm : Form
     public SettingsForm()
     {
         Text = "Codex Quota Bar 设置"; StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new(530, 310); MinimumSize = new(500, 340); AutoScaleMode = AutoScaleMode.Dpi;
+        ClientSize = new(550, 370); MinimumSize = new(550, 400); AutoScaleMode = AutoScaleMode.Dpi;
         var settings = Settings.Load();
-        var grid = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 2, RowCount = 7 };
+        var grid = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 2, RowCount = 8 };
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        var description = new Label { Text = "底线数字 + % · 每 30 秒刷新\nChatGPT 或 Codex 运行时显示，两者退出后停止读取。", AutoSize = true, Dock = DockStyle.Fill };
+        var description = new Label { Text = "双仪表 + % · 每 30 秒刷新 · Pro 自动仅显示周额度\nChatGPT 或 Codex 运行时显示，两者退出后停止读取。", AutoSize = true, Dock = DockStyle.Fill };
         grid.Controls.Add(description, 0, 0); grid.SetColumnSpan(description, 2);
         var label = new Label { Text = "Codex CLI 路径（留空则自动查找）", AutoSize = true, Margin = new(0, 18, 0, 6) };
         grid.Controls.Add(label, 0, 1); grid.SetColumnSpan(label, 2);
@@ -25,8 +25,10 @@ internal sealed class SettingsForm : Form
         foreach (var item in modes) display.Items.Add(item.Label);
         display.SelectedIndex = Math.Max(0, modes.FindIndex(m => m.Mode == settings.DisplayMode && (m.Id is null || settings.Displays.Contains(m.Id))));
         grid.Controls.Add(display, 0, 4); grid.SetColumnSpan(display, 2);
+        var letters = new CheckBox { Text = "仪表中间加入字母 H 和 W（5 小时额度 / 周额度）", Checked = settings.ShowDialLetters, AutoSize = true, Margin = new(0, 12, 0, 4) };
+        grid.Controls.Add(letters, 0, 5); grid.SetColumnSpan(letters, 2);
         var help = new Label { Text = "各屏幕均直接显示透明双数字，可横向拖动位置。\n右键数字查看详情或切换显示屏幕。", AutoSize = true, Margin = new(0, 14, 0, 8) };
-        grid.Controls.Add(help, 0, 5); grid.SetColumnSpan(help, 2);
+        grid.Controls.Add(help, 0, 6); grid.SetColumnSpan(help, 2);
         var save = new Button { Text = "保存", AutoSize = true, Anchor = AnchorStyles.Right };
         save.Click += (_, _) =>
         {
@@ -34,12 +36,13 @@ internal sealed class SettingsForm : Form
             {
                 var chosen = modes[display.SelectedIndex];
                 settings.CodexPath = string.IsNullOrWhiteSpace(path.Text) ? null : path.Text.Trim();
+                settings.ShowDialLetters = letters.Checked;
                 settings.DisplayMode = chosen.Mode; settings.Displays = chosen.Id is null ? [] : [chosen.Id];
                 settings.Save(); Startup.Set(startup.Checked); DialogResult = DialogResult.OK; Close();
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
             { MessageBox.Show("无法保存设置或启动项，请检查用户权限。", Text); }
         };
-        grid.Controls.Add(save, 1, 6); AcceptButton = save; Controls.Add(grid);
+        grid.Controls.Add(save, 1, 7); AcceptButton = save; Controls.Add(grid);
     }
 }

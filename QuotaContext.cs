@@ -78,7 +78,7 @@ internal sealed class QuotaContext : ApplicationContext
             hourIcon.Visible = weekIcon.Visible = false;
             foreach (var screen in selected)
             {
-                var overlay = new Overlay(screen, menu);
+                var overlay = new Overlay(screen, menu, showLetters: settings.ShowDialLetters);
                 overlays.Add(overlay);
                 overlay.Show(); overlay.PositionAtTaskbar(); overlay.UpdateState(state);
             }
@@ -198,7 +198,7 @@ internal sealed class QuotaContext : ApplicationContext
     private void Details()
     {
         string Describe(string title, QuotaWindow? w) => $"{title}剩余：{(w is null ? "不可用" : w.Remaining.ToString("0.##") + "%")}\n重置：{w?.ResetsAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "未知"}";
-        MessageBox.Show(Describe("5 小时", state.Quotas.Hour) + "\n\n" + Describe("每周", state.Quotas.Week)
+        MessageBox.Show((state.Quotas.WeekOnly ? "" : Describe("5 小时", state.Quotas.Hour) + "\n\n") + Describe("每周", state.Quotas.Week)
             + $"\n\n最后成功读取：{state.Updated?.ToLocalTime().ToString("HH:mm:ss") ?? "尚无"}"
             + $"\n{state.Error ?? (state.Stale ? "数据已过期" : "每 30 秒读取一次")}", "Codex 额度详情", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }

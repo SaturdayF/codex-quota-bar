@@ -18,6 +18,7 @@ internal sealed class AppServer : IDisposable
     private readonly SemaphoreSlim writer = new(1, 1);
     private int nextId;
     private int disposed;
+    private string? planType;
     public event Action<Quotas>? Updated;
 
     private AppServer(Process process)
@@ -75,7 +76,8 @@ internal sealed class AppServer : IDisposable
                     // Other buckets must not clear or replace the general Codex quota.
                     if (args.TryGetProperty("rateLimits", out var bucket) && bucket.TryGetProperty("limitId", out var bucketId)
                         && bucketId.ValueKind == JsonValueKind.String && bucketId.GetString() != "codex") continue;
-                    Updated?.Invoke(Quotas.Parse(args));
+                    var quotas = Quotas.Parse(args);
+                    Updated?.Invoke(quotas with { PlanType = quotas.PlanType ?? planType });
                 }
             }
         }
@@ -109,7 +111,19 @@ internal sealed class AppServer : IDisposable
         }
         finally { pending.TryRemove(id, out _); }
     }
-    public async Task<Quotas> Read(CancellationToken token) => Quotas.Parse(await Request("account/rateLimits/read", new { }, token));
+    public async Task<Quotas> Read(CancellationToken token)
+    {
+        // Read only the plan; never persist or expose the returned account identity.
+        try
+        {
+            var account = await Request("account/read", new { refreshToken = false }, token);
+            planType = account.TryGetProperty("account", out var value) && value.ValueKind == JsonValueKind.Object
+                && value.TryGetProperty("planType", out var plan) && plan.ValueKind == JsonValueKind.String ? plan.GetString() : null;
+        }
+        catch (RpcFailure) { planType = null; }
+        var quotas = Quotas.Parse(await Request("account/rateLimits/read", new { }, token));
+        return quotas with { PlanType = quotas.PlanType ?? planType };
+    }
     public void Dispose()
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;

@@ -4,8 +4,9 @@ using System.Text.Json;
 namespace CodexQuotaBar;
 
 internal sealed record QuotaWindow(double Remaining, DateTimeOffset? ResetsAt);
-internal sealed record Quotas(QuotaWindow? Hour, QuotaWindow? Week)
+internal sealed record Quotas(QuotaWindow? Hour, QuotaWindow? Week, string? PlanType = null)
 {
+    public bool WeekOnly => string.Equals(PlanType, "pro", StringComparison.OrdinalIgnoreCase);
     public static Quotas Parse(JsonElement result)
     {
         JsonElement bucket;
@@ -32,7 +33,8 @@ internal sealed record Quotas(QuotaWindow? Hour, QuotaWindow? Week)
             if (mins == 300) hour = window;
             if (mins == 10080) week = window;
         }
-        return new(hour, week);
+        var plan = bucket.TryGetProperty("planType", out var planValue) && planValue.ValueKind == JsonValueKind.String ? planValue.GetString() : null;
+        return new(hour, week, plan);
     }
 
     public static string Label(QuotaWindow? w) => w is null ? "--" : Math.Floor(w.Remaining).ToString("0", CultureInfo.InvariantCulture) + "%";

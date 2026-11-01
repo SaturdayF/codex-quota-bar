@@ -6,6 +6,32 @@ namespace CodexQuotaBar;
 
 internal static class Artwork
 {
+    public static void Gauge(Graphics g, RectangleF area, QuotaWindow? window, string letter, Color accent, bool showLetter, bool stale, bool light)
+    {
+        var scale = area.Height / 30f;
+        var size = 23 * scale;
+        var circle = new RectangleF(area.X + scale, area.Y + (area.Height - size) / 2, size, size);
+        using var track = new Pen(light ? Color.FromArgb(182, 192, 204) : Color.FromArgb(87, 99, 117), 2.5f * scale);
+        using var ink = new Pen(stale ? Color.Gray : accent, 2.5f * scale);
+        g.DrawEllipse(track, circle);
+        if (window is not null && window.Remaining > 0) g.DrawArc(ink, circle, -90, (float)(window.Remaining * 3.6));
+        using var text = new SolidBrush(stale ? (light ? Color.DimGray : Color.Silver) : light ? Color.FromArgb(30, 38, 48) : Color.FromArgb(240, 244, 250));
+        using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+        using var labelFont = new Font("Segoe UI", 10 * scale, FontStyle.Bold, GraphicsUnit.Pixel);
+        if (showLetter) g.DrawString(letter, labelFont, text, circle, format);
+        var numberArea = new RectangleF(circle.Right + 6 * scale, area.Y, Math.Max(1, area.Right - circle.Right - 6 * scale), area.Height);
+        var label = Quotas.Label(window);
+        var fontSize = 17 * scale;
+        while (fontSize > 10 * scale)
+        {
+            using var candidate = new Font("Segoe UI", fontSize, FontStyle.Bold, GraphicsUnit.Pixel);
+            if (g.MeasureString(label, candidate).Width <= numberArea.Width) break;
+            fontSize -= scale;
+        }
+        using var fitted = new Font("Segoe UI", fontSize, FontStyle.Bold, GraphicsUnit.Pixel);
+        g.DrawString(label, fitted, text, numberArea, format);
+        if (stale) { using var dot = new SolidBrush(accent); g.FillEllipse(dot, area.Right - 3 * scale, area.Top, 3 * scale, 3 * scale); }
+    }
     public static readonly Color HourColor = Color.FromArgb(33, 158, 134);
     public static readonly Color WeekColor = Color.FromArgb(100, 141, 230);
     [DllImport("user32.dll")] private static extern bool DestroyIcon(IntPtr handle);

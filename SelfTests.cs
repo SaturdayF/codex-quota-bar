@@ -25,6 +25,10 @@ internal static class SelfTests
             Check(Parse("""{"rateLimits":{"primary":{"windowDurationMins":300,"usedPercent":25}},"rateLimitsByLimitId":{"other":{"primary":{"windowDurationMins":300,"usedPercent":0}}}}""").Hour is null, "never substitute other bucket");
             var general = Parse("""{"rateLimitsByLimitId":{"codex":{"primary":{"windowDurationMins":300,"usedPercent":28},"secondary":{"windowDurationMins":10080,"usedPercent":57}},"model":{"primary":{"windowDurationMins":300,"usedPercent":0}}}}""");
             Check(general.Hour?.Remaining == 72 && general.Week?.Remaining == 43, "select general Codex bucket");
+            Check(Parse("""{"rateLimits":{"planType":"pro","primary":{"windowDurationMins":300,"usedPercent":10}}}""").WeekOnly, "explicit Pro plan selects weekly-only layout");
+            Check(!general.WeekOnly && !new Quotas(null, null, "plus").WeekOnly, "unknown and Plus plans keep both windows");
+            Check(new Quotas(null, null, "Pro").WeekOnly && !new Quotas(null, null, "professional").WeekOnly, "Pro classification is exact and case-insensitive");
+            Check(System.Text.Json.JsonSerializer.Deserialize<Settings>("{\"ShowDialLetters\":false}")?.ShowDialLetters == false, "H/W setting round-trips disabled state");
             Check(Quotas.Label(new(0.8, null)) == "0%" && Quotas.Label(new(100, null)) == "100%" && Quotas.Label(null) == "--", "percent labels and conservative rounding");
             Check(!DesktopApps.IsDesktopBinary("codex", @"C:\Users\demo\AppData\Local\OpenAI\Codex\bin\version\codex.exe"), "own app-server cannot keep listener active");
             Check(DesktopApps.IsDesktopBinary("ChatGPT", null), "protected ChatGPT process remains detectable");
@@ -38,8 +42,10 @@ internal static class SelfTests
             server.Updated += q => changed.TrySetResult(q);
             var read = await server.Read(timeout.Token);
             Check(read.Hour?.Remaining == 72 && read.Week?.Remaining == 43, "real subprocess JSON-RPC initialization and read");
+            Check(read.WeekOnly, "account/read supplies Pro plan when quota bucket omits it");
             var notification = await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Check(notification.Hour?.Remaining == 71, "streamed quota update notification");
+            Check(notification.WeekOnly, "streamed quota updates preserve account plan");
             // The fake server returns a structured error on the next query.
             try { await server.Read(timeout.Token); Check(false, "RPC error propagation"); }
             catch (RpcFailure e) { Check(e.Code == -32603, "RPC error propagation"); }
@@ -58,6 +64,7 @@ internal static class SelfTests
             if (method == "initialized") { initialized = true; continue; }
             var id = message.GetProperty("id").GetInt32();
             if (method == "initialize") Console.WriteLine(JsonSerializer.Serialize(new { id, result = new { userAgent = "test" } }));
+            else if (method == "account/read" && initialized) Console.WriteLine(JsonSerializer.Serialize(new { id, result = new { account = new { type = "chatgpt", planType = "pro" } } }));
             else if (method == "account/rateLimits/read" && initialized && ++reads == 1)
             {
                 Console.WriteLine(JsonSerializer.Serialize(new { id, result = new { rateLimits = new { primary = new { windowDurationMins = 300, usedPercent = 28 }, secondary = new { windowDurationMins = 10080, usedPercent = 57 } } } }));

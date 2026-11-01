@@ -8,6 +8,7 @@ internal sealed class Settings
     public string DisplayMode { get; set; } = "all"; // all, primary, selected
     public List<string> Displays { get; set; } = [];
     public string? CodexPath { get; set; }
+    public bool ShowDialLetters { get; set; } = true;
     public static string DataDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexQuotaBar");
     public static string FilePath => Path.Combine(DataDirectory, "settings.json");
     public static Settings Load()

@@ -9,6 +9,7 @@ internal sealed class Overlay : Form
     private readonly System.Windows.Forms.Timer hoverTimer = new() { Interval = 75 };
     private readonly HoverDetails details = new();
     private readonly Func<Point> pointer;
+    private readonly bool showLetters;
     private long hoverStarted, lastInside;
     internal bool HoverHighlighted { get; private set; }
     internal bool DetailsVisible => details.Visible;
@@ -30,10 +31,11 @@ internal sealed class Overlay : Form
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(Point point, uint flags);
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
 
-    public Overlay(Screen screen, ContextMenuStrip menu, Func<Point>? pointer = null)
+    public Overlay(Screen screen, ContextMenuStrip menu, Func<Point>? pointer = null, bool showLetters = true)
     {
         this.screen = screen;
         this.pointer = pointer ?? (() => Cursor.Position);
+        this.showLetters = showLetters;
         Text = "Codex Quota Bar";
         FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true;
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -103,15 +105,18 @@ internal sealed class Overlay : Form
     protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x08000000 | 0x00000080; return p; } }
     public void UpdateState(DisplayState current)
     {
+        var layoutChanged = state.Quotas.WeekOnly != current.Quotas.WeekOnly;
         state = current;
+        if (layoutChanged && IsHandleCreated) PositionAtTaskbar();
         details.UpdateState(state);
+        if (details.Visible) details.Place(Bounds, screen.WorkingArea);
         Invalidate();
         EnsureAboveTaskbar();
     }
     public void PositionAtTaskbar()
     {
         var scale = DeviceDpi / 96f;
-        Size = new((int)(118 * scale), (int)(32 * scale));
+        Size = new((int)((state.Quotas.WeekOnly ? 94 : 184) * scale), (int)(34 * scale));
         var bounds = screen.Bounds;
         var taskbar = TaskbarBounds(screen);
         // Anchor to each display's left edge, away from the clock and notification icons.
@@ -140,9 +145,10 @@ internal sealed class Overlay : Form
             e.Graphics.DrawRectangle(border, 0, 0, ClientSize.Width - 1, ClientSize.Height - 1);
         }
         e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.SingleBitPerPixelGridFit;
-        var half = ClientSize.Width / 2f;
-        Artwork.Draw(e.Graphics, new(2, 1, half - 4, ClientSize.Height - 2), Quotas.Label(state.Quotas.Hour), Artwork.HourColor, state.Stale, Artwork.LightTheme);
-        Artwork.Draw(e.Graphics, new(half + 2, 1, half - 4, ClientSize.Height - 2), Quotas.Label(state.Quotas.Week), Artwork.WeekColor, state.Stale, Artwork.LightTheme);
+        var cell = ClientSize.Width / (state.Quotas.WeekOnly ? 1f : 2f);
+        if (!state.Quotas.WeekOnly) Artwork.Gauge(e.Graphics, new(4, 2, cell - 8, ClientSize.Height - 4), state.Quotas.Hour, "H", Artwork.HourColor, showLetters, state.Stale, Artwork.LightTheme);
+        var left = state.Quotas.WeekOnly ? 0 : cell;
+        Artwork.Gauge(e.Graphics, new(left + 4, 2, cell - 8, ClientSize.Height - 4), state.Quotas.Week, "W", Artwork.WeekColor, showLetters, state.Stale, Artwork.LightTheme);
     }
     protected override void Dispose(bool disposing)
     {
