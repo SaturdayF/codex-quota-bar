@@ -1,7 +1,24 @@
+using System.Runtime.InteropServices;
 namespace CodexQuotaBar;
 
 internal sealed class SettingsForm : Form
 {
+    [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr window, int command);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
+    internal void Reveal(Screen screen)
+    {
+        StartPosition = FormStartPosition.Manual;
+        ShowInTaskbar = true;
+        WindowState = FormWindowState.Normal;
+        TopMost = true;
+        if (!Visible) Show();
+        var area = screen.WorkingArea;
+        Location = new(area.Left + Math.Max(0, (area.Width - Width) / 2), area.Top + Math.Max(0, (area.Height - Height) / 2));
+        // Activate() alone does nothing for the hidden window observed in production.
+        ShowWindow(Handle, 9); // SW_RESTORE, including minimized/hidden native windows
+        BringToFront(); Activate();
+        if (!IsWindowVisible(Handle)) throw new InvalidOperationException("设置窗口未能显示");
+    }
     public SettingsForm(Action? refresh = null, Action? exit = null, Settings? initialSettings = null)
     {
         Text = "Codex Quota Bar 设置"; StartPosition = FormStartPosition.CenterScreen;

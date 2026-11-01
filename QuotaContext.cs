@@ -22,6 +22,8 @@ internal sealed class QuotaContext : ApplicationContext
     private Icon? hourArtwork, weekArtwork;
     private DateTime settingsWrite;
     private SettingsForm? settingsWindow;
+    private readonly System.Windows.Forms.Timer settingsOpener = new() { Interval = 50 };
+    private Screen? requestedSettingsScreen;
 
     public QuotaContext()
     {
@@ -30,6 +32,7 @@ internal sealed class QuotaContext : ApplicationContext
         hourIcon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) Details(); };
         weekIcon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) Details(); };
         watcher.Tick += (_, _) => Tick();
+        settingsOpener.Tick += (_, _) => { settingsOpener.Stop(); ShowSettings(); };
         menu.Opening += (_, _) => BuildMenu();
         SystemEvents.DisplaySettingsChanged += DisplaysChanged;
         SystemEvents.UserPreferenceChanged += PreferencesChanged;
@@ -80,9 +83,8 @@ internal sealed class QuotaContext : ApplicationContext
             foreach (var screen in selected)
             {
                 var overlay = new Overlay(screen, menu, showLetters: settings.ShowDialLetters, style: settings.WidgetStyle);
-                overlay.InteractionSuspended = settingsWindow is not null;
                 // WM_CONTEXTMENU is already delivered on this UI thread.
-                overlay.SettingsRequested += ShowSettings;
+                overlay.SettingsRequested += () => QueueSettings(Screen.FromControl(overlay));
                 overlays.Add(overlay);
                 overlay.Show(); overlay.PositionAtTaskbar(); overlay.UpdateState(state);
             }
@@ -180,7 +182,7 @@ internal sealed class QuotaContext : ApplicationContext
             { settings.DisplayMode = "selected"; settings.Displays = [id]; SaveSettings(); }));
         }
         menu.Items.Add(displays);
-        menu.Items.Add("设置…", null, (_, _) => ShowSettings());
+        menu.Items.Add("设置…", null, (_, _) => QueueSettings(Screen.PrimaryScreen!));
         menu.Items.Add(Choice("随 Windows 登录启动监听器", Startup.Enabled, () =>
         {
             try { Startup.Set(!Startup.Enabled); }
@@ -199,19 +201,43 @@ internal sealed class QuotaContext : ApplicationContext
         try { settings.Save(); layout = ""; Tick(); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { MessageBox.Show("无法保存显示设置。", "Codex Quota Bar"); }
     }
+    private void QueueSettings(Screen screen)
+    {
+        requestedSettingsScreen = screen;
+        // Finish the mouse-up/capture cycle before displaying another top-level window.
+        settingsOpener.Start();
+    }
     private void ShowSettings()
     {
-        if (settingsWindow is { IsDisposed: false }) { settingsWindow.Activate(); return; }
-        foreach (var overlay in overlays) overlay.InteractionSuspended = true;
-        settingsWindow = new SettingsForm(
-            refresh: async () => { if (session is { } s) { try { await Refresh(s.Token); } catch (OperationCanceledException) { } } },
-            exit: () => ExitThread());
-        settingsWindow.FormClosed += (_, _) =>
+        if (quitting) return;
+        try
         {
-            settingsWindow = null;
-            if (!quitting) { settings = Settings.Load(); layout = ""; Tick(); }
-        };
-        settingsWindow.Show(); settingsWindow.Activate();
+            if (settingsWindow is null || settingsWindow.IsDisposed)
+            {
+                settingsWindow = new SettingsForm(
+                    refresh: async () => { if (session is { } s) { try { await Refresh(s.Token); } catch (OperationCanceledException) { } } },
+                    exit: () => ExitThread());
+                settingsWindow.FormClosed += (_, _) =>
+                {
+                    settingsWindow = null;
+                    if (!quitting) { settings = Settings.Load(); layout = ""; Tick(); }
+                };
+            }
+            settingsWindow.Reveal(requestedSettingsScreen ?? Screen.PrimaryScreen!);
+        }
+        catch (Exception error) when (error is not OutOfMemoryException)
+        {
+            // A failed or hidden settings window must never leave hover disabled.
+            var failed = settingsWindow; settingsWindow = null;
+            failed?.Dispose();
+            foreach (var overlay in overlays) overlay.InteractionSuspended = false;
+            try
+            {
+                Directory.CreateDirectory(Settings.DataDirectory);
+                File.WriteAllText(Path.Combine(Settings.DataDirectory, "settings-ui-error.txt"), DateTimeOffset.UtcNow + "\n" + error);
+            }
+            catch (Exception logError) when (logError is IOException or UnauthorizedAccessException) { }
+        }
     }
     private void Details()
     {
@@ -225,6 +251,7 @@ internal sealed class QuotaContext : ApplicationContext
     protected override void ExitThreadCore()
     {
         quitting = true; watcher.Stop(); session?.Cancel(); server?.Dispose();
+        settingsOpener.Stop(); settingsOpener.Dispose();
         settingsWindow?.Close();
         ClearOverlays(); hourIcon.Visible = weekIcon.Visible = false;
         hourIcon.Dispose(); weekIcon.Dispose(); hourArtwork?.Dispose(); weekArtwork?.Dispose();
