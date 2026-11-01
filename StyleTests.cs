@@ -67,6 +67,18 @@ internal static class StyleTests
         check(!remaining.Checked && !percent.Checked && !animate.Checked, "switching back retains unsaved badge preferences");
         choice.SelectedIndex = 4;
         check(!remaining.Enabled && percent.Enabled && animate.Enabled, "plain style has percent and animation but no geometry option");
+        var preview = controls.OfType<SettingsPreviewPanel>().Single();
+        using var switched = new Bitmap(preview.Width, preview.Height); preview.DrawToBitmap(switched, preview.ClientRectangle);
+        var tick = Environment.TickCount64;
+        while (Environment.TickCount64 - tick < 150) { Application.DoEvents(); Thread.Sleep(5); }
+        using var inMotion = new Bitmap(preview.Width, preview.Height); preview.DrawToBitmap(inMotion, preview.ClientRectangle);
+        check(!QuotaAnimation.MotionEnabled || Different(switched, inMotion), "switching to animated style replays preview automatically");
+        choice.SelectedIndex = 2;
+        using var staticStart = new Bitmap(preview.Width, preview.Height); preview.DrawToBitmap(staticStart, preview.ClientRectangle);
+        tick = Environment.TickCount64;
+        while (Environment.TickCount64 - tick < 150) { Application.DoEvents(); Thread.Sleep(5); }
+        using var staticEnd = new Bitmap(preview.Width, preview.Height); preview.DrawToBitmap(staticEnd, preview.ClientRectangle);
+        check(!Different(staticStart, staticEnd), "switching to animation-disabled style remains static");
         using var parent = new Panel { BackColor = Color.White };
         using var button = new RoundedSettingsButton { Size = new(112, 34), BackColor = Color.Black, ForeColor = Color.White, Text = "保存", FlatStyle = FlatStyle.Flat, UseVisualStyleBackColor = false };
         parent.Controls.Add(button); using var buttonImage = new Bitmap(112, 34); button.DrawToBitmap(buttonImage, button.ClientRectangle);

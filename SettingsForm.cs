@@ -111,6 +111,11 @@ internal sealed class SettingsForm : Form
             remaining.Enabled = selectedStyle != "plain";
             demo.Enabled = options.Animate;
             previewTimer.Stop(); previewStarted = -1;
+            if (options.Animate && QuotaAnimation.MotionEnabled)
+            {
+                previewStarted = Environment.TickCount64;
+                previewTimer.Start();
+            }
             preview.Invalidate();
         }
         void OptionsChanged()
