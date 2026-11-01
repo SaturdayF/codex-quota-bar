@@ -6,7 +6,12 @@ $installRoot = Join-Path $env:LOCALAPPDATA 'Programs/CodexQuotaBar'
 $destination = Join-Path $installRoot '0.1.0'
 $existing = Get-Process -Name CodexQuotaBar -ErrorAction SilentlyContinue
 foreach ($process in $existing) {
-    try { if ($process.Path -and $process.Path.StartsWith($installRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) { Stop-Process -Id $process.Id } } catch { throw 'Close the installed Codex Quota Bar before upgrading.' }
+    try {
+        if ($process.Path -and $process.Path.StartsWith($installRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Stop-Process -Id $process.Id
+            if (-not $process.WaitForExit(5000)) { throw 'The installed listener did not exit in time.' }
+        }
+    } catch { throw 'Close the installed Codex Quota Bar before upgrading.' }
 }
 New-Item -ItemType Directory -Path $destination -Force | Out-Null
 foreach ($file in @('CodexQuotaBar.exe','CodexQuotaBar.dll','CodexQuotaBar.deps.json','CodexQuotaBar.runtimeconfig.json','uninstall.ps1','README.md','LICENSE')) {
