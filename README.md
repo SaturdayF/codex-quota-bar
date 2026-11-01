@@ -1,0 +1,71 @@
+# Codex Quota Bar
+
+Windows 10/11 额度伴随工具：在时钟旁显示 Codex **5 小时**与**每周剩余百分比**，采用两个带彩色底线的数字图标，例如 `72%`、`43%`。
+
+这是独立的 Windows 工具，并非 ChatGPT 原生插件，与 OpenAI 无隶属关系。
+
+## 功能
+
+- ChatGPT 或 Codex 桌面应用运行时自动显示；两者都退出进程后移除显示、关闭额度读取进程。
+- 监听器在后台每 2 秒检查桌面应用进程，不需要改变启动 ChatGPT 的方式。最小化或关闭到托盘不视为退出。
+- 正常每 30 秒主动读取；本地 app-server 的额度更新事件到达时立即展示。失败以 30/60/120/240/300 秒间隔退避。
+- 主屏使用两个原生通知区域图标，副屏使用自绘双数字组件。右键可选择主屏、某个显示器或全部屏幕；副屏组件可水平拖动。
+- 悬停查看重置时间与最后更新时间；左键主屏图标查看精确数值。
+- 默认显示剩余额度；整数向下取整，详情保留小数。绿色底线为 5 小时，蓝色底线为每周。
+- 未返回的额度显示 `--`。失败后保留最后成功数值，并变灰、加状态点，详情显示错误。超过 75 秒未更新也标记过期。
+
+## 安装
+
+从可信的构建输出获得完整发布包，解压后运行：
+
+```powershell
+powershell.exe -NoProfile -File .\install.ps1
+```
+
+安装到当前用户的 `%LOCALAPPDATA%\Programs\CodexQuotaBar\0.1.0`，并注册当前用户 Windows 登录启动项，不需要管理员权限。安装后会直接启动监听器。开始菜单的 **Codex Quota Bar Settings** 用于配置路径与显示器，日常启动 ChatGPT/Codex 不需要额外操作。
+
+需要本机 Codex CLI（或桌面应用附带的 CLI）已使用 ChatGPT 账户登录。工具读取的是 **Codex 登录身份**的额度；如果桌面 ChatGPT 与 Codex 登录了不同账户，结果可能不同。可在设置中指定 `codex.exe`，该程序继承 `CODEX_HOME` 等环境配置。
+
+Windows 可能把新通知图标放入折叠菜单；需在任务栏设置中将两个图标设为始终显示。`100%` 在单个 16px 系统托盘图标中较小，可通过悬停或详情查看，副屏提供更大数字。
+
+## 读取方式与隐私
+
+工具启动本地 `codex app-server`，在标准输入输出上完成 `initialize` / `initialized` 握手，再调用 `account/rateLimits/read`。不创建聊天线程、不发起模型推理请求、不消耗重置券。
+
+按 `limitId=codex` 选择通用额度桶，按 `windowDurationMins=300/10080` 识别窗口，不把 `primary/secondary` 位置固定当成某种额度。未来接口若改变窗口长度，当前版本会显示不可用。
+
+工具本身不解析、保存或上传 `auth.json`，不抓取浏览器 Cookie，不记录接口原文，不设额外遥测后端。Codex CLI 自行处理认证与服务端请求，可能按其自身机制刷新登录令牌。设置只保存屏幕和可选的 CLI 路径。
+
+“实时”指周期性读取服务端当前数据；服务端与其他客户端的额度变更可能有延迟，不能保证秒级同步。独立 app-server 的事件也不能替代主动轮询。
+
+依据：[OpenAI App Server 文档](https://learn.chatgpt.com/docs/app-server)。
+
+## 构建与验证
+
+需要 Windows 和 .NET 10 SDK，没有第三方 NuGet 包依赖。
+
+```powershell
+dotnet build -c Release
+.\bin\Release\net10.0-windows\CodexQuotaBar.exe --self-test
+.\bin\Release\net10.0-windows\CodexQuotaBar.exe --probe
+.\scripts\publish.ps1
+```
+
+`--self-test` 包含离线额度解析、状态和真实子进程 JSON-RPC 握手/通知/错误测试。`--probe` 只读查询实际额度并输出 JSON，不输出认证材料。运行 framework-dependent 构建需要对应的 .NET 10 Desktop Runtime；发布脚本生成 `win-x64` 自包含程序。
+
+NuGet 无法访问时，可使用已验证的微软 SDK 生成附带私有运行时的便携包：`./scripts/publish.ps1 -BundledDotnetRoot C:/path/to/dotnet-sdk`。这类包必须保留 exe 旁的 dll、JSON 和 `runtime` 目录，安装脚本会一并复制，无需另行安装全局 .NET。
+
+## 已知限制
+
+- 副屏组件是贴在任务栏上的窗口，并非系统原生托盘。当前支持标准水平任务栏；自动隐藏、全屏应用、竖直任务栏和替代任务栏尚未专项适配。
+- 屏幕断开时临时回退主屏，重新接入后恢复选择；显示器硬件身份目前以 Windows `DeviceName` 标识。
+- 副屏拖动的位置暂不跨重启保存，显示器或主题变更后重新定位。
+- 桌面进程识别依赖 ChatGPT/Codex 的进程名称和安装路径。未来桌面应用改名可能需要更新。
+- 不支持 API-key-only 账户的订阅额度，也不混合显示其他模型专属额度桶。
+- 软件尚未代码签名；没有自动下载或执行更新的机制。
+
+## 退出与卸载
+
+右键选择“退出额度工具”可停止监听，之后可从安装目录重新启动。禁用登录启动不会结束当前进程。运行安装目录中的 `uninstall.ps1` 移除安装、启动项和设置快捷方式；保留用户设置。
+
+MIT License.

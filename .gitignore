@@ -1,0 +1,10 @@
+bin/
+obj/
+artifacts/
+.vs/
+*.user
+*.log
+settings.json
+codex_temp/
+auth.json
+.env

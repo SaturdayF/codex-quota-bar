@@ -1,0 +1,58 @@
+using System.Drawing.Drawing2D;
+using System.Drawing.Text;
+using System.Runtime.InteropServices;
+
+namespace CodexQuotaBar;
+
+internal static class Artwork
+{
+    public static readonly Color HourColor = Color.FromArgb(33, 158, 134);
+    public static readonly Color WeekColor = Color.FromArgb(100, 141, 230);
+    [DllImport("user32.dll")] private static extern bool DestroyIcon(IntPtr handle);
+    public static bool LightTheme
+    {
+        get
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            return key?.GetValue("SystemUsesLightTheme") is int value && value != 0;
+        }
+    }
+    public static Icon MakeIcon(string text, Color accent, bool stale)
+    {
+        using var bitmap = new Bitmap(64, 64);
+        using (var g = Graphics.FromImage(bitmap))
+        {
+            g.Clear(Color.Transparent);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+            Draw(g, new RectangleF(0, 0, 64, 64), text, accent, stale, LightTheme);
+        }
+        var handle = bitmap.GetHicon();
+        try { using var borrowed = Icon.FromHandle(handle); return (Icon)borrowed.Clone(); }
+        finally { DestroyIcon(handle); }
+    }
+    public static void Draw(Graphics g, RectangleF area, string text, Color accent, bool stale, bool light)
+    {
+        var size = area.Height * .64f;
+        using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+        // Four characters (100%) must fit a single notification slot.
+        while (size > area.Height * .25f)
+        {
+            using var candidate = new Font("Segoe UI", size, FontStyle.Bold, GraphicsUnit.Pixel);
+            if (g.MeasureString(text, candidate).Width <= area.Width + 1) break;
+            size -= 1;
+        }
+        using var font = new Font("Segoe UI", size, FontStyle.Bold, GraphicsUnit.Pixel);
+        using var brush = new SolidBrush(stale ? (light ? Color.DimGray : Color.Silver) : (light ? Color.FromArgb(30, 34, 40) : Color.FromArgb(243, 245, 248)));
+        var textArea = new RectangleF(area.X, area.Y, area.Width, area.Height * .85f);
+        g.DrawString(text, font, brush, textArea, format);
+        using var underline = new SolidBrush(stale ? Color.Gray : accent);
+        g.FillRectangle(underline, area.X + area.Width * .1f, area.Bottom - area.Height * .12f, area.Width * .8f, area.Height * .065f);
+        if (stale)
+        {
+            // A status dot distinguishes stale data even when colors are hard to perceive.
+            using var dot = new SolidBrush(accent);
+            g.FillEllipse(dot, area.Right - area.Height * .12f, area.Top, area.Height * .1f, area.Height * .1f);
+        }
+    }
+}
