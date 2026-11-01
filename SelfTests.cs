@@ -29,6 +29,8 @@ internal static class SelfTests
             Check(!general.WeekOnly && !new Quotas(null, null, "plus").WeekOnly, "unknown and Plus plans keep both windows");
             Check(new Quotas(null, null, "Pro").WeekOnly && !new Quotas(null, null, "professional").WeekOnly, "Pro classification is exact and case-insensitive");
             Check(System.Text.Json.JsonSerializer.Deserialize<Settings>("{\"ShowDialLetters\":false}")?.ShowDialLetters == false, "H/W setting round-trips disabled state");
+            Check(WidgetStyles.Choices.Length == 7 && WidgetStyles.Normalize("unknown") == "gauges", "seven selectable styles and safe unknown-style fallback");
+            Check(System.Text.Json.JsonSerializer.Deserialize<Settings>("{\"WidgetStyle\":\"badges\"}")?.WidgetStyle == "badges", "style setting round-trips");
             Check(Quotas.Label(new(0.8, null)) == "0%" && Quotas.Label(new(100, null)) == "100%" && Quotas.Label(null) == "--", "percent labels and conservative rounding");
             Check(!DesktopApps.IsDesktopBinary("codex", @"C:\Users\demo\AppData\Local\OpenAI\Codex\bin\version\codex.exe"), "own app-server cannot keep listener active");
             Check(DesktopApps.IsDesktopBinary("ChatGPT", null), "protected ChatGPT process remains detectable");

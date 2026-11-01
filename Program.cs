@@ -10,6 +10,7 @@ internal static class Program
         if (args.Contains("--fake-server")) return SelfTests.FakeServer();
         ApplicationConfiguration.Initialize();
         if (args.Contains("--hover-test")) return HoverTests.Run();
+        if (args.Contains("--layout-test")) return LayoutTests.Run();
         if (args.Length == 2 && args[0] == "--render-ui") { DesignPreview.Render(args[1]); return 0; }
         if (args.Contains("--self-test")) return SelfTests.Run().GetAwaiter().GetResult();
         if (args.Contains("--probe"))
@@ -25,6 +26,7 @@ internal static class Program
             catch (Exception e) { Console.WriteLine(JsonSerializer.Serialize(new { error = e.GetType().Name, message = "无法读取额度；请检查网络、Codex 路径和登录状态。" })); return 1; }
         }
         if (args.Contains("--settings")) { Application.Run(new SettingsForm()); return 0; }
+        if (args.Length > 0 && !args.Contains("--smoke-ui")) { Console.WriteLine("Unknown command-line option."); return 2; }
         using var singleton = new Mutex(true, @"Local\CodexQuotaBar.Listener", out var first);
         if (!first) return 0;
         try

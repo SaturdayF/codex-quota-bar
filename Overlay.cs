@@ -10,6 +10,11 @@ internal sealed class Overlay : Form
     private readonly HoverDetails details = new();
     private readonly Func<Point> pointer;
     private readonly bool showLetters;
+    private readonly string style;
+    private bool positioning;
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal bool InteractionSuspended { get; set; }
+    internal event Action? SettingsRequested;
     private long hoverStarted, lastInside;
     internal bool HoverHighlighted { get; private set; }
     internal bool DetailsVisible => details.Visible;
@@ -31,14 +36,15 @@ internal sealed class Overlay : Form
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(Point point, uint flags);
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
 
-    public Overlay(Screen screen, ContextMenuStrip menu, Func<Point>? pointer = null, bool showLetters = true)
+    public Overlay(Screen screen, ContextMenuStrip menu, Func<Point>? pointer = null, bool showLetters = true, string style = "gauges")
     {
         this.screen = screen;
         this.pointer = pointer ?? (() => Cursor.Position);
         this.showLetters = showLetters;
+        this.style = WidgetStyles.Normalize(style);
         Text = "Codex Quota Bar";
         FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true;
-        AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScaleMode = AutoScaleMode.None;
         DoubleBuffered = true;
         BackColor = TransparencyKey = clearKey;
         foregroundCallback = (_, _, _, _, _, _, _) =>
@@ -48,7 +54,6 @@ internal sealed class Overlay : Form
                 try { BeginInvoke(new Action(EnsureAboveTaskbar)); } catch (InvalidOperationException) { }
             }
         };
-        ContextMenuStrip = menu;
         hoverTimer.Tick += (_, _) => CheckHover();
         hoverTimer.Start();
         MouseDown += (_, e) => { EnsureAboveTaskbar(); if (e.Button == MouseButtons.Left) { dragging = true; Capture = true; dragStart = Cursor.Position; locationStart = Location; } };
@@ -57,7 +62,7 @@ internal sealed class Overlay : Form
     }
     private void CheckHover()
     {
-        if (!Visible) { details.Hide(); return; }
+        if (!Visible || InteractionSuspended) { details.Hide(); HoverHighlighted = false; BackColor = clearKey; Invalidate(); return; }
         var now = Environment.TickCount64;
         var point = pointer();
         var onWidget = Bounds.Contains(point);
@@ -65,7 +70,7 @@ internal sealed class Overlay : Form
         if (inside)
         {
             lastInside = now;
-            if (!HoverHighlighted) { HoverHighlighted = true; hoverStarted = now; Invalidate(); }
+            if (!HoverHighlighted) { HoverHighlighted = true; BackColor = Artwork.LightTheme ? Color.FromArgb(234, 234, 234) : Color.FromArgb(49, 49, 49); hoverStarted = now; Invalidate(); }
             if (!dragging && onWidget && now - hoverStarted >= 225 && !details.Visible)
             {
                 details.UpdateState(state);
@@ -76,7 +81,7 @@ internal sealed class Overlay : Form
         }
         else if (HoverHighlighted && now - lastInside > 180)
         {
-            HoverHighlighted = false; details.Hide(); Invalidate();
+            HoverHighlighted = false; BackColor = clearKey; details.Hide(); Invalidate();
         }
         if (dragging) details.Hide();
     }
@@ -92,6 +97,12 @@ internal sealed class Overlay : Form
     }
     protected override void WndProc(ref Message m)
     {
+        if (m.Msg == 0x007B)
+        {
+            details.Hide();
+            if (!InteractionSuspended) SettingsRequested?.Invoke();
+            m.Result = IntPtr.Zero; return;
+        }
         // WS_EX_NOACTIVATE alone does not cover every mouse activation path.
         if (m.Msg == 0x0021) { m.Result = new IntPtr(3); return; } // WM_MOUSEACTIVATE / MA_NOACTIVATE
         base.WndProc(ref m);
@@ -105,28 +116,34 @@ internal sealed class Overlay : Form
     protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x08000000 | 0x00000080; return p; } }
     public void UpdateState(DisplayState current)
     {
-        var layoutChanged = state.Quotas.WeekOnly != current.Quotas.WeekOnly;
         state = current;
-        if (layoutChanged && IsHandleCreated) PositionAtTaskbar();
+        if (IsHandleCreated) PositionAtTaskbar(resetHorizontal: false);
         details.UpdateState(state);
         if (details.Visible) details.Place(Bounds, screen.WorkingArea);
         Invalidate();
         EnsureAboveTaskbar();
     }
-    public void PositionAtTaskbar()
+    protected override void OnShown(EventArgs e) { base.OnShown(e); BeginInvoke(new Action(() => PositionAtTaskbar())); }
+    protected override void OnDpiChanged(DpiChangedEventArgs e) { base.OnDpiChanged(e); if (!IsDisposed) BeginInvoke(new Action(() => PositionAtTaskbar())); }
+    public void PositionAtTaskbar(bool resetHorizontal = true)
     {
+        if (positioning || IsDisposed) return;
+        positioning = true;
+        try {
         var scale = DeviceDpi / 96f;
-        Size = new((int)((state.Quotas.WeekOnly ? 94 : 184) * scale), (int)(34 * scale));
         var bounds = screen.Bounds;
         var taskbar = TaskbarBounds(screen);
+        var desired = WidgetStyles.SizeFor(style, state.Quotas.WeekOnly, DeviceDpi);
+        Size = new(desired.Width, taskbar is { } b ? Math.Min(desired.Height, b.Height) : desired.Height);
         // Anchor to each display's left edge, away from the clock and notification icons.
         var leftInset = (int)(16 * scale);
-        var x = Math.Min(bounds.Left + leftInset, Math.Max(bounds.Left, bounds.Right - Width));
-        Location = new(x, taskbar is { } bar ? bar.Top + Math.Max(0, (bar.Height - Height) / 2) : screen.WorkingArea.Bottom - Height - 4);
-        BackColor = TransparencyKey = clearKey;
+        var x = Math.Clamp(resetHorizontal ? bounds.Left + leftInset : Left, bounds.Left, Math.Max(bounds.Left, bounds.Right - Width));
+        Location = new(x, taskbar is { } bar ? bar.Top + (bar.Height - Height) / 2 : screen.WorkingArea.Bottom - Height - 4);
+        TransparencyKey = clearKey;
         EnsureAboveTaskbar();
+        } finally { positioning = false; }
     }
-    private static Rectangle? TaskbarBounds(Screen screen)
+    internal static Rectangle? TaskbarBounds(Screen screen)
     {
         var monitor = MonitorFromPoint(new Point(screen.Bounds.Left + 1, screen.Bounds.Top + 1), 2);
         var primary = FindWindow("Shell_TrayWnd", null);
@@ -145,10 +162,7 @@ internal sealed class Overlay : Form
             e.Graphics.DrawRectangle(border, 0, 0, ClientSize.Width - 1, ClientSize.Height - 1);
         }
         e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.SingleBitPerPixelGridFit;
-        var cell = ClientSize.Width / (state.Quotas.WeekOnly ? 1f : 2f);
-        if (!state.Quotas.WeekOnly) Artwork.Gauge(e.Graphics, new(4, 2, cell - 8, ClientSize.Height - 4), state.Quotas.Hour, "H", Artwork.HourColor, showLetters, state.Stale, Artwork.LightTheme);
-        var left = state.Quotas.WeekOnly ? 0 : cell;
-        Artwork.Gauge(e.Graphics, new(left + 4, 2, cell - 8, ClientSize.Height - 4), state.Quotas.Week, "W", Artwork.WeekColor, showLetters, state.Stale, Artwork.LightTheme);
+        WidgetStyles.Draw(e.Graphics, ClientRectangle, state.Quotas, style, showLetters, state.Stale, Artwork.LightTheme);
     }
     protected override void Dispose(bool disposing)
     {

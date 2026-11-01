@@ -32,5 +32,14 @@ internal static class DesignPreview
         Artwork.Gauge(g, new(242, bottom + 42, 84, 30), sample.Week, "W", Artwork.WeekColor, false, false, Artwork.LightTheme);
         g.DrawString("原生界面渲染 · 所有额度与重置时间均为模拟示例", small, ink, 24, board.Height - 27);
         board.Save(Path.Combine(directory, "dial-ui-preview.png"));
+        using var settings = new SettingsForm(initialSettings: new Settings());
+        settings.ShowInTaskbar = false;
+        settings.StartPosition = FormStartPosition.Manual;
+        settings.Location = new(-30000, -30000);
+        settings.Show(); Application.DoEvents(); settings.PerformLayout();
+        using var settingsImage = new Bitmap(settings.Width, settings.Height);
+        settings.DrawToBitmap(settingsImage, new Rectangle(Point.Empty, settings.Size));
+        settingsImage.Save(Path.Combine(directory, "settings-preview.png"));
+        settings.Hide();
     }
 }
