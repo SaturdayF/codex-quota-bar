@@ -80,8 +80,10 @@ internal sealed class Overlay : Form
         Size = new((int)(118 * scale), (int)(32 * scale));
         var bounds = screen.Bounds;
         var taskbar = TaskbarBounds(screen);
-        // Reserve space for clock/tray; users may drag horizontally to fit their taskbar.
-        Location = new(Math.Max(bounds.Left, bounds.Right - Width - (int)(235 * scale)), taskbar is { } bar ? bar.Top + Math.Max(0, (bar.Height - Height) / 2) : screen.WorkingArea.Bottom - Height - 4);
+        // Anchor to each display's left edge, away from the clock and notification icons.
+        var leftInset = (int)(16 * scale);
+        var x = Math.Min(bounds.Left + leftInset, Math.Max(bounds.Left, bounds.Right - Width));
+        Location = new(x, taskbar is { } bar ? bar.Top + Math.Max(0, (bar.Height - Height) / 2) : screen.WorkingArea.Bottom - Height - 4);
         BackColor = TransparencyKey = clearKey;
         EnsureAboveTaskbar();
     }
