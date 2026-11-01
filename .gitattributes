@@ -1,0 +1,2 @@
+# Preserve the upstream MIT license verbatim, including its title's trailing space.
+native/vendor/LICENSE-json.txt -whitespace

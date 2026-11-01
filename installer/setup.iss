@@ -1,8 +1,8 @@
 #ifndef AppVersion
-  #define AppVersion "0.1.0"
+  #define AppVersion "0.2.0"
 #endif
 #ifndef PayloadDir
-  #define PayloadDir "..\artifacts\win-x64"
+  #define PayloadDir "..\artifacts\native-payload"
 #endif
 
 [Setup]
@@ -12,6 +12,7 @@ AppVersion={#AppVersion}
 AppPublisher=SaturdayF
 AppPublisherURL=https://github.com/SaturdayF/codex-quota-bar
 DefaultDirName={localappdata}\Programs\CodexQuotaBar\{#AppVersion}
+UsePreviousAppDir=no
 DisableDirPage=no
 DefaultGroupName=Codex Quota Bar
 DisableProgramGroupPage=yes

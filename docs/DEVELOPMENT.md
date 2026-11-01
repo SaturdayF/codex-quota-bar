@@ -1,69 +1,56 @@
-# 开发与验证
+# 原生版开发与验证
+
+0.2.0 使用 C++17、Win32 和 Windows 自带 GDI+，无需 .NET。C++ 标准库和线程运行库静态链接。历史 C# 源码仍在 `src/`，不参与原生构建；完整旧构建流程可从 `v0.1.0-installer.1` 标签查阅。
 
 ## 构建
 
-需要 Windows、.NET 10 SDK。运行代码无第三方 NuGet 依赖。
+需要 Windows 和 x64 MinGW-w64（已用 GCC 11.2.0 验证），将 `g++`、`windres` 加入 PATH；Python 仅用于 ZIP 打包。运行程序不需要这些开发工具。
 
 ```powershell
-dotnet build -c Release
-dotnet run --no-build -c Release -- --self-test
-dotnet run --no-build -c Release -- --hover-test
-dotnet run --no-build -c Release -- --settings-test
-dotnet run --no-build -c Release -- --layout-test
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-native.ps1
 ```
 
-`--self-test` 检查解析、状态、几何、颜色、动画、配置和真实子进程 JSON-RPC。其余检查使用原生窗口与合成消息，不移动鼠标；设置和布局检查需要至少一个 ChatGPT / Codex 桌面应用运行，双屏覆盖需要连接两块屏幕。测试不保存设置、不执行真正卸载。
+输出 `artifacts/native-win-x64/CodexQuotaBar.exe`。脚本增量编译，将目标文件放在忽略的 artifacts 中；清理该目录后可完整重建。源码风格使用根目录 `.clang-format`。JSON 解析使用固定版本 nlohmann/json 3.11.3，MIT 许可随程序打包。
 
-`--probe` 为只读实际额度查询，输出的额度与套餐属于本机账户数据，不要提交到仓库。
-
-## 卸载验证
+## 检查
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1 -WhatIf -RemoveSettings
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Uninstall.Tests.ps1
+$app = (Resolve-Path artifacts/native-win-x64/CodexQuotaBar.exe).Path
+Start-Process $app -ArgumentList '--self-test --output codex_tmp/native-checks.txt' -Wait
+Start-Process $app -ArgumentList '--ui-test --output codex_tmp/native-ui' -Wait
+Start-Process $app -ArgumentList '--render-ui codex_tmp/native-previews' -Wait
 ```
 
-预演列出目标，不结束进程、不删文件、不改注册表。卸载按钮仅在程序正从当前用户对应版本的安装目录运行且卸载脚本存在时可用。按钮有二次确认；独立 PowerShell 辅助进程等待 UI 退出，再停止其余已安装的本工具进程、删除本版本和可选设置，最后清理自己的临时脚本。
+核心检查涵盖额度窗口筛选、异常值、旧配置兼容、未知配置字段保留、动画重置、所有样式在多个 DPI / Pro 布局下的实际渲染像素、真实子进程 JSON-RPC 管道和原生卸载标记。
 
-卸载测试在可删除的临时目录实际执行文件清理，模拟系统进程、注册表和快捷方式根目录；验证预演不写入、完整删除本版本、保留其他版本、默认保留设置及拒绝非法版本路径，不触碰用户真实安装。
-
-## 插图与图标
+UI 检查在已连接的显示屏创建真实窗口，以合成消息和注入坐标测试右键设置、首帧居中、悬浮恢复、样式切换、色板、缩放、隐藏与最小化恢复，不移动用户鼠标、不写用户设置、不改启动项。测试用额度为模拟数据。隐藏启动测试覆盖后台启动标志影响首次设置窗口显示的情况。
 
 ```powershell
-dotnet run -c Release -- --render-ui docs
-dotnet run -c Release -- --render-motion codex_tmp/animation-frames
-python scripts/make-animation.py codex_tmp/animation-frames docs/animation-preview.gif
-python scripts/design-icons.py
+# 只读实际账户额度；输出属于私人数据，不提交到仓库
+Start-Process $app -ArgumentList '--probe --output codex_tmp/native-probe.json' -Wait
+# 模拟任务栏展示，七秒后退出
+Start-Process $app -ArgumentList '--preview --smoke-ui' -Wait
 ```
 
-Python 素材工具需要 Pillow，仅开发时使用。图标脚本依赖 Windows 字体目录，生成可编辑 SVG、应用 PNG/多尺寸 ICO 和候选对照图。C# 原生渲染使用模拟额度，不应替换为真实账户数据。生成动画后可删除临时帧，保留 GIF 与生成代码。
+`--probe` 只调用 initialize / account/read / account/rateLimits/read，不创建聊天。真实服务端的周期重置不人为触发，动画重置逻辑由模拟输入验证。
 
-## 打包
+## 安装与打包
 
-用户随后要求将可选目录的安装器与小 ZIP 也归入 0.1.0。此补充使用 `v0.1.0-installer.1` 源码标签，原 `v0.1.0` 标签不动；经明确授权替换该 Release 的大 ZIP 下载。
+使用官方 Inno Setup 6.7.4（当前已验证），或兼容版本。安装器同样不需要 .NET。运行负载只有 EXE、版本、说明和许可证，不含 .NET 文件夹或 DLL。
 
 ```powershell
-./scripts/build-installer.ps1 -InnoCompiler C:/path/to/ISCC.exe
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/Installer.Tests.ps1
+./scripts/build-native-installer.ps1 -InnoCompiler C:/path/to/ISCC.exe
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/NativeInstaller.Tests.ps1
 ```
 
-详见 [安装器说明](../installer/README.md)。完整 EXE 使用 LZMA2 压缩，包含私有运行时；Portable ZIP 不含运行时，需全局 .NET 10 Desktop Runtime x64。两者不是相同依赖条件下的等价包。
+生成 `artifacts/releases/v0.2.0` 中的 Setup EXE、Portable ZIP 和 SHA256SUMS.txt。测试真实安装到带中文和空格的独立目录，再执行原生卸载，检查保留无关文件；`/ISOLATEDTEST=1` 禁止修改用户启动项、快捷方式、卸载注册项、设置和既有监听器。绝不对用户真实安装运行卸载测试。
 
-```powershell
-./scripts/publish.ps1
-# 已有离线 SDK/运行时的备选方式
-./scripts/publish.ps1 -BundledDotnetRoot C:/path/to/dotnet-sdk
-python scripts/package-release.py
-```
+0.2.0 默认使用自己的版本目录，不把旧 .NET 目录混入新负载。旧安装目录保留，设置继续使用 `%LOCALAPPDATA%/CodexQuotaBar/settings.json`。安装版设置中的卸载按钮只认同目录、相同产品与版本的 Inno 卸载器，启动前再次确认。卸载旧安装前退出程序；旧卸载器可能清理共用的启动项，可在新版本中重新启用。
 
-默认生成 Windows x64 自包含程序。离线方式把既有 SDK 中的 .NET 和 Windows Desktop 运行时复制到包内的 `runtime`，无需用户安装全局 .NET。两者均输出到 `artifacts/win-x64`。安装脚本与卸载脚本读取生成的版本清单；程序集版本和清单源于 `version.props`。
+旧 `publish.ps1` / `build-installer.ps1` / `package-portable.py` 等保留用于历史 .NET 实现，不用于 0.2.0。不要把新原生目录交给旧发布脚本。
 
-`package-release.py` 生成 `artifacts/releases/vX.Y.Z` 下的 ZIP 和 SHA-256 文件，排除调试 PDB，并拒绝覆盖已有 ZIP。
+## 发布与限制
 
-打包目录应包含 EXE、必要 DLL/JSON/运行时、安装和卸载脚本、README、CHANGELOG、LICENSE、文档插图与 `version.json`。不要把本机设置、登录材料、调试 PDB 或私有 SDK 本体放入发布 ZIP。
+原始 `v0.1.0` 和 `v0.1.0-installer.1` 标签及 0.1.0 下载不变；原生版使用新标签。发布前检查 EXE PE 导入表只有系统 DLL、CLR 目录为零；核对上传资产 SHA-256。
 
-## 发布规则
-
-完成测试和素材检查后提交，创建带说明的 `vX.Y.Z` Git 标签；发布完整 ZIP 及其 SHA-256 校验文件。`v0.1.0` 封存后不得重写标签、修改该版本发布包。后续修改先将版本提升至 `0.2.0`，并在 CHANGELOG 中记录，不直接修补旧版本。
-
-本次 0.1.0 安装器补充及下载替换是用户明确要求的例外。未来其他功能仍按 0.2.0 推进。
+多屏验证仅覆盖本机已连接屏幕；自动隐藏、竖直或第三方任务栏、其他设备尚未专项验证。当前任务栏为透明自绘窗口。程序尚未代码签名，依赖已登录的本机 Codex CLI 和上游 app-server 协议。

@@ -33,6 +33,46 @@ def main():
         with request.urlopen(request.Request(url, data=body, headers=headers, method=method), timeout=180) as response:
             payload = response.read()
             return json.loads(payload) if payload else None
+    if not refresh and tag == "v0.2.0":
+        allowed = {"CodexQuotaBar-v0.2.0-Setup.exe", "CodexQuotaBar-v0.2.0-Portable-win-x64.zip", "SHA256SUMS.txt"}
+        if {Path(path).name for path in paths} != allowed:
+            raise RuntimeError("Native release requires exact installer, ZIP and checksum asset set")
+        body = (ROOT / "docs/releases/v0.2.0.md").read_text(encoding="utf-8").replace("{SOURCE_COMMIT}", commit)
+        try:
+            release = api(f"/repos/{REPO}/releases/tags/{tag}")
+        except error.HTTPError as exc:
+            if exc.code != 404:
+                raise
+            release = api(f"/repos/{REPO}/releases", {"tag_name": tag, "target_commitish": commit,
+                "name": "Codex Quota Bar 0.2.0 · Native", "body": body, "draft": True, "prerelease": False})
+        if release["target_commitish"] != commit:
+            raise RuntimeError("Native release commit does not match")
+        expected = {}
+        for item in paths:
+            file = Path(item)
+            digest = "sha256:" + hashlib.sha256(file.read_bytes()).hexdigest()
+            expected[file.name] = digest
+            existing = next((a for a in release["assets"] if a["name"] == file.name), None)
+            if existing:
+                if existing.get("digest") != digest:
+                    raise RuntimeError("Native asset already exists with different content; no overwrite")
+                continue
+            if not release["draft"]:
+                raise RuntimeError("Published native release is immutable")
+            upload = release["upload_url"].split("{")[0] + "?name=" + parse.quote(file.name)
+            api(upload, file.read_bytes(), "POST", "application/octet-stream")
+            print("Uploaded", file.name, flush=True)
+        verified = api(f"/repos/{REPO}/releases/{release['id']}")
+        for name, digest in expected.items():
+            if not any(a["name"] == name and a.get("digest") == digest for a in verified["assets"]):
+                raise RuntimeError("Native release hash verification failed; draft retained")
+        if verified["draft"]:
+            verified = api(f"/repos/{REPO}/releases/{release['id']}", {"draft": False}, "PATCH")
+        snapshot = {"url": verified["html_url"], "tag": tag, "commit": commit, "draft": verified["draft"],
+            "assets": [{k: a[k] for k in ("name", "size", "digest")} for a in verified["assets"]]}
+        (ROOT / "codex_tmp/native/github-release.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+        print("Published and SHA256 verified", verified["html_url"], flush=True)
+        return
     if refresh:
         if tag != "v0.1.0-installer.1":
             raise RuntimeError("Existing-release refresh is authorized only for the 0.1.0 installer supplement")
