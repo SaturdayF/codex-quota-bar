@@ -31,6 +31,22 @@ internal static class SelfTests
             Check(System.Text.Json.JsonSerializer.Deserialize<Settings>("{\"ShowDialLetters\":false}")?.ShowDialLetters == false, "H/W setting round-trips disabled state");
             Check(WidgetStyles.Choices.Length == 7 && WidgetStyles.Normalize("unknown") == "gauges", "seven selectable styles and safe unknown-style fallback");
             Check(System.Text.Json.JsonSerializer.Deserialize<Settings>("{\"WidgetStyle\":\"badges\"}")?.WidgetStyle == "badges", "style setting round-trips");
+            foreach (var dpi in new[] { 96, 120, 144, 192 })
+            foreach (var letter in new[] { "H", "W" })
+            {
+                var scale = dpi / 96f;
+                using var image = new Bitmap((int)(100 * scale), (int)(36 * scale));
+                using var graphics = Graphics.FromImage(image);
+                graphics.Clear(Color.White);
+                Artwork.Gauge(graphics, new(0, 0, 90 * scale, 30 * scale), new(68, null), letter, Artwork.HourColor, true, false, true);
+                var targetX = 12.5f * scale; var targetY = 15 * scale;
+                var pixels = new List<Point>();
+                for (var y = (int)(7 * scale); y < (int)(23 * scale); y++)
+                for (var x = (int)(5 * scale); x < (int)(20 * scale); x++)
+                    if (image.GetPixel(x, y).ToArgb() == Color.FromArgb(30, 38, 48).ToArgb()) pixels.Add(new(x, y));
+                Check(pixels.Count > 0 && Math.Abs((pixels.Min(p => p.X) + pixels.Max(p => p.X) + 1) / 2f - targetX) <= 1
+                    && Math.Abs((pixels.Min(p => p.Y) + pixels.Max(p => p.Y) + 1) / 2f - targetY) <= 1, $"{letter} visible glyph centered at {dpi} DPI");
+            }
             Check(Quotas.Label(new(0.8, null)) == "0%" && Quotas.Label(new(100, null)) == "100%" && Quotas.Label(null) == "--", "percent labels and conservative rounding");
             Check(!DesktopApps.IsDesktopBinary("codex", @"C:\Users\demo\AppData\Local\OpenAI\Codex\bin\version\codex.exe"), "own app-server cannot keep listener active");
             Check(DesktopApps.IsDesktopBinary("ChatGPT", null), "protected ChatGPT process remains detectable");

@@ -61,6 +61,8 @@ dotnet build -c Release
 
 `--layout-test` 在连接的显示器上检查七种样式的双窗口/Pro 单窗口布局、垂直居中和右键设置事件，不移动真实鼠标。
 
+`--settings-test` 在桌面 ChatGPT/Codex 正在运行时，验证实际应用控制器能从组件右键消息打开设置，然后关闭测试窗口，不保存设置。`--self-test` 还检查 H/W 可见字形在 96/120/144/192 DPI 下的居中位置，避免字体行框留白造成偏移。
+
 NuGet 无法访问时，可使用已验证的微软 SDK 生成附带私有运行时的便携包：`./scripts/publish.ps1 -BundledDotnetRoot C:/path/to/dotnet-sdk`。这类包必须保留 exe 旁的 dll、JSON 和 `runtime` 目录，安装脚本会一并复制，无需另行安装全局 .NET。
 
 ## 已知限制

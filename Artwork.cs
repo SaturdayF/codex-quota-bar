@@ -18,7 +18,18 @@ internal static class Artwork
         using var text = new SolidBrush(stale ? (light ? Color.DimGray : Color.Silver) : light ? Color.FromArgb(30, 38, 48) : Color.FromArgb(240, 244, 250));
         using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
         using var labelFont = new Font("Segoe UI", 10 * scale, FontStyle.Bold, GraphicsUnit.Pixel);
-        if (showLetter) g.DrawString(letter, labelFont, text, circle, format);
+        if (showLetter)
+        {
+            // Center the visible glyph, not the font's line box (which includes
+            // ascent/descent padding and looks offset at mixed monitor DPI).
+            using var glyph = new GraphicsPath();
+            glyph.AddString(letter, labelFont.FontFamily, (int)FontStyle.Bold, 10 * scale, PointF.Empty, StringFormat.GenericTypographic);
+            var inkBounds = glyph.GetBounds();
+            using var transform = new Matrix();
+            transform.Translate(circle.Left + circle.Width / 2 - (inkBounds.Left + inkBounds.Width / 2), circle.Top + circle.Height / 2 - (inkBounds.Top + inkBounds.Height / 2));
+            glyph.Transform(transform);
+            g.FillPath(text, glyph);
+        }
         var numberArea = new RectangleF(circle.Right + 6 * scale, area.Y, Math.Max(1, area.Right - circle.Right - 6 * scale), area.Height);
         var label = Quotas.Label(window);
         var fontSize = 17 * scale;

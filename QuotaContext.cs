@@ -81,7 +81,8 @@ internal sealed class QuotaContext : ApplicationContext
             {
                 var overlay = new Overlay(screen, menu, showLetters: settings.ShowDialLetters, style: settings.WidgetStyle);
                 overlay.InteractionSuspended = settingsWindow is not null;
-                overlay.SettingsRequested += () => Dispatch(ShowSettings);
+                // WM_CONTEXTMENU is already delivered on this UI thread.
+                overlay.SettingsRequested += ShowSettings;
                 overlays.Add(overlay);
                 overlay.Show(); overlay.PositionAtTaskbar(); overlay.UpdateState(state);
             }

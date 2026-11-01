@@ -11,6 +11,7 @@ internal static class Program
         ApplicationConfiguration.Initialize();
         if (args.Contains("--hover-test")) return HoverTests.Run();
         if (args.Contains("--layout-test")) return LayoutTests.Run();
+        if (args.Contains("--settings-test")) return UiIntegrationTests.Run();
         if (args.Length == 2 && args[0] == "--render-ui") { DesignPreview.Render(args[1]); return 0; }
         if (args.Contains("--self-test")) return SelfTests.Run().GetAwaiter().GetResult();
         if (args.Contains("--probe"))
