@@ -40,10 +40,10 @@ internal sealed record Quotas(QuotaWindow? Hour, QuotaWindow? Week, string? Plan
     public static string Label(QuotaWindow? w, bool showPercent = true) => w is null ? "--" : Math.Floor(w.Remaining).ToString("0", CultureInfo.InvariantCulture) + (showPercent ? "%" : "");
 }
 
-internal sealed record DisplayState(Quotas Quotas, DateTimeOffset? Updated, string? Error)
+internal sealed record DisplayState(Quotas Quotas, DateTimeOffset? Updated, string? Error, int RefreshSeconds = 30)
 {
     public static DisplayState Empty => new(new(null, null), null, "等待首次读取");
-    public bool Stale => Error is not null || Updated is null || DateTimeOffset.UtcNow - Updated > TimeSpan.FromSeconds(75);
+    public bool Stale => Error is not null || Updated is null || DateTimeOffset.UtcNow - Updated > TimeSpan.FromSeconds(Math.Max(75, RefreshSeconds * 2.5));
     public string Tooltip(bool hour)
     {
         var w = hour ? Quotas.Hour : Quotas.Week;

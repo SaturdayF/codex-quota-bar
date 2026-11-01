@@ -7,11 +7,15 @@ internal sealed class Overlay : Form
     private readonly Screen screen;
     private DisplayState state = DisplayState.Empty;
     private readonly System.Windows.Forms.Timer hoverTimer = new() { Interval = 75 };
-    private readonly HoverDetails details = new();
+    private readonly HoverDetails details;
+    private readonly QuotaPalette palette;
     private readonly Func<Point> pointer;
     private readonly bool showLetters;
     private readonly string style;
     private readonly StylePreferences preferences;
+    private readonly double widgetScale;
+    private WidgetLayout? widgetLayout;
+    private (int Dpi, bool WeekOnly, int Height) layoutKey;
     private readonly QuotaAnimation animation = new();
     private readonly System.Windows.Forms.Timer animationTimer = new() { Interval = 16 };
     private bool positioning;
@@ -39,13 +43,16 @@ internal sealed class Overlay : Form
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(Point point, uint flags);
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
 
-    public Overlay(Screen screen, ContextMenuStrip menu, Func<Point>? pointer = null, bool showLetters = true, string style = "gauges", bool animateReset = true, StylePreferences? preferences = null)
+    public Overlay(Screen screen, ContextMenuStrip menu, Func<Point>? pointer = null, bool showLetters = true, string style = "gauges", bool animateReset = true, StylePreferences? preferences = null, double widgetScale = 1, QuotaPalette? palette = null)
     {
         this.screen = screen;
         this.pointer = pointer ?? (() => Cursor.Position);
         this.showLetters = showLetters;
         this.style = WidgetStyles.Normalize(style);
         this.preferences = preferences is null ? new() { Animate = animateReset } : preferences with { };
+        this.widgetScale = WidgetLayout.NormalizeScale(widgetScale);
+        this.palette = palette ?? QuotaPalette.Default;
+        details = new(this.palette);
         animationTimer.Tick += (_, _) =>
         {
             if (!animation.Running(Environment.TickCount64)) animationTimer.Stop();
@@ -157,8 +164,14 @@ internal sealed class Overlay : Form
         var scale = DeviceDpi / 96f;
         var bounds = screen.Bounds;
         var taskbar = TaskbarBounds(screen);
-        var desired = WidgetStyles.SizeFor(style, state.Quotas.WeekOnly, DeviceDpi);
-        Size = new(desired.Width, taskbar is { } b ? Math.Min(desired.Height, b.Height) : desired.Height);
+        var availableHeight = taskbar?.Height ?? (int)(32 * scale * widgetScale);
+        var key = (DeviceDpi, state.Quotas.WeekOnly, availableHeight);
+        if (widgetLayout is null || layoutKey != key)
+        {
+            layoutKey = key;
+            widgetLayout = WidgetLayout.Create(style, state.Quotas.WeekOnly, DeviceDpi, widgetScale, availableHeight, showLetters, preferences);
+        }
+        Size = widgetLayout.SurfaceSize;
         // Anchor to each display's left edge, away from the clock and notification icons.
         var leftInset = (int)(16 * scale);
         var x = Math.Clamp(resetHorizontal ? bounds.Left + leftInset : Left, bounds.Left, Math.Max(bounds.Left, bounds.Right - Width));
@@ -186,7 +199,7 @@ internal sealed class Overlay : Form
         if (IsDisposed || !IsHandleCreated || ClientSize.Width < 1 || ClientSize.Height < 1) return;
         var now = Environment.TickCount64;
         using var image = LayeredSurface.Paint(ClientSize, state.Quotas, style, showLetters, state.Stale, Artwork.LightTheme, HoverHighlighted,
-            animation.Progress(true, now), animation.Progress(false, now), preferences);
+            animation.Progress(true, now), animation.Progress(false, now), preferences, widgetLayout?.DrawingBounds, palette);
         LayeredSurface.Present(Handle, Location, image);
     }
     protected override void Dispose(bool disposing)

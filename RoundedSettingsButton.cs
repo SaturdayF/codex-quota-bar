@@ -12,9 +12,18 @@ internal sealed class RoundedSettingsButton : Button
     protected override void OnMouseLeave(EventArgs e) { hovered = pressed = false; Invalidate(); base.OnMouseLeave(e); }
     protected override void OnMouseDown(MouseEventArgs e) { pressed = e.Button == MouseButtons.Left; Invalidate(); base.OnMouseDown(e); }
     protected override void OnMouseUp(MouseEventArgs e) { pressed = false; Invalidate(); base.OnMouseUp(e); }
-    protected override void OnPaintBackground(PaintEventArgs e) => e.Graphics.Clear(Parent?.BackColor ?? BackColor);
+    private Color BackgroundSurface()
+    {
+        for (var parent = Parent; parent is not null; parent = parent.Parent)
+            if (parent.BackColor.A == 255) return parent.BackColor;
+        return SystemColors.Control;
+    }
+    protected override void OnPaintBackground(PaintEventArgs e) => e.Graphics.Clear(BackgroundSurface());
     protected override void OnPaint(PaintEventArgs e)
     {
+        // Flat Button painting can bypass OnPaintBackground. Paint every buffer pixel,
+        // including corners, instead of leaving transparent pixels that appear black.
+        e.Graphics.Clear(BackgroundSurface());
         if (Width < 3 || Height < 3) return;
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         var fill = hovered && Enabled ? FlatAppearance.MouseOverBackColor : BackColor;

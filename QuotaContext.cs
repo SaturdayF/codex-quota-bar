@@ -14,6 +14,7 @@ internal sealed class QuotaContext : ApplicationContext
     private readonly List<Overlay> overlays = [];
     private readonly SemaphoreSlim refreshGate = new(1, 1);
     private CancellationTokenSource? session;
+    private CancellationTokenSource? refreshDelay;
     private AppServer? server;
     private DisplayState state = DisplayState.Empty;
     private string layout = "";
@@ -50,7 +51,10 @@ internal sealed class QuotaContext : ApplicationContext
         var write = File.Exists(Settings.FilePath) ? File.GetLastWriteTimeUtc(Settings.FilePath) : DateTime.MinValue;
         if (write != settingsWrite)
         {
+            var previousInterval = settings.RefreshIntervalSeconds;
             settingsWrite = write; settings = Settings.Load(); layout = "";
+            state = state with { RefreshSeconds = settings.RefreshIntervalSeconds };
+            if (previousInterval != settings.RefreshIntervalSeconds) refreshDelay?.Cancel();
         }
         var running = DesktopApps.AnyRunning();
         if (running != active)
@@ -58,7 +62,7 @@ internal sealed class QuotaContext : ApplicationContext
             active = running;
             if (active)
             {
-                state = DisplayState.Empty;
+                state = DisplayState.Empty with { RefreshSeconds = settings.RefreshIntervalSeconds };
                 session = new CancellationTokenSource();
                 _ = RunSession(session.Token);
             }
@@ -82,7 +86,7 @@ internal sealed class QuotaContext : ApplicationContext
             hourIcon.Visible = weekIcon.Visible = false;
             foreach (var screen in selected)
             {
-                var overlay = new Overlay(screen, menu, showLetters: settings.ShowDialLetters, style: settings.WidgetStyle, preferences: settings.ForStyle(settings.WidgetStyle));
+                var overlay = new Overlay(screen, menu, showLetters: settings.ShowDialLetters, style: settings.WidgetStyle, preferences: settings.ForStyle(settings.WidgetStyle), widgetScale: settings.WidgetScale, palette: settings.Palette());
                 // WM_CONTEXTMENU is already delivered on this UI thread.
                 overlay.SettingsRequested += () => QueueSettings(Screen.FromControl(overlay));
                 overlays.Add(overlay);
@@ -104,8 +108,13 @@ internal sealed class QuotaContext : ApplicationContext
             while (!token.IsCancellationRequested)
             {
                 var success = await Refresh(token);
-                failures = success ? 0 : Math.Min(failures + 1, 4);
-                await Task.Delay(TimeSpan.FromSeconds(success ? 30 : Math.Min(300, 30 * Math.Pow(2, failures - 1))), token);
+                failures = success ? 0 : Math.Min(failures + 1, 6);
+                var seconds = RefreshSchedule.DelaySeconds(settings.RefreshIntervalSeconds, success, failures);
+                using var delay = CancellationTokenSource.CreateLinkedTokenSource(token);
+                refreshDelay = delay;
+                try { await Task.Delay(TimeSpan.FromSeconds(seconds), delay.Token); }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested) { }
+                finally { if (ReferenceEquals(refreshDelay, delay)) refreshDelay = null; }
             }
         }
         catch (OperationCanceledException) { }
@@ -147,7 +156,7 @@ internal sealed class QuotaContext : ApplicationContext
     }
     private void Apply(Quotas quotas)
     {
-        state = new(quotas, DateTimeOffset.UtcNow, null);
+        state = new(quotas, DateTimeOffset.UtcNow, null, settings.RefreshIntervalSeconds);
         Render();
     }
     private string artworkKey = "";
@@ -155,12 +164,13 @@ internal sealed class QuotaContext : ApplicationContext
     {
         if (!active || quitting) return;
         var h = Quotas.Label(state.Quotas.Hour); var w = Quotas.Label(state.Quotas.Week);
-        var key = $"{h}|{w}|{state.Stale}|{Artwork.LightTheme}";
+        var palette = settings.Palette();
+        var key = $"{h}|{w}|{state.Stale}|{Artwork.LightTheme}|{palette.Hour.ToArgb()}|{palette.Week.ToArgb()}";
         if (key != artworkKey)
         {
             artworkKey = key;
-            var newH = Artwork.MakeIcon(h, Artwork.HourColor, state.Stale);
-            var newW = Artwork.MakeIcon(w, Artwork.WeekColor, state.Stale);
+            var newH = Artwork.MakeIcon(h, palette.Hour, state.Stale);
+            var newW = Artwork.MakeIcon(w, palette.Week, state.Stale);
             hourIcon.Icon = newH; weekIcon.Icon = newW;
             hourArtwork?.Dispose(); weekArtwork?.Dispose(); hourArtwork = newH; weekArtwork = newW;
         }
@@ -220,7 +230,7 @@ internal sealed class QuotaContext : ApplicationContext
                 settingsWindow.FormClosed += (_, _) =>
                 {
                     settingsWindow = null;
-                    if (!quitting) { settings = Settings.Load(); layout = ""; Tick(); }
+                    if (!quitting) { layout = ""; Tick(); }
                 };
             }
             settingsWindow.Reveal(requestedSettingsScreen ?? Screen.PrimaryScreen!);
@@ -244,7 +254,7 @@ internal sealed class QuotaContext : ApplicationContext
         string Describe(string title, QuotaWindow? w) => $"{title}剩余：{(w is null ? "不可用" : w.Remaining.ToString("0.##") + "%")}\n重置：{w?.ResetsAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "未知"}";
         MessageBox.Show((state.Quotas.WeekOnly ? "" : Describe("5 小时", state.Quotas.Hour) + "\n\n") + Describe("每周", state.Quotas.Week)
             + $"\n\n最后成功读取：{state.Updated?.ToLocalTime().ToString("HH:mm:ss") ?? "尚无"}"
-            + $"\n{state.Error ?? (state.Stale ? "数据已过期" : "每 30 秒读取一次")}", "Codex 额度详情", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            + $"\n{state.Error ?? (state.Stale ? "数据已过期" : $"每 {state.RefreshSeconds} 秒读取一次")}", "Codex 额度详情", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
     private void DisplaysChanged(object? sender, EventArgs e) => Dispatch(() => { layout = ""; Tick(); });
     private void PreferencesChanged(object sender, UserPreferenceChangedEventArgs e) => Dispatch(() => { layout = ""; Tick(); });

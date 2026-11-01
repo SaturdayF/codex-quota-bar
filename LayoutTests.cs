@@ -21,7 +21,7 @@ internal static class LayoutTests
                 {
                     foreach (var screen in Screen.AllScreens)
                     {
-                        var form = new Overlay(screen, menu, () => new Point(int.MinValue, int.MinValue), style: WidgetStyles.Choices[index].Id);
+                        var form = new Overlay(screen, menu, () => new Point(int.MinValue, int.MinValue), style: WidgetStyles.Choices[index].Id, widgetScale: index % 2 == 0 ? 1.4 : .6);
                         forms.Add((screen, form)); form.Show(); form.PositionAtTaskbar();
                     }
                     phase = 1; started = Environment.TickCount64; return;
@@ -32,6 +32,7 @@ internal static class LayoutTests
                     var bar = Overlay.TaskbarBounds(entry.Screen) ?? throw new Exception("Taskbar not found");
                     var delta = Math.Abs((entry.Form.Top + entry.Form.Bottom - bar.Top - bar.Bottom) / 2.0);
                     if (delta > .5) throw new Exception($"Center offset {delta} on {entry.Screen.DeviceName}");
+                    if (entry.Form.Height > bar.Height) throw new Exception("Scaled widget exceeds taskbar height");
                     if (phase == 1)
                     {
                         var requests = 0;

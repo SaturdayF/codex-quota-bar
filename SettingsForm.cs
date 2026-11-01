@@ -12,6 +12,7 @@ internal sealed class SettingsForm : Form
         StartPosition = FormStartPosition.Manual; ShowInTaskbar = true;
         WindowState = FormWindowState.Normal; TopMost = true;
         if (!Visible) Show();
+        FitToWorkingArea(screen);
         var area = screen.WorkingArea;
         Location = new(area.Left + Math.Max(0, (area.Width - Width) / 2), area.Top + Math.Max(0, (area.Height - Height) / 2));
         ShowWindow(Handle, 9); BringToFront(); Activate();
@@ -29,9 +30,11 @@ internal sealed class SettingsForm : Form
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96, 96);
         Text = "Codex Quota Bar 设置"; StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new(900, 650); MinimumSize = new(800, 620);
+        ClientSize = new(1000, 650); MinimumSize = new(800, 620);
         BackColor = surface; ForeColor = ink;
         var settings = initialSettings ?? Settings.Load();
+        var palette = settings.Palette();
+        var hourColor = palette.Hour; var weekColor = palette.Week;
         var draftStyles = WidgetStyles.Choices.ToDictionary(c => c.Id, c => settings.ForStyle(c.Id) with { });
         var shell = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
         shell.ColumnStyles.Add(new(SizeType.Absolute, 190)); shell.ColumnStyles.Add(new(SizeType.Percent, 100));
@@ -73,6 +76,27 @@ internal sealed class SettingsForm : Form
         foreach (var choice in WidgetStyles.Choices) styles.Items.Add(choice.Name);
         styles.SelectedIndex = Array.FindIndex(WidgetStyles.Choices, c => c.Id == WidgetStyles.Normalize(settings.WidgetStyle));
         Row(appearance, "任务栏样式", "选择额度的呈现方式。", styles);
+        var sizePicker = new TrackBar { Minimum = 60, Maximum = 140, Value = (int)Math.Round(WidgetLayout.NormalizeScale(settings.WidgetScale) * 100),
+            TickStyle = TickStyle.None, SmallChange = 5, LargeChange = 10, AutoSize = false, Dock = DockStyle.Fill, AccessibleName = "显示大小", BackColor = surface };
+        var sizeText = Label(sizePicker.Value + "%", 9, false, Padding.Empty);
+        sizeText.AutoSize = false; sizeText.Dock = DockStyle.Fill; sizeText.TextAlign = ContentAlignment.MiddleRight;
+        var sizing = new TableLayoutPanel { Width = 240, Height = 32, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
+        sizing.RowStyles.Add(new(SizeType.Percent, 100));
+        sizing.ColumnStyles.Add(new(SizeType.Percent, 100)); sizing.ColumnStyles.Add(new(SizeType.Absolute, 70));
+        sizing.Controls.Add(sizePicker, 0, 0); sizing.Controls.Add(sizeText, 1, 0);
+        Row(appearance, "显示大小", "整体缩放图形和数字；过大时自动适配任务栏高度。", sizing);
+        var hourPicker = Button("5 小时"); hourPicker.Width = 82; hourPicker.AccessibleName = "5 小时图标颜色";
+        var weekPicker = Button("每周"); weekPicker.Width = 82; weekPicker.AccessibleName = "周额度图标颜色";
+        var resetColors = Button("默认颜色"); resetColors.Width = 105;
+        var colorControls = new FlowLayoutPanel { Width = 295, Height = 38, WrapContents = false, Margin = Padding.Empty };
+        colorControls.Controls.Add(hourPicker); colorControls.Controls.Add(weekPicker); colorControls.Controls.Add(resetColors);
+        Row(appearance, "图标颜色", "分别选择 5 小时和周额度的颜色。", colorControls);
+        void ColorButton(Button button, Color color)
+        {
+            button.BackColor = button.FlatAppearance.MouseOverBackColor = color;
+            button.ForeColor = QuotaPalette.TextOn(color); button.AccessibleDescription = QuotaPalette.Hex(color); button.Invalidate();
+        }
+        ColorButton(hourPicker, hourColor); ColorButton(weekPicker, weekColor);
         var letters = new SettingsToggle { Checked = settings.ShowDialLetters, AccessibleName = "仪表中间显示 H 和 W" };
         var remaining = new SettingsToggle { AccessibleName = "在图标上展示余量" };
         var percent = new SettingsToggle { AccessibleName = "显示百分号" };
@@ -85,12 +109,29 @@ internal sealed class SettingsForm : Form
         {
             e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             var selected = WidgetStyles.Choices[styles.SelectedIndex].Id;
-            var size = WidgetStyles.SizeFor(selected, false, preview.DeviceDpi);
+            var basis = WidgetStyles.SizeFor(selected, false, preview.DeviceDpi);
+            var previewScale = Math.Min(sizePicker.Value / 100d, (preview.Height - 8d) / basis.Height);
+            var size = new Size((int)Math.Round(basis.Width * previewScale), (int)Math.Round(basis.Height * previewScale));
             var progress = previewStarted < 0 ? 1 : Math.Clamp((Environment.TickCount64 - previewStarted) / (double)QuotaAnimation.Duration, 0, 1);
             var fill = previewStarted < 0 ? (double?)null : 1 - Math.Pow(1 - progress, 3);
-            WidgetStyles.Draw(e.Graphics, new RectangleF((preview.Width - size.Width) / 2f, (preview.Height - size.Height) / 2f, size.Width, size.Height), new(new(68, null), new(27, null)), selected, letters.Checked, false, light, fill, fill, draftStyles[selected]);
+            WidgetStyles.Draw(e.Graphics, new RectangleF((preview.Width - size.Width) / 2f, (preview.Height - size.Height) / 2f, size.Width, size.Height), new(new(68, null), new(27, null)), selected, letters.Checked, false, light, fill, fill, draftStyles[selected], new(hourColor, weekColor));
         };
         appearance.Controls.Add(preview);
+        sizePicker.ValueChanged += (_, _) => { sizeText.Text = sizePicker.Value + "%"; preview.Invalidate(); };
+        void PickColor(bool hour)
+        {
+            using var dialog = new ColorDialog { Color = hour ? hourColor : weekColor, FullOpen = true, AnyColor = true };
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            if (hour) { hourColor = dialog.Color; ColorButton(hourPicker, hourColor); }
+            else { weekColor = dialog.Color; ColorButton(weekPicker, weekColor); }
+            preview.Invalidate();
+        }
+        hourPicker.Click += (_, _) => PickColor(true); weekPicker.Click += (_, _) => PickColor(false);
+        resetColors.Click += (_, _) =>
+        {
+            hourColor = Artwork.HourColor; weekColor = Artwork.WeekColor;
+            ColorButton(hourPicker, hourColor); ColorButton(weekPicker, weekColor); preview.Invalidate();
+        };
         appearance.Controls.Add(Label("预览使用模拟数据", 8, false, new(0, 0, 0, 18), muted));
         Row(appearance, "仪表中间显示 H 和 W", "H 表示 5 小时额度，W 表示周额度。", letters);
         Row(appearance, "在图标上展示余量", "关闭后保持完整纯色图形；此选项按样式分别保存。", remaining);
@@ -151,9 +192,14 @@ internal sealed class SettingsForm : Form
         var browse = Button("浏览…"); browse.Dock = DockStyle.Fill;
         browse.Click += (_, _) => { using var dialog = new OpenFileDialog { Filter = "Codex CLI|codex.exe|程序|*.exe" }; if (dialog.ShowDialog(this) == DialogResult.OK) path.Text = dialog.FileName; };
         pathRow.Controls.Add(path, 0, 0); pathRow.Controls.Add(browse, 1, 0); advanced.Controls.Add(pathRow);
+        var refreshInterval = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 150, FlatStyle = FlatStyle.Flat,
+            AccessibleName = "刷新时间间隔", BackColor = sidebar, ForeColor = ink };
+        foreach (var option in Settings.RefreshOptions) refreshInterval.Items.Add(option.Label);
+        refreshInterval.SelectedIndex = Array.FindIndex(Settings.RefreshOptions, o => o.Seconds == Settings.NormalizeRefreshInterval(settings.RefreshIntervalSeconds));
+        Row(advanced, "自动刷新间隔", "选择主动读取额度的频率，保存后生效。", refreshInterval);
         var refreshButton = Button("立即刷新"); refreshButton.Enabled = refresh is not null;
         refreshButton.Click += (_, _) => refresh?.Invoke();
-        Row(advanced, "额度读取", "每 30 秒更新；读取失败时自动重试。", refreshButton);
+        Row(advanced, "额度读取", "按所选间隔自动更新；读取失败时自动重试。", refreshButton);
         var exitButton = Button("退出额度工具"); exitButton.Enabled = exit is not null;
         exitButton.Click += (_, _) => exit?.Invoke();
         Row(advanced, "退出", "停止显示与后台监听，直到下次启动。", exitButton);
@@ -168,6 +214,9 @@ internal sealed class SettingsForm : Form
                 var chosen = modes[display.SelectedIndex];
                 settings.CodexPath = string.IsNullOrWhiteSpace(path.Text) ? null : path.Text.Trim();
                 settings.ShowDialLetters = letters.Checked; settings.StyleOptions = draftStyles;
+                settings.WidgetScale = sizePicker.Value / 100d;
+                settings.HourColorHex = QuotaPalette.Hex(hourColor); settings.WeekColorHex = QuotaPalette.Hex(weekColor);
+                settings.RefreshIntervalSeconds = Settings.RefreshOptions[refreshInterval.SelectedIndex].Seconds;
                 settings.WidgetStyle = WidgetStyles.Choices[styles.SelectedIndex].Id;
                 settings.DisplayMode = chosen.Mode; settings.Displays = chosen.Id is null ? [] : [chosen.Id];
                 settings.Save(); Startup.Set(startup.Checked); DialogResult = DialogResult.OK; Close();
@@ -194,8 +243,16 @@ internal sealed class SettingsForm : Form
                         child.Width = width;
                     }
         }
-        host.SizeChanged += (_, _) => ResizeContent(); Shown += (_, _) => ResizeContent();
+        host.SizeChanged += (_, _) => ResizeContent();
+        Shown += (_, _) => { if (initialSettings is null) FitToWorkingArea(Screen.FromControl(this)); ResizeContent(); };
         SelectPage(0);
+    }
+    private void FitToWorkingArea(Screen screen)
+    {
+        var area = screen.WorkingArea;
+        MinimumSize = new(Math.Min(MinimumSize.Width, area.Width), Math.Min(MinimumSize.Height, area.Height));
+        Size = new(Math.Min(Width, area.Width), Math.Min(Height, area.Height));
+        Location = new(Math.Clamp(Left, area.Left, area.Right - Width), Math.Clamp(Top, area.Top, area.Bottom - Height));
     }
     private Label Label(string text, float size, bool bold, Padding margin, Color? color = null) => new()
     {

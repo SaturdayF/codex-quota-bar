@@ -24,11 +24,11 @@ internal static class WidgetStyles
         return new(area.Left + (area.Width - size) / 2, area.Top + (area.Height - size) / 2, size, size);
     }
     internal static void Draw(Graphics g, RectangleF bounds, Quotas quotas, string style, bool letters, bool stale, bool light,
-        double? hourProgress = null, double? weekProgress = null, StylePreferences? preferences = null)
+        double? hourProgress = null, double? weekProgress = null, StylePreferences? preferences = null, QuotaPalette? palette = null)
     {
-        style = Normalize(style); preferences ??= new();
+        style = Normalize(style); preferences ??= new(); palette ??= QuotaPalette.Default;
         var count = quotas.WeekOnly ? 1 : 2; var width = bounds.Width / count;
-        var windows = quotas.WeekOnly ? new[] { (quotas.Week, "W", Artwork.WeekColor) } : new[] { (quotas.Hour, "H", Artwork.HourColor), (quotas.Week, "W", Artwork.WeekColor) };
+        var windows = quotas.WeekOnly ? new[] { (quotas.Week, "W", palette.Week) } : new[] { (quotas.Hour, "H", palette.Hour), (quotas.Week, "W", palette.Week) };
         var scale = bounds.Height / 32f;
         using var center = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, FormatFlags = StringFormatFlags.NoWrap };
         var trackColor = light ? Color.FromArgb(190, 198, 208) : Color.FromArgb(85, 96, 112);
@@ -42,7 +42,7 @@ internal static class WidgetStyles
             {
                 Artwork.Gauge(g, area, window, letter, accent, letters, stale, light, fill, preferences.ShowPercent); continue;
             }
-            using var ink = new SolidBrush(stale ? Color.Gray : light ? Color.FromArgb(32, 32, 32) : Color.FromArgb(245, 245, 245));
+            using var ink = new SolidBrush(stale ? Color.Gray : style == "plain" ? accent : light ? Color.FromArgb(32, 32, 32) : Color.FromArgb(245, 245, 245));
             using var colored = new SolidBrush(accent);
             using var track = new SolidBrush(trackColor);
             var label = NumberLabel(window, preferences.ShowPercent, style == "plain" ? progress : null);
@@ -82,8 +82,27 @@ internal static class WidgetStyles
                 if (fill > 0) g.FillRectangle(colored, bar.Left, bar.Bottom - bar.Height * (float)(fill / 100), bar.Width, bar.Height * (float)(fill / 100));
                 textArea = new(area.Left + 6 * scale, area.Top, area.Width - 6 * scale, area.Height);
             }
-            DrawNumber(g, label, textArea, ink, center, (style == "outlined" ? 14 : 18) * scale, 6 * scale);
+            if (style == "outlined") DrawCenteredGlyph(g, label, textArea, ink, 14 * scale);
+            else DrawNumber(g, label, textArea, ink, center, 18 * scale, 6 * scale);
         }
+    }
+    private static void DrawCenteredGlyph(Graphics g, string label, RectangleF area, Brush ink, float size)
+    {
+        using var family = new FontFamily("Segoe UI");
+        using var glyph = new GraphicsPath();
+        while (true)
+        {
+            glyph.Reset();
+            glyph.AddString(label, family, (int)FontStyle.Bold, size, PointF.Empty, StringFormat.GenericTypographic);
+            var bounds = glyph.GetBounds();
+            if ((bounds.Width <= area.Width && bounds.Height <= area.Height) || size <= 1) break;
+            size -= .25f;
+        }
+        var visible = glyph.GetBounds();
+        using var transform = new Matrix();
+        transform.Translate(area.Left + area.Width / 2 - (visible.Left + visible.Width / 2),
+            area.Top + area.Height / 2 - (visible.Top + visible.Height / 2));
+        glyph.Transform(transform); g.FillPath(ink, glyph);
     }
     private static void DrawNumber(Graphics g, string label, RectangleF area, Brush ink, StringFormat format, float size, float minimum)
     {

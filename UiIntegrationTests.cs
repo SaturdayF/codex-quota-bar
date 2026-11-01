@@ -43,6 +43,8 @@ internal static class UiIntegrationTests
             {
                 var settings = Application.OpenForms.OfType<SettingsForm>().FirstOrDefault(f => f.Visible && IsWindowVisible(f.Handle) && !IsIconic(f.Handle));
                 if (settings is null) return;
+                if (!Screen.FromControl(settings).WorkingArea.Contains(settings.Bounds))
+                { Console.WriteLine("FAIL settings extends outside display working area"); context.ExitThread(); return; }
                 if (Application.OpenForms.OfType<SettingsForm>().Count(f => f.Visible) != 1)
                 { Console.WriteLine("FAIL duplicate settings window"); context.ExitThread(); return; }
                 if (Application.OpenForms.OfType<Overlay>().Any(f => f.InteractionSuspended))

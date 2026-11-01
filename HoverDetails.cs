@@ -4,8 +4,10 @@ namespace CodexQuotaBar;
 internal sealed class HoverDetails : Form
 {
     private DisplayState state = DisplayState.Empty;
-    public HoverDetails()
+    private readonly QuotaPalette palette;
+    public HoverDetails(QuotaPalette? palette = null)
     {
+        this.palette = palette ?? QuotaPalette.Default;
         Text = "Codex 额度悬浮详情";
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false; TopMost = true; DoubleBuffered = true;
@@ -102,11 +104,11 @@ internal sealed class HoverDetails : Form
             if (window is not null) g.FillRectangle(fill, 24, y + 57, (float)(292 * window.Remaining / 100), 3);
             Text(ResetText(window), body, secondary, 24, y + 68);
         }
-        if (!state.Quotas.WeekOnly) Row("5 小时额度", "H", state.Quotas.Hour, Artwork.HourColor, 64);
-        Row("周额度", "W", state.Quotas.Week, Artwork.WeekColor, state.Quotas.WeekOnly ? 64 : 168);
+        if (!state.Quotas.WeekOnly) Row("5 小时额度", "H", state.Quotas.Hour, palette.Hour, 64);
+        Row("周额度", "W", state.Quotas.Week, palette.Week, state.Quotas.WeekOnly ? 64 : 168);
         var updated = state.Updated is { } time ? time.ToLocalTime().ToString("HH:mm:ss") : "尚无";
-        var footer = $"更新于 {updated} · 每 30 秒刷新\n" + (state.Error ?? (state.Stale ? "数据已过期" : ""));
-        using var statusInk = new SolidBrush(state.Stale ? Color.FromArgb(193, 133, 49) : Artwork.HourColor);
+        var footer = $"更新于 {updated} · 每 {state.RefreshSeconds} 秒刷新\n" + (state.Error ?? (state.Stale ? "数据已过期" : ""));
+        using var statusInk = new SolidBrush(state.Stale ? Color.FromArgb(193, 133, 49) : palette.Hour);
         g.DrawLine(border, 20, height - 48, 320, height - 48);
         g.FillEllipse(statusInk, 22, height - 35, 5, 5);
         g.DrawString(footer, body, secondary, new RectangleF(34, height - 41, 286, 38));

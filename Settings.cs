@@ -11,6 +11,13 @@ internal sealed class Settings
     public bool ShowDialLetters { get; set; } = true;
     public string WidgetStyle { get; set; } = "gauges";
     public bool AnimateQuotaReset { get; set; } = true;
+    public double WidgetScale { get; set; } = 1;
+    public string HourColorHex { get; set; } = "#219E86";
+    public string WeekColorHex { get; set; } = "#648DE6";
+    public int RefreshIntervalSeconds { get; set; } = 30;
+    internal static readonly (int Seconds, string Label)[] RefreshOptions = [(15, "15 秒"), (30, "30 秒"), (60, "1 分钟"), (120, "2 分钟"), (300, "5 分钟")];
+    internal static int NormalizeRefreshInterval(int value) => RefreshOptions.Any(o => o.Seconds == value) ? value : 30;
+    internal QuotaPalette Palette() => new(QuotaPalette.Parse(HourColorHex, Artwork.HourColor), QuotaPalette.Parse(WeekColorHex, Artwork.WeekColor));
     public Dictionary<string, StylePreferences> StyleOptions { get; set; } = [];
     public StylePreferences ForStyle(string style) => StyleOptions?.GetValueOrDefault(WidgetStyles.Normalize(style))
         ?? new StylePreferences { Animate = AnimateQuotaReset };
@@ -23,6 +30,7 @@ internal sealed class Settings
             var loaded = JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new();
             loaded.Displays ??= [];
             loaded.StyleOptions ??= [];
+            loaded.RefreshIntervalSeconds = NormalizeRefreshInterval(loaded.RefreshIntervalSeconds);
             return loaded;
         }
         catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { return new(); }
