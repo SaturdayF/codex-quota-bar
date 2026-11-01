@@ -7,16 +7,29 @@ internal sealed class SettingsForm : Form
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
     private readonly System.Windows.Forms.Timer previewTimer = new() { Interval = 16 };
     private readonly Color surface, sidebar, ink, muted, line;
+    private PaletteMenu? colorMenu;
+    internal PaletteMenu? ActiveColorMenu => colorMenu;
+    internal Rectangle? FirstVisiblePaintBounds { get; private set; }
     internal void Reveal(Screen screen)
     {
+        // Keep the first frame hidden while the HWND settles onto the target DPI.
+        Opacity = 0; FirstVisiblePaintBounds = null;
         StartPosition = FormStartPosition.Manual; ShowInTaskbar = true;
         WindowState = FormWindowState.Normal; TopMost = true;
-        if (!Visible) Show();
-        FitToWorkingArea(screen);
         var area = screen.WorkingArea;
         Location = new(area.Left + Math.Max(0, (area.Width - Width) / 2), area.Top + Math.Max(0, (area.Height - Height) / 2));
-        ShowWindow(Handle, 9); BringToFront(); Activate();
+        _ = Handle;
+        if (!Visible) Show();
+        ShowWindow(Handle, 9);
+        FitToWorkingArea(screen);
+        Location = new(area.Left + Math.Max(0, (area.Width - Width) / 2), area.Top + Math.Max(0, (area.Height - Height) / 2));
+        PerformLayout(); Opacity = 1; Invalidate(true); BringToFront(); Activate();
         if (!IsWindowVisible(Handle)) throw new InvalidOperationException("设置窗口未能显示");
+    }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        if (Visible && Opacity == 1) FirstVisiblePaintBounds ??= Bounds;
+        base.OnPaint(e);
     }
     public SettingsForm(Action? refresh = null, Action? exit = null, Settings? initialSettings = null)
     {
@@ -120,11 +133,21 @@ internal sealed class SettingsForm : Form
         sizePicker.ValueChanged += (_, _) => { sizeText.Text = sizePicker.Value + "%"; preview.Invalidate(); };
         void PickColor(bool hour)
         {
-            using var dialog = new ColorDialog { Color = hour ? hourColor : weekColor, FullOpen = true, AnyColor = true };
-            if (dialog.ShowDialog(this) != DialogResult.OK) return;
-            if (hour) { hourColor = dialog.Color; ColorButton(hourPicker, hourColor); }
-            else { weekColor = dialog.Color; ColorButton(weekPicker, weekColor); }
-            preview.Invalidate();
+            colorMenu?.Dispose();
+            void Select(Color color)
+            {
+                if (hour) { hourColor = color; ColorButton(hourPicker, color); }
+                else { weekColor = color; ColorButton(weekPicker, color); }
+                preview.Invalidate();
+            }
+            colorMenu = new PaletteMenu(hour ? hourColor : weekColor, hour ? Artwork.HourColor : Artwork.WeekColor, Select, () => BeginInvoke(() =>
+            {
+                if (IsDisposed) return;
+                using var dialog = new ColorDialog { Color = hour ? hourColor : weekColor, FullOpen = true, AnyColor = true };
+                if (dialog.ShowDialog(this) == DialogResult.OK) Select(dialog.Color);
+            }));
+            var button = hour ? hourPicker : weekPicker;
+            colorMenu.Show(button, new Point(0, button.Height + 4));
         }
         hourPicker.Click += (_, _) => PickColor(true); weekPicker.Click += (_, _) => PickColor(false);
         resetColors.Click += (_, _) =>
@@ -278,7 +301,7 @@ internal sealed class SettingsForm : Form
         row.Paint += (_, e) => { using var pen = new Pen(line); e.Graphics.DrawLine(pen, 0, row.Height - 1, row.Width, row.Height - 1); };
         page.Controls.Add(row);
     }
-    protected override void Dispose(bool disposing) { if (disposing) previewTimer.Dispose(); base.Dispose(disposing); }
+    protected override void Dispose(bool disposing) { if (disposing) { colorMenu?.Dispose(); previewTimer.Dispose(); } base.Dispose(disposing); }
 }
 
 internal sealed class SettingsPreviewPanel : Panel

@@ -55,6 +55,13 @@ internal static class DesignPreview
         settings.DrawToBitmap(settingsImage, new Rectangle(Point.Empty, settings.Size));
         settingsImage.Save(Path.Combine(directory, "settings-preview.png"));
         settings.Hide();
+        using var palette = new PalettePanel(Artwork.HourColor, Artwork.HourColor, _ => { }, () => { });
+        using var paletteHost = new Form { ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new(-30000, -30000), ClientSize = palette.Size, FormBorderStyle = FormBorderStyle.None };
+        paletteHost.Controls.Add(palette); paletteHost.Show(); Application.DoEvents();
+        using var paletteImage = new Bitmap(palette.Width, palette.Height);
+        palette.DrawToBitmap(paletteImage, palette.ClientRectangle);
+        paletteImage.Save(Path.Combine(directory, "color-palette-preview.png"));
+        paletteHost.Hide();
     }
     private static void RenderStyles(string directory)
     {

@@ -5,6 +5,16 @@ internal static class StyleTests
 {
     internal static void Run(Action<bool, string> check)
     {
+        Color? chosen = null; var customRequested = false;
+        using (var colors = new PalettePanel(Color.Red, Artwork.HourColor, c => chosen = c, () => customRequested = true))
+        {
+            check(colors.Swatches.Count == 70, "palette offers 60 theme shades and 10 standard colors");
+            colors.Swatches[64].PerformClick();
+            check(chosen?.ToArgb() == Color.FromArgb(146, 208, 80).ToArgb(), "palette standard swatch selects its exact color");
+            colors.Automatic.PerformClick();
+            check(chosen == Artwork.HourColor, "automatic color restores corresponding quota default");
+            colors.Custom.PerformClick(); check(customRequested, "palette custom action opens extended color flow");
+        }
         var old = JsonSerializer.Deserialize<Settings>("{\"AnimateQuotaReset\":false}")!;
         check(!old.ForStyle("plain").Animate && old.ForStyle("badges").ShowPercent, "old settings preserve disabled animation and percentage default");
         var settings = new Settings();

@@ -43,6 +43,12 @@ internal static class UiIntegrationTests
             {
                 var settings = Application.OpenForms.OfType<SettingsForm>().FirstOrDefault(f => f.Visible && IsWindowVisible(f.Handle) && !IsIconic(f.Handle));
                 if (settings is null) return;
+                if (settings.FirstVisiblePaintBounds is not { } firstPaint) return;
+                var requestedScreen = Screen.FromControl(Application.OpenForms.OfType<Overlay>().Where(f => f.Visible).OrderBy(f => f.Left).ElementAt(screenIndex));
+                var area = requestedScreen.WorkingArea;
+                var expected = new Point(area.Left + (area.Width - settings.Width) / 2, area.Top + (area.Height - settings.Height) / 2);
+                if (firstPaint != settings.Bounds || Math.Abs(settings.Left - expected.X) > 1 || Math.Abs(settings.Top - expected.Y) > 1)
+                { Console.WriteLine("FAIL first visible settings paint was not already centered on requested screen"); context.ExitThread(); return; }
                 if (!Screen.FromControl(settings).WorkingArea.Contains(settings.Bounds))
                 { Console.WriteLine("FAIL settings extends outside display working area"); context.ExitThread(); return; }
                 if (Application.OpenForms.OfType<SettingsForm>().Count(f => f.Visible) != 1)
@@ -51,10 +57,24 @@ internal static class UiIntegrationTests
                 { Console.WriteLine("FAIL opening settings disabled hover"); context.ExitThread(); return; }
                 if (phase == 1)
                 {
-                    Console.WriteLine("PASS right-button release opens native-visible settings on display " + screenIndex);
+                    timer.Stop();
+                    Console.WriteLine("PASS first visible settings paint already centered on display " + screenIndex);
+                    IEnumerable<Control> Descendants(Control parent) => parent.Controls.Cast<Control>().SelectMany(c => new[] { c }.Concat(Descendants(c)));
+                    var picker = Descendants(settings).OfType<Button>().Single(b => b.AccessibleName == "5 小时图标颜色");
+                    picker.PerformClick();
+                    var palette = settings.ActiveColorMenu;
+                    if (palette is null || !palette.Visible || !area.Contains(palette.Bounds) || palette.Palette.Swatches.Any(b => !palette.Palette.ClientRectangle.Contains(b.Bounds)))
+                    { Console.WriteLine($"FAIL palette popup placement/clipping: visible={palette?.Visible} bounds={palette?.Bounds} area={area} panel={palette?.Palette.ClientRectangle}"); context.ExitThread(); return; }
+                    palette.Palette.Swatches[69].PerformClick();
+                    if (palette.Visible || picker.BackColor.ToArgb() != Color.FromArgb(112, 48, 160).ToArgb())
+                    { Console.WriteLine("FAIL palette selection did not apply and close"); context.ExitThread(); return; }
+                    picker.PerformClick(); settings.ActiveColorMenu!.Palette.Automatic.PerformClick();
+                    if (picker.BackColor != Artwork.HourColor)
+                    { Console.WriteLine("FAIL palette automatic default"); context.ExitThread(); return; }
+                    Console.WriteLine("PASS native color palette fits display, selects and restores default on display " + screenIndex);
                     // Reproduce the exact production state: HWND hidden even though the
                     // Form instance remains alive. Right-click must Show, not just Activate.
-                    ShowWindow(settings.Handle, 0); phase = 2; phaseStarted = Environment.TickCount64; return;
+                    ShowWindow(settings.Handle, 0); phase = 2; phaseStarted = Environment.TickCount64; timer.Start(); return;
                 }
                 if (phase == 3)
                 {
