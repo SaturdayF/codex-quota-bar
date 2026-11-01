@@ -32,6 +32,19 @@ internal static class DesignPreview
         Artwork.Gauge(g, new(242, bottom + 42, 84, 30), sample.Week, "W", Artwork.WeekColor, false, false, Artwork.LightTheme);
         g.DrawString("原生界面渲染 · 所有额度与重置时间均为模拟示例", small, ink, 24, board.Height - 27);
         board.Save(Path.Combine(directory, "dial-ui-preview.png"));
+        using var hoverBoard = new Bitmap(680, 172);
+        using (var hg = Graphics.FromImage(hoverBoard))
+        {
+            hg.Clear(Color.FromArgb(224, 215, 204));
+            using var caption = new SolidBrush(Color.FromArgb(45, 45, 45));
+            hg.DrawString("普通状态", small, caption, 24, 15);
+            hg.DrawString("悬浮状态：仅圆角半透明底色", small, caption, 336, 15);
+            using var idleSurface = LayeredSurface.Paint(new(276, 48), sample, "gauges", true, false, true, false);
+            using var hoverSurface = LayeredSurface.Paint(new(276, 48), sample, "gauges", true, false, true, true);
+            hg.DrawImageUnscaled(idleSurface, 24, 48); hg.DrawImageUnscaled(hoverSurface, 336, 48);
+            hg.DrawString("模拟数据 · 底色半透明，数字与环形仪表保持清晰", small, caption, 24, 128);
+        }
+        hoverBoard.Save(Path.Combine(directory, "hover-highlight-preview.png"));
         using var settings = new SettingsForm(initialSettings: new Settings());
         settings.ShowInTaskbar = false;
         settings.StartPosition = FormStartPosition.Manual;

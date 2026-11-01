@@ -22,7 +22,6 @@ internal sealed class Overlay : Form
     private bool dragging;
     private Point dragStart;
     private Point locationStart;
-    private readonly Color clearKey = Color.FromArgb(255, 0, 255);
     private IntPtr foregroundHook;
     private readonly WinEventCallback foregroundCallback;
     private delegate void WinEventCallback(IntPtr hook, uint eventId, IntPtr window, int objectId, int childId, uint thread, uint time);
@@ -46,7 +45,6 @@ internal sealed class Overlay : Form
         FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true;
         AutoScaleMode = AutoScaleMode.None;
         DoubleBuffered = true;
-        BackColor = TransparencyKey = clearKey;
         foregroundCallback = (_, _, _, _, _, _, _) =>
         {
             if (!IsDisposed && IsHandleCreated)
@@ -62,7 +60,7 @@ internal sealed class Overlay : Form
     }
     private void CheckHover()
     {
-        if (!Visible || InteractionSuspended) { details.Hide(); HoverHighlighted = false; BackColor = clearKey; Invalidate(); return; }
+        if (!Visible || InteractionSuspended) { details.Hide(); if (HoverHighlighted) { HoverHighlighted = false; RenderSurface(); } return; }
         var now = Environment.TickCount64;
         var point = pointer();
         var onWidget = Bounds.Contains(point);
@@ -70,7 +68,7 @@ internal sealed class Overlay : Form
         if (inside)
         {
             lastInside = now;
-            if (!HoverHighlighted) { HoverHighlighted = true; BackColor = Artwork.LightTheme ? Color.FromArgb(234, 234, 234) : Color.FromArgb(49, 49, 49); hoverStarted = now; Invalidate(); }
+            if (!HoverHighlighted) { HoverHighlighted = true; hoverStarted = now; RenderSurface(); }
             if (!dragging && onWidget && now - hoverStarted >= 225 && !details.Visible)
             {
                 details.UpdateState(state);
@@ -81,7 +79,7 @@ internal sealed class Overlay : Form
         }
         else if (HoverHighlighted && now - lastInside > 180)
         {
-            HoverHighlighted = false; BackColor = clearKey; details.Hide(); Invalidate();
+            HoverHighlighted = false; details.Hide(); RenderSurface();
         }
         if (dragging) details.Hide();
     }
@@ -113,14 +111,14 @@ internal sealed class Overlay : Form
             SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0, 0x0013); // TOPMOST, no move/resize/activation
     }
     protected override bool ShowWithoutActivation => true;
-    protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x08000000 | 0x00000080; return p; } }
+    protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x08000000 | 0x00000080 | 0x00080000; return p; } }
     public void UpdateState(DisplayState current)
     {
         state = current;
         if (IsHandleCreated) PositionAtTaskbar(resetHorizontal: false);
         details.UpdateState(state);
         if (details.Visible) details.Place(Bounds, screen.WorkingArea);
-        Invalidate();
+        RenderSurface();
         EnsureAboveTaskbar();
     }
     protected override void OnShown(EventArgs e) { base.OnShown(e); BeginInvoke(new Action(() => PositionAtTaskbar())); }
@@ -139,7 +137,7 @@ internal sealed class Overlay : Form
         var leftInset = (int)(16 * scale);
         var x = Math.Clamp(resetHorizontal ? bounds.Left + leftInset : Left, bounds.Left, Math.Max(bounds.Left, bounds.Right - Width));
         Location = new(x, taskbar is { } bar ? bar.Top + (bar.Height - Height) / 2 : screen.WorkingArea.Bottom - Height - 4);
-        TransparencyKey = clearKey;
+        RenderSurface();
         EnsureAboveTaskbar();
         } finally { positioning = false; }
     }
@@ -155,14 +153,13 @@ internal sealed class Overlay : Form
     }
     protected override void OnPaint(PaintEventArgs e)
     {
-        base.OnPaint(e);
-        if (HoverHighlighted)
-        {
-            using var border = new Pen(Artwork.LightTheme ? Color.FromArgb(83, 108, 137) : Color.FromArgb(176, 196, 223));
-            e.Graphics.DrawRectangle(border, 0, 0, ClientSize.Width - 1, ClientSize.Height - 1);
-        }
-        e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.SingleBitPerPixelGridFit;
-        WidgetStyles.Draw(e.Graphics, ClientRectangle, state.Quotas, style, showLetters, state.Stale, Artwork.LightTheme);
+        RenderSurface();
+    }
+    private void RenderSurface()
+    {
+        if (IsDisposed || !IsHandleCreated || ClientSize.Width < 1 || ClientSize.Height < 1) return;
+        using var image = LayeredSurface.Paint(ClientSize, state.Quotas, style, showLetters, state.Stale, Artwork.LightTheme, HoverHighlighted);
+        LayeredSurface.Present(Handle, Location, image);
     }
     protected override void Dispose(bool disposing)
     {
