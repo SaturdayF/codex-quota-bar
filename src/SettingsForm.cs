@@ -42,7 +42,7 @@ internal sealed class SettingsForm : Form
         Font = new Font("Microsoft YaHei UI", 9F);
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96, 96);
-        Text = "Codex Quota Bar 设置"; StartPosition = FormStartPosition.CenterScreen;
+        Text = "Codex Quota Bar 设置"; Icon = AppBrand.Icon; StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new(1000, 650); MinimumSize = new(800, 620);
         BackColor = surface; ForeColor = ink;
         var settings = initialSettings ?? Settings.Load();
@@ -55,7 +55,7 @@ internal sealed class SettingsForm : Form
         var nav = new Panel { Dock = DockStyle.Fill, BackColor = sidebar, Padding = new(16, 25, 16, 20), Margin = Padding.Empty };
         var navItems = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false };
         navItems.Controls.Add(Label("设置", 20, true, new(9, 0, 0, 25)));
-        var navFooter = Label("Codex Quota Bar\n0.1.0", 9, false, Padding.Empty); navFooter.Dock = DockStyle.Bottom; navFooter.ForeColor = muted; navFooter.Height = 48;
+        var navFooter = Label("Codex Quota Bar\n" + AppBrand.Version, 9, false, Padding.Empty); navFooter.Dock = DockStyle.Bottom; navFooter.ForeColor = muted; navFooter.Height = 48;
         nav.Controls.Add(navItems); nav.Controls.Add(navFooter);
         var right = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty, Padding = new(34, 26, 34, 18) };
         right.RowStyles.Add(new(SizeType.Percent, 100)); right.RowStyles.Add(new(SizeType.Absolute, 58));
@@ -226,6 +226,16 @@ internal sealed class SettingsForm : Form
         var exitButton = Button("退出额度工具"); exitButton.Enabled = exit is not null;
         exitButton.Click += (_, _) => exit?.Invoke();
         Row(advanced, "退出", "停止显示与后台监听，直到下次启动。", exitButton);
+        var uninstallButton = Button("卸载程序"); uninstallButton.AccessibleName = "卸载 Codex Quota Bar";
+        uninstallButton.Enabled = Uninstaller.Available;
+        uninstallButton.Click += (_, _) =>
+        {
+            if (MessageBox.Show(this, "卸载 Codex Quota Bar 并删除本工具的设置、启动项和快捷方式？\n不会删除 ChatGPT、Codex 或它们的登录数据。", "卸载 Codex Quota Bar", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            try { Uninstaller.Launch(); if (exit is not null) exit(); else Application.Exit(); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            { MessageBox.Show(this, "无法开始卸载：" + e.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        };
+        Row(advanced, "卸载", Uninstaller.Available ? "删除本工具及设置；卸载前会再次确认。" : "一键卸载仅适用于安装版；便携版退出后删除解压目录。", uninstallButton);
         var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = new(0, 12, 0, 0), Margin = Padding.Empty };
         var save = Button("保存更改"); save.BackColor = ink; save.ForeColor = surface;
         save.FlatAppearance.MouseOverBackColor = muted;

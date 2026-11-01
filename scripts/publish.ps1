@@ -29,4 +29,13 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'scripts/install.ps1') -Destinati
 Copy-Item -LiteralPath (Join-Path $projectRoot 'scripts/uninstall.ps1') -Destination $outputDirectory
 Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $outputDirectory
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination $outputDirectory
+Copy-Item -LiteralPath (Join-Path $projectRoot 'CHANGELOG.md') -Destination $outputDirectory
+$version = ([xml](Get-Content -LiteralPath (Join-Path $projectRoot 'version.props') -Raw)).Project.PropertyGroup.Version
+@{version=$version; runtime=$Runtime} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $outputDirectory 'version.json') -Encoding UTF8
+New-Item -ItemType Directory -Path (Join-Path $outputDirectory 'assets'),(Join-Path $outputDirectory 'docs') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $projectRoot 'assets/app.png') -Destination (Join-Path $outputDirectory 'assets') -Force
+foreach ($image in @('settings-preview.png','style-options-preview.png','color-palette-preview.png','dial-ui-preview.png','hover-highlight-preview.png','animation-preview.gif')) {
+    Copy-Item -LiteralPath (Join-Path $projectRoot "docs/$image") -Destination (Join-Path $outputDirectory 'docs') -Force
+}
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/DEVELOPMENT.md') -Destination (Join-Path $outputDirectory 'docs') -Force
 Write-Host "Output: $outputDirectory"

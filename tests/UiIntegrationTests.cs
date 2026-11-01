@@ -9,7 +9,8 @@ internal static class UiIntegrationTests
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hwnd);
     internal static int Run()
     {
-        using var context = new QuotaContext();
+        var requestStop = false;
+        using var context = new QuotaContext(() => requestStop);
         using var timer = new System.Windows.Forms.Timer { Interval = 100 };
         var started = Environment.TickCount64; var phaseStarted = started; var phase = 0; var exit = 1; var screenIndex = 0; var tested = 0;
         void RightClick(Overlay overlay)
@@ -21,6 +22,7 @@ internal static class UiIntegrationTests
         Application.ThreadException += (_, e) => { Console.WriteLine(e.Exception.ToString()); context.ExitThread(); };
         timer.Tick += (_, _) =>
         {
+            if (phase == 6) return;
             if (Environment.TickCount64 - started > 15000)
             {
                 Console.WriteLine("FAIL settings route timeout; open forms: " + string.Join(",", Application.OpenForms.Cast<Form>().Select(f => f.GetType().Name + ":" + f.Visible)));
@@ -30,7 +32,7 @@ internal static class UiIntegrationTests
             {
                 var overlays = Application.OpenForms.OfType<Overlay>().Where(f => f.Visible).OrderBy(f => f.Left).ToArray();
                 if (overlays.Length == 0) return;
-                if (screenIndex >= overlays.Length) { exit = 0; Console.WriteLine($"PASS settings opened from actual right-button messages on {tested} displays"); context.ExitThread(); return; }
+                if (screenIndex >= overlays.Length) { exit = 0; Console.WriteLine($"PASS settings opened from actual right-button messages on {tested} displays"); requestStop = true; phase = 6; return; }
                 RightClick(overlays[screenIndex]); phase = 1;
             }
             else if (phase == 2 || phase == 4)
@@ -85,6 +87,8 @@ internal static class UiIntegrationTests
                 settings.Close(); tested++; screenIndex++; phase = 0;
             }
         };
-        timer.Start(); Application.Run(context); return exit;
+        timer.Start(); Application.Run(context);
+        if (requestStop && exit == 0) Console.WriteLine("PASS listener quit request closes windows and ends message loop");
+        return exit;
     }
 }

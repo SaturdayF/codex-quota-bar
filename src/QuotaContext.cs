@@ -25,9 +25,11 @@ internal sealed class QuotaContext : ApplicationContext
     private SettingsForm? settingsWindow;
     private readonly System.Windows.Forms.Timer settingsOpener = new() { Interval = 50 };
     private Screen? requestedSettingsScreen;
+    private readonly Func<bool>? shouldQuit;
 
-    public QuotaContext()
+    public QuotaContext(Func<bool>? shouldQuit = null)
     {
+        this.shouldQuit = shouldQuit;
         _ = dispatcher.Handle;
         hourIcon.ContextMenuStrip = weekIcon.ContextMenuStrip = menu;
         hourIcon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) Details(); };
@@ -38,7 +40,7 @@ internal sealed class QuotaContext : ApplicationContext
         SystemEvents.DisplaySettingsChanged += DisplaysChanged;
         SystemEvents.UserPreferenceChanged += PreferencesChanged;
         Tick();
-        watcher.Start();
+        if (!quitting) watcher.Start();
     }
     private void Dispatch(Action action)
     {
@@ -48,6 +50,8 @@ internal sealed class QuotaContext : ApplicationContext
     }
     private void Tick()
     {
+        if (quitting) return;
+        if (shouldQuit?.Invoke() == true) { ExitThread(); return; }
         var write = File.Exists(Settings.FilePath) ? File.GetLastWriteTimeUtc(Settings.FilePath) : DateTime.MinValue;
         if (write != settingsWrite)
         {

@@ -13,6 +13,7 @@ internal static class Program
         if (args.Contains("--layout-test")) return LayoutTests.Run();
         if (args.Contains("--settings-test")) return UiIntegrationTests.Run();
         if (args.Length == 2 && args[0] == "--render-ui") { DesignPreview.Render(args[1]); return 0; }
+        if (args.Length == 2 && args[0] == "--render-motion") { DesignPreview.RenderMotion(args[1]); return 0; }
         if (args.Contains("--self-test")) return SelfTests.Run().GetAwaiter().GetResult();
         if (args.Contains("--probe"))
         {
@@ -32,7 +33,9 @@ internal static class Program
         if (!first) return 0;
         try
         {
-            using var context = new QuotaContext();
+            using var quitSignal = new EventWaitHandle(false, EventResetMode.ManualReset, AppLifetime.QuitSignalName);
+            quitSignal.Reset();
+            using var context = new QuotaContext(() => quitSignal.WaitOne(0));
             using var smokeTimer = new System.Windows.Forms.Timer { Interval = 7000 };
             if (args.Contains("--smoke-ui")) { smokeTimer.Tick += (_, _) => context.ExitThread(); smokeTimer.Start(); }
             Application.Run(context); return 0;

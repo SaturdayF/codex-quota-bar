@@ -2,6 +2,27 @@ namespace CodexQuotaBar;
 
 internal static class DesignPreview
 {
+    internal static void RenderMotion(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        using var font = new Font("Microsoft YaHei UI", 12, GraphicsUnit.Pixel);
+        for (var frame = 0; frame < 31; frame++)
+        {
+            using var board = new Bitmap(590, 390); using var g = Graphics.FromImage(board);
+            g.Clear(Color.FromArgb(247, 247, 247));
+            using var ink = new SolidBrush(Color.FromArgb(35, 35, 35));
+            g.DrawString("七种样式的启动 / 重置动画 · 模拟额度 25% / 75%", font, ink, 20, 15);
+            var fill = 1 - Math.Pow(1 - frame / 30d, 3);
+            for (var row = 0; row < WidgetStyles.Choices.Length; row++)
+            {
+                var style = WidgetStyles.Choices[row]; var size = WidgetStyles.SizeFor(style.Id, false, 120);
+                g.DrawString(style.Name, font, ink, 20, 59 + row * 44);
+                using var image = LayeredSurface.Paint(size, new(new(25, null), new(75, null)), style.Id, true, false, true, false, fill, fill);
+                g.DrawImageUnscaled(image, 200, 50 + row * 44);
+            }
+            board.Save(Path.Combine(directory, $"{frame:00}.png"));
+        }
+    }
     internal static void Render(string directory)
     {
         Directory.CreateDirectory(directory);

@@ -16,6 +16,23 @@ internal static class StyleTests
             colors.Custom.PerformClick(); check(customRequested, "palette custom action opens extended color flow");
         }
         var old = JsonSerializer.Deserialize<Settings>("{\"AnimateQuotaReset\":false}")!;
+        var installed = Path.Combine(Path.GetTempPath(), "QuotaTest", "0.1.0");
+        check(Uninstaller.IsInstalled(Path.Combine(installed, "CodexQuotaBar.exe"), installed)
+            && !Uninstaller.IsInstalled(Path.Combine(installed, "other.exe"), installed)
+            && !Uninstaller.IsInstalled(Path.Combine(installed, "nested", "CodexQuotaBar.exe"), installed)
+            && !Uninstaller.IsInstalled(null, installed), "one-click uninstall only recognizes exact installed executable");
+        check(AppBrand.Version == "0.1.0" && AppBrand.Icon.Width > 0, "frozen version and embedded interlocked icon available");
+        var quitName = @"Local\CodexQuotaBar.Test." + Guid.NewGuid().ToString("N");
+        using (var quitSignal = new EventWaitHandle(false, EventResetMode.ManualReset, quitName))
+        {
+            AppLifetime.RequestQuit(quitName);
+            check(quitSignal.WaitOne(0), "uninstaller can notify listener to release child process before removal");
+        }
+        using (var iconBitmap = AppBrand.Icon.ToBitmap())
+        {
+            var background = iconBitmap.GetPixel(iconBitmap.Width / 2, iconBitmap.Height / 10);
+            check(background.R > 245 && background.G > 245 && background.B > 245, "approved application icon uses white background");
+        }
         check(!old.ForStyle("plain").Animate && old.ForStyle("badges").ShowPercent, "old settings preserve disabled animation and percentage default");
         var settings = new Settings();
         settings.StyleOptions["badges"] = new() { ShowRemaining = false, ShowPercent = false, Animate = false };
