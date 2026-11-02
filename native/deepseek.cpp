@@ -96,9 +96,9 @@ static const json &platformData(const json &value) {
         throw std::runtime_error("Invalid DeepSeek platform result");
     return data["biz_data"];
 }
-void parseDeepSeekBalance(DeepSeekState &state, const json &value, bool platform) {
-    auto &body = platform ? platformData(value) : value;
-    auto field = platform ? "normal_wallets" : "balance_infos";
+void parseDeepSeekBalance(DeepSeekState &state, const json &value) {
+    auto &body = platformData(value);
+    auto field = "normal_wallets";
     if (!body.contains(field) || !body[field].is_array() || body[field].empty())
         throw std::runtime_error("Missing DeepSeek wallets");
     std::vector<DeepSeekBalance> balances;
@@ -108,18 +108,12 @@ void parseDeepSeekBalance(DeepSeekState &state, const json &value, bool platform
             throw std::runtime_error("Unknown DeepSeek wallet currency");
         DeepSeekBalance b;
         b.currency = currency;
-        b.total = decimalMoney(wallet.at(platform ? "balance" : "total_balance"));
-        if (!platform) {
-            b.paid = decimalMoney(wallet.at("topped_up_balance"));
-            b.granted = decimalMoney(wallet.at("granted_balance"));
-        }
+        b.total = decimalMoney(wallet.at("balance"));
         if (std::any_of(balances.begin(), balances.end(), [&](auto &a) { return a.currency == currency; }))
             throw std::runtime_error("Duplicate DeepSeek wallet");
         balances.push_back(b);
     }
-    auto available = platform ? std::any_of(balances.begin(), balances.end(),
-                                             [](auto &b) { return b.total > 0; })
-                               : body.at("is_available").get<bool>();
+    auto available = std::any_of(balances.begin(), balances.end(), [](auto &b) { return b.total > 0; });
     state.balances = std::move(balances);
     state.available = available;
 }
@@ -224,7 +218,7 @@ struct InternetHandle {
 static json get(const std::wstring &host, const std::wstring &path, const std::string &token,
                 std::atomic<bool> &stop) {
     if (stop) throw std::runtime_error("Cancelled");
-    if (host != L"api.deepseek.com" && host != L"platform.deepseek.com")
+    if (host != L"platform.deepseek.com")
         throw std::runtime_error("Invalid DeepSeek host");
     if (!validDeepSeekCredential(token)) throw std::runtime_error("Invalid DeepSeek credential");
     InternetHandle session(WinHttpOpen(L"CodexQuotaBar/0.3.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
@@ -262,34 +256,33 @@ static json get(const std::wstring &host, const std::wstring &path, const std::s
 }
 static std::wstring failure(const std::exception &e) {
     std::string kind = e.what();
-    if (kind == "DeepSeek session expired") return L"凭证已失效，请更新平台登录凭证或 API Key";
+    if (kind == "DeepSeek session expired") return L"登录态已失效，请重新登录平台并更新 userToken";
     if (kind == "DeepSeek access denied") return L"DeepSeek 拒绝访问，请检查凭证或稍后重试";
     if (kind == "DeepSeek rate limited") return L"请求过于频繁，稍后自动重试";
     return L"读取失败：网络异常或平台数据格式变化";
 }
-DeepSeekState readDeepSeek(const std::string &apiKey, const std::string &platformToken,
+DeepSeekState readDeepSeek(const std::string &sessionText,
                           std::atomic<bool> &stop, DeepSeekTransport transport, int64_t now) {
     DeepSeekState result;
     result.day = beijingDay(now);
     if (stop) return result;
     if (!transport) transport = get;
-    bool platform = !platformToken.empty();
-    if (!platform && apiKey.empty()) {
-        result.balanceError = L"请在设置中配置平台凭证或 API Key";
+    auto platformToken = normalizeDeepSeekCredential(sessionText);
+    if (platformToken.empty()) {
+        result.balanceError = L"请在设置中配置平台登录凭证 userToken";
         result.costError = L"请配置平台登录凭证以读取当日账单";
         return result;
     }
+    if (!validDeepSeekCredential(platformToken)) {
+        result.balanceError = result.costError = L"请输入平台 userToken，不接受 API Key";
+        return result;
+    }
     try {
-        parseDeepSeekBalance(result, transport(platform ? L"platform.deepseek.com" : L"api.deepseek.com",
-                              platform ? L"/api/v0/users/get_user_summary" : L"/user/balance",
-                              platform ? platformToken : apiKey, stop), platform);
+        parseDeepSeekBalance(result, transport(L"platform.deepseek.com", L"/api/v0/users/get_user_summary",
+                                              platformToken, stop));
         result.balanceAt = now;
         result.balanceError.clear();
     } catch (const std::exception &e) { result.balanceError = failure(e); }
-    if (!platform) {
-        result.costError = L"仅 API Key 无法读取账单，请配置平台登录凭证";
-        return result;
-    }
     auto query = L"?start=" + std::to_wstring(result.day) + L"&end=" + std::to_wstring(result.day + 86400) + L"&tz=28800";
     if (stop) return result;
     try {
@@ -306,31 +299,54 @@ DeepSeekState readDeepSeek(const std::string &apiKey, const std::string &platfor
     } catch (const std::exception &e) { result.tokensError = failure(e); }
     return result;
 }
-static const wchar_t *credentialTarget(bool platform) {
-    return platform ? L"CodexQuotaBar.DeepSeek.PlatformToken" : L"CodexQuotaBar.DeepSeek.ApiKey";
+static const wchar_t *credentialTarget() {
+    return L"CodexQuotaBar.DeepSeek.PlatformToken";
 }
 bool validDeepSeekCredential(const std::string &value) {
-    return value.size() <= CRED_MAX_CREDENTIAL_BLOB_SIZE &&
-           std::all_of(value.begin(), value.end(), [](unsigned char c) { return c > 32 && c < 127; });
+    return value.rfind("sk-", 0) != 0 && value.rfind("SK-", 0) != 0 &&
+           value.size() <= CRED_MAX_CREDENTIAL_BLOB_SIZE &&
+           std::all_of(value.begin(), value.end(), [](unsigned char c) {
+               return c > 32 && c < 127 && c != '"' && c != '{' && c != '}' && c != '[' && c != ']';
+           });
 }
-std::string deepSeekCredential(bool platform) {
+std::string normalizeDeepSeekCredential(const std::string &text) {
+    auto trim = [](std::string value) {
+        auto first = value.find_first_not_of(" \t\r\n");
+        return first == std::string::npos ? std::string() : value.substr(first, value.find_last_not_of(" \t\r\n") - first + 1);
+    };
+    auto value = trim(text);
+    if (!value.empty() && (value.front() == '"' || value.front() == '{')) {
+        auto parsed = json::parse(value, nullptr, false);
+        if (parsed.is_string()) value = parsed.get<std::string>();
+        else if (parsed.is_object() && parsed.contains("value") && parsed["value"].is_string())
+            value = parsed["value"].get<std::string>();
+    }
+    value = trim(value);
+    if (value.size() >= 7) {
+        auto prefix = value.substr(0, 7);
+        std::transform(prefix.begin(), prefix.end(), prefix.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        if (prefix == "bearer ") value = trim(value.substr(7));
+    }
+    return value;
+}
+std::string deepSeekCredential() {
     PCREDENTIALW credential = nullptr;
-    if (!CredReadW(credentialTarget(platform), CRED_TYPE_GENERIC, 0, &credential)) return {};
+    if (!CredReadW(credentialTarget(), CRED_TYPE_GENERIC, 0, &credential)) return {};
     std::string result(reinterpret_cast<char *>(credential->CredentialBlob), credential->CredentialBlobSize);
     SecureZeroMemory(credential->CredentialBlob, credential->CredentialBlobSize);
     CredFree(credential);
     return result;
 }
-void saveDeepSeekCredential(bool platform, const std::string &value) {
+void saveDeepSeekCredential(const std::string &value) {
     if (!validDeepSeekCredential(value)) throw std::runtime_error("Invalid DeepSeek credential");
     if (value.empty()) {
-        if (!CredDeleteW(credentialTarget(platform), CRED_TYPE_GENERIC, 0) && GetLastError() != ERROR_NOT_FOUND)
+        if (!CredDeleteW(credentialTarget(), CRED_TYPE_GENERIC, 0) && GetLastError() != ERROR_NOT_FOUND)
             throw std::runtime_error("Cannot delete DeepSeek credential");
         return;
     }
     CREDENTIALW credential{};
     credential.Type = CRED_TYPE_GENERIC;
-    credential.TargetName = const_cast<LPWSTR>(credentialTarget(platform));
+    credential.TargetName = const_cast<LPWSTR>(credentialTarget());
     credential.UserName = const_cast<LPWSTR>(L"DeepSeek");
     credential.Persist = CRED_PERSIST_LOCAL_MACHINE;
     credential.CredentialBlob = reinterpret_cast<LPBYTE>(const_cast<char *>(value.data()));

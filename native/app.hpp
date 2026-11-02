@@ -57,7 +57,7 @@ struct Application {
     std::function<HWND(HMONITOR)> taskbarProbe = taskbarWindow;
     bool fakeRpc = false; // Only enabled by in-process integration checks.
     std::function<DeepSeekState(std::atomic<bool> &)> deepSeekProbe = [](std::atomic<bool> &stop) {
-        return readDeepSeek(deepSeekCredential(false), deepSeekCredential(true), stop);
+        return readDeepSeek(deepSeekCredential(), stop);
     };
     fs::file_time_type settingsWrite{};
     Application(bool previewMode = false, bool test = false);
@@ -91,7 +91,7 @@ struct SettingsWindow {
     HBRUSH background = nullptr, sidebar = nullptr;
     std::vector<HWND> controls;
     HWND styles = nullptr, scale = nullptr, display = nullptr, path = nullptr, interval = nullptr;
-    HWND deepSeekKey = nullptr, deepSeekToken = nullptr, deepSeekInterval = nullptr;
+    HWND deepSeekToken = nullptr, deepSeekInterval = nullptr;
     Color selectedColor;
     bool colorHour = true;
     SettingsWindow(Application *owner, HMONITOR requested);

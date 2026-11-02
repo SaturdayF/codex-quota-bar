@@ -31,8 +31,7 @@ enum {
     Exit,
     Uninstall,
     DeepSeekEnabled = 260,
-    DeepSeekKey,
-    DeepSeekToken,
+    DeepSeekToken = 262,
     DeepSeekInterval,
     DeepSeekRefresh,
     DeepSeekClear,
@@ -161,12 +160,9 @@ void SettingsWindow::createControls() {
     button(L"恢复套餐默认", ResetQuotas, 1);
     button(L"显示 DeepSeek 余额", DeepSeekEnabled, 3);
     deepSeekToken = control(L"EDIT", L"", DeepSeekToken, 3, ES_PASSWORD | ES_AUTOHSCROLL);
-    deepSeekKey = control(L"EDIT", L"", DeepSeekKey, 3, ES_PASSWORD | ES_AUTOHSCROLL);
-    for (auto edit : {deepSeekToken, deepSeekKey}) SendMessageW(edit, EM_SETLIMITTEXT, 2560, 0);
-    bool hasToken = !app->testing && !deepSeekCredential(true).empty();
-    bool hasKey = !app->testing && !deepSeekCredential(false).empty();
+    SendMessageW(deepSeekToken, EM_SETLIMITTEXT, 2560, 0);
+    bool hasToken = !app->testing && !deepSeekCredential().empty();
     SendMessageW(deepSeekToken, EM_SETCUEBANNER, 0, reinterpret_cast<LPARAM>(hasToken ? L"已保存；留空保持不变" : L"粘贴平台 userToken；输入将被隐藏"));
-    SendMessageW(deepSeekKey, EM_SETCUEBANNER, 0, reinterpret_cast<LPARAM>(hasKey ? L"已保存；留空保持不变" : L"可选：sk-…，仅 API Key 模式不含账单"));
     deepSeekInterval = control(L"COMBOBOX", L"", DeepSeekInterval, 3, CBS_DROPDOWNLIST);
     const wchar_t *deepIntervals[] = {L"1 分钟", L"2 分钟", L"5 分钟"};
     for (auto label : deepIntervals) SendMessageW(deepSeekInterval, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
@@ -220,7 +216,7 @@ void SettingsWindow::layout() {
     GetClientRect(content, &c);
     contentWidth = int(c.right * 96. / dpi);
     contentHeight = int(c.bottom * 96. / dpi);
-    int needed = page == 0 ? 704 : page == 1 ? 554 : page == 3 ? 652 : 540;
+    int needed = page == 0 ? 704 : page == 1 ? 554 : page == 3 ? 542 : 540;
     scroll = std::clamp(scroll, 0, std::max(0, needed - contentHeight));
     SCROLLINFO si{sizeof(si), SIF_RANGE | SIF_PAGE | SIF_POS,   0,
                   needed - 1, UINT(std::max(1, contentHeight)), scroll,
@@ -259,10 +255,9 @@ void SettingsWindow::layout() {
     place(Uninstall, contentWidth - 124, 405, 110, 34);
     place(DeepSeekEnabled, contentWidth - 60, 89, 44, 26);
     place(DeepSeekToken, 0, 205, contentWidth - 14, 30);
-    place(DeepSeekKey, 0, 315, contentWidth - 14, 30);
-    place(DeepSeekInterval, contentWidth - 164, 373, 150, 220);
-    place(DeepSeekRefresh, contentWidth - 124, 439, 110, 34);
-    place(DeepSeekClear, contentWidth - 124, 505, 110, 34);
+    place(DeepSeekInterval, contentWidth - 164, 263, 150, 220);
+    place(DeepSeekRefresh, contentWidth - 124, 329, 110, 34);
+    place(DeepSeekClear, contentWidth - 124, 395, 110, 34);
     place(DeepSeekPlatform, contentWidth - 194, 143, 180, 28);
     place(DeepSeekHelp, contentWidth - 164, 175, 150, 26);
     SendMessageW(content, WM_SETREDRAW, TRUE, 0);
@@ -402,15 +397,13 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                          14, muted);
             } else {
                 row(82, L"显示 DeepSeek 余额", L"启用后独立显示，不依赖 Codex 是否运行。", 110);
-                drawUiText(g, L"平台登录凭证（账单模式）", RectF(0, 148, contentWidth - 210.f, 26), 16, ink);
+                drawUiText(g, L"平台登录凭证 userToken", RectF(0, 148, contentWidth - 210.f, 26), 16, ink);
                 drawUiText(g, L"同一平台账户的余额、费用和 Token 明细。", RectF(0, 174, contentWidth - 175.f, 26), 14, muted);
-                drawUiText(g, L"API Key（可选）", RectF(0, 258, float(contentWidth), 26), 16, ink);
-                drawUiText(g, L"未配置平台凭证时仅查询余额，不读取消费明细。", RectF(0, 284, float(contentWidth), 26), 14, muted);
-                row(366, L"自动刷新间隔", L"失败时保留旧数据并退避重试。", 190);
-                row(432, L"读取最新数据", L"先保存凭证；仅读取已保存账户。", 150);
-                row(498, L"本机凭证", clearDeepSeekCredentials ? L"保存后将清除原凭证，可填写新凭证替换。" : L"留空保留原凭证，清除在保存后生效。", 150);
-                drawUiText(g, L"北京时间 UTC+8 · 平台账单可能延迟更新。", RectF(0, 574, float(contentWidth), 26), 13, muted);
-                drawUiText(g, L"平台账单接口可能变化；凭证保存在 Windows 凭据管理器。", RectF(0, 607, float(contentWidth), 26), 12, muted);
+                row(256, L"自动刷新间隔", L"失败时保留旧数据并退避重试。", 190);
+                row(322, L"读取最新数据", L"先保存凭证；仅读取已保存账户。", 150);
+                row(388, L"本机登录态", clearDeepSeekCredentials ? L"保存后将清除原凭证，可填写新凭证替换。" : L"留空保留原凭证，清除在保存后生效。", 150);
+                drawUiText(g, L"北京时间 UTC+8 · 平台账单可能延迟更新。", RectF(0, 464, float(contentWidth), 26), 13, muted);
+                drawUiText(g, L"平台登录态保存在本机 Windows 凭据管理器。", RectF(0, 497, float(contentWidth), 26), 12, muted);
             }
         }
     }
@@ -512,9 +505,7 @@ void SettingsWindow::command(int id, int notice) {
         break;
     case DeepSeekClear:
         clearDeepSeekCredentials = true;
-        SetWindowTextW(deepSeekKey, L"");
         SetWindowTextW(deepSeekToken, L"");
-        SendMessageW(deepSeekKey, EM_SETCUEBANNER, 0, reinterpret_cast<LPARAM>(L"保存后清除；或输入新 API Key"));
         SendMessageW(deepSeekToken, EM_SETCUEBANNER, 0, reinterpret_cast<LPARAM>(L"保存后清除；或输入新平台凭证"));
         break;
     case DeepSeekPlatform:
@@ -524,9 +515,9 @@ void SettingsWindow::command(int id, int notice) {
         MessageBoxW(window,
                     L"1. 点击“打开 DeepSeek 平台”，在浏览器中自行登录。\n"
                     L"2. 按 F12，在 Application / 应用 → Local Storage / 本地存储中选择 https://platform.deepseek.com。\n"
-                    L"3. 找到 userToken，将原始令牌填入“平台登录凭证”，点击“保存更改”。\n\n"
-                    L"无需填写账号密码。平台凭证同时用于同一账户的余额与账单。\n"
-                    L"只有 API Key 时只能显示余额，不能读取当日消费。",
+                    L"3. 找到 userToken，将令牌或含 value 的 JSON 填入“平台登录凭证”，点击“保存更改”。\n\n"
+                    L"平台凭证同时用于同一账户的余额与账单。\n"
+                    L"userToken 属于平台登录凭证，请仅保存在本机。无需填写 API Key 或账号密码。",
                     L"DeepSeek 凭证填写说明", MB_OK | MB_ICONINFORMATION);
         break;
     case Cancel:
@@ -630,9 +621,9 @@ void SettingsWindow::command(int id, int notice) {
     InvalidateRect(content, nullptr, FALSE);
 }
 bool SettingsWindow::save() {
-    auto newKey = utf8(controlText(deepSeekKey)), newToken = utf8(controlText(deepSeekToken));
-    if (!validDeepSeekCredential(newKey) || !validDeepSeekCredential(newToken)) {
-        MessageBoxW(window, L"请填写原始密钥或 userToken，不包含 Bearer 前缀、空格或换行。", L"无法保存 DeepSeek 凭证", MB_OK | MB_ICONERROR);
+    auto newToken = normalizeDeepSeekCredential(utf8(controlText(deepSeekToken)));
+    if (!validDeepSeekCredential(newToken)) {
+        MessageBoxW(window, L"请填写平台 userToken 或其本地存储值，不接受 API Key 或含无效字符的登录凭证。", L"无法保存 DeepSeek 凭证", MB_OK | MB_ICONERROR);
         return false;
     }
     int deepInterval = int(SendMessageW(deepSeekInterval, CB_GETCURSEL, 0, 0));
@@ -665,23 +656,20 @@ bool SettingsWindow::save() {
             draft.displays.push_back(utf8(all[n - 2].name));
         }
     }
-    auto oldKey = deepSeekCredential(false), oldToken = deepSeekCredential(true);
+    auto oldToken = deepSeekCredential();
     bool credentialsTouched = false;
     try {
         if (!setStartup(startup))
             throw std::runtime_error("Cannot save startup");
-        if (clearDeepSeekCredentials || !newKey.empty()) {
-            saveDeepSeekCredential(false, newKey); credentialsTouched = true;
-        }
         if (clearDeepSeekCredentials || !newToken.empty()) {
-            saveDeepSeekCredential(true, newToken); credentialsTouched = true;
+            saveDeepSeekCredential(newToken); credentialsTouched = true;
         }
         draft.save();
         app->saved(draft);
         return true;
     } catch (...) {
         if (credentialsTouched) {
-            try { saveDeepSeekCredential(false, oldKey); saveDeepSeekCredential(true, oldToken); } catch (...) {}
+            try { saveDeepSeekCredential(oldToken); } catch (...) {}
         }
         MessageBoxW(window, L"无法保存设置或启动项，请检查当前用户权限。", L"Codex Quota Bar",
                     MB_OK | MB_ICONERROR);

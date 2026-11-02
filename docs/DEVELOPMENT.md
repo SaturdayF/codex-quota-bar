@@ -4,9 +4,9 @@
 
 ## DeepSeek 实现
 
-`deepseek.cpp` 负责 Windows 凭据管理器、固定 HTTPS 端点的 WinHTTP 只读请求、账单解析与 UTC+8 日期；`deepseek_ui.cpp` 负责独立 worker、任务栏文字与悬浮明细。启用状态和刷新间隔保存在 JSON，API Key / userToken 从不写入配置、命令行或日志。平台凭证优先于 API Key：平台余额与账单必须由同一凭证读取，避免混合账户。仅有 API Key 时只读 `/user/balance`，费用显示不可用。
+`deepseek.cpp` 负责 Windows 凭据管理器、固定 HTTPS 端点的 WinHTTP 只读请求、账单解析与 UTC+8 日期；`deepseek_ui.cpp` 负责独立 worker、任务栏文字与悬浮明细。启用状态和刷新间隔保存在 JSON；userToken 只存入本机 Windows 凭据管理器，不写入配置、命令行或日志。余额与账单均由平台登录态读取。程序不提供 API Key 输入、读取或保存接口，不访问 `api.deepseek.com/user/balance`，也不读取 API Key 环境变量。会话导入支持原始令牌、Bearer 文本及浏览器本地存储的 `{"value":"…"}` 结构。识别为 `sk-` 前缀的 API Key 在网络请求和持久化之前拒绝。
 
-平台请求为 `/api/v0/users/get_user_summary` 及 `/api/v0/usage/by_api_key/{cost,amount}?start=<北京时间零点 Unix 秒>&end=<翌日零点>&tz=28800`。按 `series[].model` 聚合全部 API Key 的当天 bucket；费用按货币分别累计，Token 的 `REQUEST` 不计入 Token 总量。金额以 10^-8 货币单位的定点数累计，异常数值或结构失败不能退化成零。参考公开实现的协议结构：[平台接口记录](https://github.com/MCwasd/deepseek-platform-widget/blob/main/deepseek-api-reference.md)、[CodexBar 数据源说明](https://github.com/steipete/CodexBar/blob/main/docs/deepseek.md)；这是平台私有接口，不是官方稳定 API 合约。公开余额合约见 [DeepSeek 文档](https://api-docs.deepseek.com/zh-cn/api/get-user-balance/)。本机未使用真实账户凭证，实账户联调需用户在设置内完成。
+平台请求为 `/api/v0/users/get_user_summary` 及 `/api/v0/usage/by_api_key/{cost,amount}?start=<北京时间零点 Unix 秒>&end=<翌日零点>&tz=28800`。按 `series[].model` 聚合账户的当天 bucket，忽略 API Key 元数据；费用按货币分别累计，Token 的 `REQUEST` 不计入 Token 总量。金额以 10^-8 货币单位的定点数累计，异常数值或结构失败不能退化成零。参考公开实现的协议结构：[平台接口记录](https://github.com/MCwasd/deepseek-platform-widget/blob/main/deepseek-api-reference.md)、[CodexBar 数据源说明](https://github.com/steipete/CodexBar/blob/main/docs/deepseek.md)；这是平台私有接口，不是官方稳定 API 合约。平台入口见 [DeepSeek 用量页](https://platform.deepseek.com/usage)。本机未使用真实账户凭证，实账户联调需用户在设置内完成。
 
 网络请求禁用跨站重定向，保持 TLS 默认验证，设置连接与读取超时，错误不包含原始响应或凭证。worker 在配置代次变化后丢弃过期响应，跨日先清除费用再取当天账单；暂时失败时仅保留同代次、同日的旧结果和时间戳。关闭开关后不查询，独立显示不受 Codex 进程退出影响。
 

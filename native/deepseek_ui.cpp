@@ -58,7 +58,7 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
             drawUiText(g, text, RectF(20 * d, y * d, width - 40 * d, 28 * d), size * d, color, bold);
         };
         line(L"DeepSeek · 当日消耗", 14, 20, ink, true);
-        line(beijingDate(utcNow()) + L" · 北京时间 00:00 起 · 全部 API Key", 49, 13, muted);
+        line(beijingDate(utcNow()) + L" · 北京时间 00:00 起 · 账户汇总", 49, 13, muted);
         float yy = 88;
         for (int i = 0; i < balanceRows; ++i) {
             line(i < int(data.balances.size())

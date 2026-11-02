@@ -60,23 +60,20 @@ DeepSeek 组件独立于 Codex 的运行状态。默认每分钟刷新，可选 
 
 ### 凭证与配置
 
-| 凭证 | 余额 | 当日消费与 Token 明细 |
-| --- | --- | --- |
-| 平台登录凭证 `userToken` | 支持 | 支持 |
-| DeepSeek API Key | 支持 | 不支持，消费显示 `--` |
+DeepSeek 功能使用平台登录态 `userToken`，读取账户余额、当日消费和 Token 明细。程序不读取或保存 DeepSeek API Key，也不收集账号密码。`userToken` 属于登录凭证，保存在本机 Windows 凭据管理器。
 
 1. 打开“设置 → DeepSeek”，点击“打开 DeepSeek 平台”并在浏览器中登录。
 2. 按 F12，在 **Application / 应用 → Local Storage / 本地存储 → `https://platform.deepseek.com`** 中找到 `userToken`。
-3. 将原始令牌填入“平台登录凭证”，启用“显示 DeepSeek 余额”，点击“保存更改”。设置中的“凭证填写说明”提供相同步骤。
+3. 将令牌或含 `value` 的 JSON 值填入“平台登录凭证”，启用“显示 DeepSeek 余额”，点击“保存更改”。设置中的“凭证填写说明”提供相同步骤。
 
-凭证输入框留空表示保留已有值；“清除凭证”在保存后生效。平台凭证已配置时，余额与消费均来自该平台账户。
+凭证输入框留空表示保留已有值；“清除凭证”在保存后生效。余额与消费均来自登录态对应的平台账户。
 
 ### 统计范围与数据状态
 
-- “当日”按北京时间 UTC+8 零点切分，覆盖平台账户的全部 API Key。
+- “当日”按北京时间 UTC+8 零点切分，覆盖整个平台账户的用量。
 - 消费金额来自平台账单，按模型聚合；不同币种分别显示。
 - 详情显示余额和账单的更新时间，读取失败时显示状态提示；平台数据可能存在更新延迟。
-- 公开余额接口见 [DeepSeek 官方文档](https://api-docs.deepseek.com/zh-cn/api/get-user-balance/)。费用和 Token 明细使用平台私有账单接口，接口变化或访问失败时显示错误状态。
+- 余额、费用和 Token 明细来自 [DeepSeek 平台](https://platform.deepseek.com/usage)的私有接口，接口变化、登录态失效或访问失败时显示错误状态。
 - 当前开发验证使用模拟数据，真实账户联调尚未完成。
 
 ![DeepSeek 任务栏显示（模拟数据）](docs/deepseek-widget-preview.png)
