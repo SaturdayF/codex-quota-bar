@@ -1,9 +1,9 @@
 # nlohmann/json
 
-Pinned version: **3.11.3**, MIT license. Only a compile-time header is vendored; users need no extra runtime.
+项目使用 **nlohmann/json 3.11.3** 单头文件库解析 JSON，许可证为 MIT。
 
-- Official source: https://github.com/nlohmann/json/tree/v3.11.3
-- Header: https://raw.githubusercontent.com/nlohmann/json/v3.11.3/single_include/nlohmann/json.hpp
-- License: https://raw.githubusercontent.com/nlohmann/json/v3.11.3/LICENSE.MIT
+- [上游源码](https://github.com/nlohmann/json/tree/v3.11.3)
+- 本地头文件：`json.hpp`
+- 本地许可证：`LICENSE-json.txt`
 
-Original attribution is retained in json.hpp and LICENSE-json.txt. The latter is included in both installer and ZIP.
+头文件保留原作者声明，许可证随安装包和便携包分发。

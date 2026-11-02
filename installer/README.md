@@ -1,17 +1,19 @@
 # 安装器
 
-使用 [Inno Setup](https://jrsoftware.org/isinfo.php) 编译。配置为当前用户安装、始终显示目标目录选择页和 LZMA2 solid 压缩。0.2.0 原生负载不包含或需要 .NET；安装目录需用户可写，默认不请求管理员权限。
+使用 Inno Setup 构建当前用户安装包，支持自定义目录、登录启动、设置快捷方式及 Windows 卸载入口。安装目录需当前用户可写。
 
 ```powershell
-./scripts/build-native-installer.ps1 -InnoCompiler 'C:/path/to/ISCC.exe'
+./scripts/build-native-installer.ps1 -InnoCompiler C:/path/to/ISCC.exe
 ```
 
-`ChineseSimplified.isl` 来自官方[翻译页面](https://jrsoftware.org/files/istrans/)指向的[简体中文文件](https://raw.githubusercontent.com/jrsoftware/issrc/refs/heads/main/Files/Languages/ChineseSimplified.isl)，原作者说明保留在文件头。已用官方签名的 Inno Setup 6.7.4 编译验证。
+0.3.1 使用 Inno Setup 6.7.4 验证，采用 LZMA2 压缩。负载包含原生程序、版本信息、使用指南和许可证。
 
-原生卸载按安装记录移除文件，保留用户额外放入的文件。应用设置页通过 `installer.ini` 的产品/版本标记识别同目录的原生卸载器；旧 PowerShell 安装继续使用原卸载流程。
+设置页根据同目录 `installer.ini` 的产品和版本标记启动 Inno 卸载器。卸载按安装记录删除文件，保留用户额外文件。
 
-`/ISOLATEDTEST=1` 供验证脚本使用：禁用启动项、快捷方式、卸载注册表项、用户设置删除和对现有监听器的停止请求。仍真实安装离线负载并生成原生卸载器，允许测试自定义路径和文件清理。
+`/ISOLATEDTEST=1` 用于独立目录测试，隔离用户启动项、快捷方式、注册项、设置和现有监听器。
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/NativeInstaller.Tests.ps1
+./tests/NativeInstaller.Tests.ps1
 ```
+
+简体中文翻译来自 [Inno Setup 官方翻译](https://jrsoftware.org/files/istrans/)，作者信息保留在文件头。
