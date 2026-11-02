@@ -550,21 +550,26 @@ int uiTests(const fs::path &dir) {
         std::vector<std::pair<HWND, RECT>> inactive;
         for (HWND ctrl : settings.controls) {
             int ownerPage = int(reinterpret_cast<INT_PTR>(GetPropW(ctrl, L"QuotaPage"))) - 2;
-            if (ownerPage >= 0 && ownerPage != page) { RECT r{}; GetWindowRect(ctrl, &r); inactive.push_back({ctrl, r}); }
+            if (ownerPage >= 0 && ownerPage != page) {
+                RECT r{}; GetWindowRect(ctrl, &r);
+                MapWindowPoints(nullptr, settings.content, reinterpret_cast<POINT *>(&r), 2);
+                inactive.push_back({ctrl, r});
+            }
         }
         settings.scroll = 19;
         settings.layout();
         bool inactiveStationary = true;
         for (auto &item : inactive) {
             RECT after{}; GetWindowRect(item.first, &after);
+            MapWindowPoints(nullptr, settings.content, reinterpret_cast<POINT *>(&after), 2);
             inactiveStationary = inactiveStationary && EqualRect(&item.second, &after);
         }
         check(inactiveStationary, "page layout never moves hidden controls from other pages " + std::to_string(page));
         settings.scroll = 0;
         settings.layout();
-        auto beforeRepair = readControl(settings.content);
-        RedrawWindow(settings.content, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
-        check(beforeRepair == readControl(settings.content), "page switch live pixels match a clean repaint " + std::to_string(page));
+        auto beforeRepair = readControl(settings.viewport);
+        RedrawWindow(settings.viewport, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+        check(beforeRepair == readControl(settings.viewport), "page switch live pixels match a clean repaint " + std::to_string(page));
     }
     settings.selectPage(0);
     SetWindowPos(settings.window, nullptr, 0, 0, originalBounds.right - originalBounds.left,
@@ -576,8 +581,8 @@ int uiTests(const fs::path &dir) {
             HWND child = GetDlgItem(settings.content, id);
             RECT r{}, client{};
             GetWindowRect(child, &r);
-            GetClientRect(settings.content, &client);
-            MapWindowPoints(settings.content, nullptr, reinterpret_cast<POINT *>(&client), 2);
+            GetClientRect(settings.viewport, &client);
+            MapWindowPoints(settings.viewport, nullptr, reinterpret_cast<POINT *>(&client), 2);
             if (r.top < client.top || r.bottom > client.bottom) continue;
             auto moved = readControl(child);
             RedrawWindow(child, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
@@ -585,6 +590,54 @@ int uiTests(const fs::path &dir) {
                   std::to_string(id) + " at " + std::to_string(offset));
         }
     }
+    int clippedControls = 0;
+    for (int page : {0, 1, 2, 3}) {
+        settings.selectPage(page);
+        settings.previewStart = -1;
+        SetFocus(GetDlgItem(settings.window, 100 + page));
+        int controlMoves = 0;
+        auto countMoves = [](HWND w, UINT message, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR data) -> LRESULT {
+            if (message == WM_WINDOWPOSCHANGING) ++*reinterpret_cast<int *>(data);
+            return DefSubclassProc(w, message, wp, lp);
+        };
+        for (HWND ctrl : settings.controls)
+            if (GetParent(ctrl) == settings.content)
+                SetWindowSubclass(ctrl, countMoves, 31, reinterpret_cast<DWORD_PTR>(&controlMoves));
+        SendMessageW(settings.viewport, WM_MOUSEWHEEL, MAKEWPARAM(0, -60), 0);
+        check(settings.scroll == 0, "partial wheel input waits for a full detent page " + std::to_string(page));
+        SendMessageW(settings.viewport, WM_MOUSEWHEEL, MAKEWPARAM(0, -60), 0);
+        check(settings.scroll > 0, "partial wheel input accumulates into scrolling page " + std::to_string(page));
+        for (int delta : {-120, -120, 120, -240, 240, -120, 120, -360, 360}) {
+            SendMessageW(settings.viewport, WM_MOUSEWHEEL, MAKEWPARAM(0, delta), 0);
+            RECT clip{}; GetClientRect(settings.viewport, &clip);
+            MapWindowPoints(settings.viewport, nullptr, reinterpret_cast<POINT *>(&clip), 2);
+            for (HWND ctrl : settings.controls) if (GetParent(ctrl) == settings.content && IsWindowVisible(ctrl)) {
+                RECT r{}, intersection{}; GetWindowRect(ctrl, &r);
+                if (IntersectRect(&intersection, &r, &clip) && !EqualRect(&intersection, &r)) ++clippedControls;
+            }
+            auto live = readControl(settings.viewport);
+            RedrawWindow(settings.viewport, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+            check(live == readControl(settings.viewport), "wheel live pixels match clean repaint including clipped controls page " +
+                  std::to_string(page) + " delta " + std::to_string(delta));
+        }
+        check(controlMoves == 0, "wheel scroll moves the canvas without repositioning native controls page " + std::to_string(page));
+        for (HWND ctrl : settings.controls) if (GetParent(ctrl) == settings.content) RemoveWindowSubclass(ctrl, countMoves, 31);
+        auto live = readControl(settings.viewport);
+        RECT r{}; GetClientRect(settings.viewport, &r);
+        Surface snapshot(r.right, r.bottom);
+        std::copy(live.begin(), live.end(), snapshot.pixels);
+        for (size_t pixel = 3; pixel < live.size(); pixel += 4) snapshot.pixels[pixel] = 255;
+        snapshot.save(dir / (L"wheel-live-page-" + std::to_wstring(page) + L".png"));
+        settings.scrollTo(INT_MAX);
+        int atBottom = settings.scroll;
+        SendMessageW(settings.viewport, WM_MOUSEWHEEL, MAKEWPARAM(0, -120), 0);
+        check(settings.scroll == atBottom, "wheel clamps at the bottom boundary page " + std::to_string(page));
+        settings.scrollTo(0);
+        SendMessageW(settings.window, WM_MOUSEWHEEL, MAKEWPARAM(0, 120), 0);
+        check(settings.scroll == 0, "window wheel routing clamps at the top boundary page " + std::to_string(page));
+    }
+    check(clippedControls > 0, "wheel regression covers partially clipped native controls");
+    settings.selectPage(0);
     SetWindowPos(settings.window, nullptr, 0, 0, originalBounds.right - originalBounds.left,
                  originalBounds.bottom - originalBounds.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     settings.scroll = 0;

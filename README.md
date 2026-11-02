@@ -9,7 +9,7 @@ Windows 任务栏额度与余额显示工具。支持 Codex 5 小时额度、周
 | 版本 | 状态 | 内容 |
 | --- | --- | --- |
 | [0.2.2](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.2.2) | 已发布 | Codex 额度显示、外观设置、动画、多屏支持 |
-| [0.3.0](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.3.0) | 已发布并封存 | DeepSeekHarness 余额与消费、图标避让、拖动交换与平滑落位 |
+| 0.3.0 修订 | 未发布；原发布已撤回 | DeepSeekHarness 余额与消费、图标避让、拖动交换与平滑落位 |
 
 [下载发布包](https://github.com/SaturdayF/codex-quota-bar/releases) · [版本记录](CHANGELOG.md) · [开发说明](docs/DEVELOPMENT.md)
 
@@ -92,14 +92,12 @@ DeepSeek 功能使用平台登录态 `userToken`，读取账户余额、当日�
 
 ## 安装与使用
 
-当前发布包为 **0.3.0**，包含 Codex 和 DeepSeekHarness 组件。源码标签及发布文件保持封存，历史版本可从 Releases 页面获取。
+当前发布包为 **0.2.2**，包含 Codex 功能。0.3.0 的原发布和下载文件已撤回，当前修订尚未发布；DeepSeekHarness 相关功能位于开发代码中。
 
-- [EXE 安装包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.0/CodexQuotaBar-v0.3.0-Setup.exe)：安装时可选择路径和登录启动。
-- [Portable ZIP](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.0/CodexQuotaBar-v0.3.0-Portable-win-x64.zip)：解压后运行 `CodexQuotaBar.exe`。
+- [EXE 安装包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.2.2/CodexQuotaBar-v0.2.2-Setup.exe)：安装时可选择路径和登录启动。
+- [Portable ZIP](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.2.2/CodexQuotaBar-v0.2.2-Portable-win-x64.zip)：解压后运行 `CodexQuotaBar.exe`。
 
-[SHA256 校验文件](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.0/SHA256SUMS.txt)用于核对下载完整性。
-
-安装版默认目录为 `%LOCALAPPDATA%\Programs\CodexQuotaBar\0.3.0`，也可选择其他当前用户可写的专用目录。
+安装版默认目录为 `%LOCALAPPDATA%\Programs\CodexQuotaBar\0.2.2`，也可选择其他当前用户可写的专用目录。
 
 Codex 额度读取需要本机 Codex CLI 已通过 ChatGPT 账户登录。自动识别失败时，可在“高级”页指定 `codex.exe`。显示的数据属于 **CLI 当前登录账户**，可能与桌面应用登录的账户不同。
 

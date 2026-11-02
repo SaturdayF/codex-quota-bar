@@ -73,6 +73,7 @@ SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
     oldStyle = draft.styleIndex();
     registerSettingsClass(L"CodexQuotaBar.Native.Settings", procedure);
     registerSettingsClass(L"CodexQuotaBar.Native.Content", contentProcedure);
+    registerSettingsClass(L"CodexQuotaBar.Native.Viewport", viewportProcedure);
     registerSettingsClass(L"CodexQuotaBar.Native.Palette", paletteProcedure);
     window =
         CreateWindowExW(WS_EX_APPWINDOW, L"CodexQuotaBar.Native.Settings", L"Codex Quota Bar 设置",
@@ -80,9 +81,13 @@ SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
                         px(1000), px(730), nullptr, nullptr, GetModuleHandleW(nullptr), this);
     if (!window)
         throw std::runtime_error("Cannot create settings window");
-    content = CreateWindowExW(0, L"CodexQuotaBar.Native.Content", L"",
+    viewport = CreateWindowExW(WS_EX_COMPOSITED, L"CodexQuotaBar.Native.Viewport", L"",
                               WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_CLIPCHILDREN, 0, 0, 1, 1, window,
                               nullptr, GetModuleHandleW(nullptr), this);
+    content = CreateWindowExW(0, L"CodexQuotaBar.Native.Content", L"",
+                              WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1, 1, viewport,
+                              nullptr, GetModuleHandleW(nullptr), this);
+    if (!viewport || !content) throw std::runtime_error("Cannot create settings viewport");
     background = CreateSolidBrush(lightTheme() ? RGB(255, 255, 255) : RGB(32, 32, 32));
     sidebar = CreateSolidBrush(lightTheme() ? RGB(247, 247, 247) : RGB(26, 26, 26));
     font = CreateFontW(-px(15), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
@@ -225,10 +230,10 @@ void SettingsWindow::layout() {
     RECT r;
     GetClientRect(window, &r);
     int w = r.right, h = r.bottom;
-    SetWindowPos(content, nullptr, px(218), px(22), std::max(1, w - px(246)), std::max(1, h - px(100)),
+    SetWindowPos(viewport, nullptr, px(218), px(22), std::max(1, w - px(246)), std::max(1, h - px(100)),
                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
     RECT c;
-    GetClientRect(content, &c);
+    GetClientRect(viewport, &c);
     contentWidth = int(c.right * 96. / dpi);
     contentHeight = int(c.bottom * 96. / dpi);
     int needed = page == 0 ? 704 : page == 1 ? 620 : page == 3 ? 608 : 540;
@@ -236,16 +241,18 @@ void SettingsWindow::layout() {
     SCROLLINFO si{sizeof(si), SIF_RANGE | SIF_PAGE | SIF_POS,   0,
                   needed - 1, UINT(std::max(1, contentHeight)), scroll,
                   0};
-    SetScrollInfo(content, SB_VERT, &si, TRUE);
+    SetScrollInfo(viewport, SB_VERT, &si, TRUE);
     // Scrollbar visibility can change the usable width between pages.
-    GetClientRect(content, &c);
+    GetClientRect(viewport, &c);
     contentWidth = int(c.right * 96. / dpi);
+    SetWindowPos(content, nullptr, 0, -px(scroll), c.right, std::max<int>(c.bottom, px(needed)),
+                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
     struct Placement { HWND window; int x, y, width, height; };
     std::vector<Placement> placements;
     auto place = [&](int id, double x, double y, double ww, double hh) {
         HWND ctrl = GetDlgItem(content, id);
         int ownerPage = int(reinterpret_cast<INT_PTR>(GetPropW(ctrl, L"QuotaPage"))) - 2;
-        if (ownerPage == page) placements.push_back({ctrl, px(x), px(y - scroll), px(ww), px(hh)});
+        if (ownerPage == page) placements.push_back({ctrl, px(x), px(y), px(ww), px(hh)});
     };
     int right = contentWidth - 224;
     for (int i = 0; i < 4; ++i)
@@ -294,9 +301,24 @@ void SettingsWindow::layout() {
         for (auto &p : placements) SetWindowPos(p.window, nullptr, p.x, p.y, p.width, p.height, flags);
     RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
+void SettingsWindow::scrollTo(int value) {
+    SCROLLINFO si{sizeof(si), SIF_RANGE | SIF_PAGE};
+    GetScrollInfo(viewport, SB_VERT, &si);
+    value = std::clamp(value, 0, std::max(0, si.nMax - int(si.nPage) + 1));
+    if (value == scroll) return;
+    scroll = value;
+    SCROLLINFO position{sizeof(position), SIF_POS}; position.nPos = scroll;
+    SetScrollInfo(viewport, SB_VERT, &position, TRUE);
+    // One coherent canvas moves inside a stationary composited viewport.
+    // Native controls keep their own coordinates and full unclipped buffers.
+    SetWindowPos(content, nullptr, 0, -px(scroll), 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
+    RedrawWindow(viewport, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+}
 void SettingsWindow::selectPage(int index) {
     page = index;
     scroll = 0;
+    wheelRemainder = 0;
     closePalette();
     for (HWND combo : {styles, display, interval, deepSeekInterval}) SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
     layout();
@@ -358,7 +380,6 @@ void SettingsWindow::draw(HDC dc, bool inner) {
             Pen line(light ? Color(255, 235, 235, 235) : Color(255, 55, 55, 55));
             g.DrawLine(&line, 218.f, rect.bottom / d - 78, rect.right / d - 28, rect.bottom / d - 78);
         } else {
-            g.TranslateTransform(0, float(-scroll));
             const wchar_t *headings[] = {L"外观", L"常规", L"高级", L"DeepSeekHarness"};
             const wchar_t *subtitles[] = {L"调整任务栏组件的显示方式。",
                                           L"管理显示屏幕，以及应用的启动与退出。",
@@ -937,6 +958,24 @@ LRESULT CALLBACK SettingsWindow::paletteProcedure(HWND w, UINT msg, WPARAM wp, L
     }
     return DefWindowProcW(w, msg, wp, lp);
 }
+LRESULT CALLBACK SettingsWindow::viewportProcedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_NCCREATE)
+        SetWindowLongPtrW(w, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams));
+    auto self = reinterpret_cast<SettingsWindow *>(GetWindowLongPtrW(w, GWLP_USERDATA));
+    if (self) {
+        if ((msg == WM_MOUSEWHEEL || msg == WM_VSCROLL) && self->content)
+            return SendMessageW(self->content, msg, wp, lp);
+        if (msg == WM_ERASEBKGND) return 1;
+        if (msg == WM_PAINT) {
+            PAINTSTRUCT paint{};
+            HDC dc = BeginPaint(w, &paint);
+            if (self->background) FillRect(dc, &paint.rcPaint, self->background);
+            EndPaint(w, &paint);
+            return 0;
+        }
+    }
+    return DefWindowProcW(w, msg, wp, lp);
+}
 LRESULT CALLBACK SettingsWindow::contentProcedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
     auto self = reinterpret_cast<SettingsWindow *>(GetWindowLongPtrW(w, GWLP_USERDATA));
     if (msg == WM_NCCREATE) {
@@ -972,7 +1011,7 @@ LRESULT CALLBACK SettingsWindow::contentProcedure(HWND w, UINT msg, WPARAM wp, L
         return 0;
     case WM_VSCROLL: {
         SCROLLINFO si{sizeof(si), SIF_ALL};
-        GetScrollInfo(w, SB_VERT, &si);
+        GetScrollInfo(self->viewport, SB_VERT, &si);
         int value = self->scroll;
         switch (LOWORD(wp)) {
         case SB_LINEUP:
@@ -991,14 +1030,16 @@ LRESULT CALLBACK SettingsWindow::contentProcedure(HWND w, UINT msg, WPARAM wp, L
             value = si.nTrackPos;
             break;
         }
-        self->scroll = std::clamp(value, 0, std::max(0, si.nMax - int(si.nPage) + 1));
-        self->layout();
+        self->scrollTo(value);
         return 0;
     }
-    case WM_MOUSEWHEEL:
-        self->scroll -= GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA * 48;
-        self->layout();
+    case WM_MOUSEWHEEL: {
+        self->wheelRemainder += GET_WHEEL_DELTA_WPARAM(wp);
+        int steps = self->wheelRemainder / WHEEL_DELTA;
+        self->wheelRemainder %= WHEEL_DELTA;
+        if (steps) self->scrollTo(self->scroll - steps * 48);
         return 0;
+    }
     case WM_CTLCOLOREDIT:
     case WM_CTLCOLORSTATIC:
     case WM_CTLCOLORLISTBOX: {
@@ -1019,6 +1060,9 @@ LRESULT CALLBACK SettingsWindow::procedure(HWND w, UINT msg, WPARAM wp, LPARAM l
     if (!self)
         return DefWindowProcW(w, msg, wp, lp);
     switch (msg) {
+    case WM_MOUSEWHEEL:
+        if (self->content) return SendMessageW(self->content, msg, wp, lp);
+        break;
     case WM_ERASEBKGND:
         return 1;
     case WM_PRINTCLIENT:

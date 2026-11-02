@@ -102,10 +102,11 @@ struct Application {
 };
 struct SettingsWindow {
     Application *app;
-    HWND window = nullptr, content = nullptr, palette = nullptr;
+    HWND window = nullptr, viewport = nullptr, content = nullptr, palette = nullptr;
     Settings draft;
     Monitor monitor;
     int dpi = 96, page = 0, scroll = 0, oldStyle = 0;
+    int wheelRemainder = 0;
     bool startup = false, closing = false;
     bool loading = false;
     bool layingOut = false;
@@ -127,6 +128,7 @@ struct SettingsWindow {
     HWND button(const wchar_t *text, int id, int p);
     void createControls();
     void layout();
+    void scrollTo(int value);
     void reveal(HMONITOR monitor);
     void selectPage(int index);
     void command(int id, int notification);
@@ -140,6 +142,7 @@ struct SettingsWindow {
     void capture(const fs::path &file);
     static LRESULT CALLBACK procedure(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK contentProcedure(HWND, UINT, WPARAM, LPARAM);
+    static LRESULT CALLBACK viewportProcedure(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK paletteProcedure(HWND, UINT, WPARAM, LPARAM);
 };
 int uiTests(const fs::path &dir);
