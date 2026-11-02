@@ -27,7 +27,10 @@ Overlay::Overlay(Application *a, const Monitor &m, const Settings &s, const Stat
                              L"CodexQuotaBar.Native.Widget", kind == WidgetKind::DeepSeek ? L"DeepSeekHarness" : L"Codex Quota Bar", host ? WS_CHILD : WS_POPUP,
                              0, 0, 1, 1, host ? host : app->controller, nullptr,
                              GetModuleHandleW(nullptr), this);
+    HWND rejectedHost = nullptr;
     if (!window && host) {
+        rejectedHost = host;
+        SetPropW(app->controller, L"QuotaEmbedError", reinterpret_cast<HANDLE>(static_cast<INT_PTR>(GetLastError())));
         host = nullptr;
         window = CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
                                  L"CodexQuotaBar.Native.Widget", kind == WidgetKind::DeepSeek ? L"DeepSeekHarness" : L"Codex Quota Bar", WS_POPUP,
@@ -35,6 +38,7 @@ Overlay::Overlay(Application *a, const Monitor &m, const Settings &s, const Stat
     }
     if (!window)
         throw std::runtime_error("Cannot create quota widget");
+    if (rejectedHost) SetPropW(window, L"QuotaRejectedHost", rejectedHost);
     details = CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
                               L"CodexQuotaBar.Native.Details", kind == WidgetKind::DeepSeek ? L"DeepSeekHarness 详情" : L"额度详情", WS_POPUP, 0, 0, 1, 1, app->controller,
                               nullptr, GetModuleHandleW(nullptr), this);
@@ -63,7 +67,7 @@ void Overlay::position(bool reset) {
 void Overlay::measure(bool reset) {
     RECT bounds{};
     std::optional<RECT> bar;
-    if (host && GetWindowRect(host, &bounds))
+    if (auto barWindow = host ? host : app->taskbarProbe(monitor.handle); barWindow && GetWindowRect(barWindow, &bounds))
         bar = bounds;
     int available = bar ? bar->bottom - bar->top : int(40 * monitor.dpi / 96.);
     layout = kind == WidgetKind::DeepSeek ? deepSeekLayout(settings, monitor.dpi, available)
@@ -598,7 +602,7 @@ void Application::layoutWidgets(Overlay *moving, bool animate) {
 }
 void Application::checkTaskbars() {
     for (auto &o : overlays)
-        if (!IsWindow(o->window) || o->host != taskbarProbe(o->monitor.handle)) {
+        if (!IsWindow(o->window) || (o->host != taskbarProbe(o->monitor.handle) && GetPropW(o->window, L"QuotaRejectedHost") != taskbarProbe(o->monitor.handle))) {
             // Explorer can destroy the child windows or replace the taskbar.
             rebuild();
             return;

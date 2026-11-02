@@ -33,8 +33,8 @@ namespace quota {
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 using namespace Gdiplus;
-constexpr wchar_t Version[] = L"0.3.0";
-constexpr char VersionUtf8[] = "0.3.0";
+constexpr wchar_t Version[] = L"0.3.1";
+constexpr char VersionUtf8[] = "0.3.1";
 constexpr UINT StateMessage = WM_APP + 1, SettingsMessage = WM_APP + 2, RebuildMessage = WM_APP + 3;
 constexpr UINT DeepSeekMessage = WM_APP + 5;
 constexpr UINT TaskbarMessage = WM_APP + 6;
@@ -98,6 +98,7 @@ bool startupEnabled();
 bool setStartup(bool enabled);
 bool nativeInstalled(const fs::path &directory);
 bool launchUninstaller(HWND owner);
+bool portableInstalled(const fs::path &directory);
 struct WindowQuota {
     double remaining = 0;
     int64_t resets = 0;

@@ -1,6 +1,6 @@
 # 原生版开发与验证
 
-0.3.0 的原发布已撤回，当前修订未发布；历史 `v0.3.0` 标签固定在 `2a8e2fa1b9f0fd73ac66ebab8f0362f93e7083f1`，不移动；`v0.2.2` 固定在 `92f6a0bae931ddd16ab89876d27c81aa72113496`，不移动标签或覆盖既有下载。
+当前 0.3.1 以 `v0.3.1` 标签发布并封存。历史 `v0.3.0` 标签固定在 `2a8e2fa1b9f0fd73ac66ebab8f0362f93e7083f1`，对应已撤回的旧构建；保留 `v0.2.2` 标签与既有下载，不移动历史标签。
 
 任务栏组件的 50 ms 计时器只处理鼠标悬浮，不周期性提升窗口层级。500 ms 维护仅在实际屏幕坐标或尺寸变化时定位，并保留既有层级；如有相交的外部任务栏子窗口位于组件上方，才进行一次层级恢复，忽略同一程序的其他组件。UI 回归覆盖 Codex / DeepSeek 同时显示时的窗口消息计数、层级稳定、外部遮挡恢复及任务栏宿主替换。
 
@@ -32,7 +32,7 @@
 
 ## 构建
 
-需要 Windows 和 x64 MinGW-w64（已用 GCC 11.2.0 验证），将 `g++`、`windres` 加入 PATH；Python 仅用于 ZIP 打包。运行程序不需要这些开发工具。
+需要 Windows 和带完整 UI Automation 接口头文件的 x64 MinGW-w64（0.3.1 使用 w64devkit 2.11.0 / GCC 16.2.0 构建；旧 MinGW SDK 可能缺少 IUIAutomation2），将 `g++`、`windres` 加入 PATH；Python 仅用于 ZIP 打包。运行程序不需要这些开发工具。
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-native.ps1
@@ -96,7 +96,7 @@ enterprise, edu, edu_plus, edu_pro, sci, sci_plus, unknown
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/NativeInstaller.Tests.ps1
 ```
 
-生成 `artifacts/releases/v0.3.0` 中的 Setup EXE、Portable ZIP 和 SHA256SUMS.txt。测试真实安装到带中文和空格的独立目录，再执行原生卸载，检查保留无关文件；`/ISOLATEDTEST=1` 禁止修改用户启动项、快捷方式、卸载注册项、设置和既有监听器。绝不对用户真实安装运行卸载测试。
+生成 `artifacts/releases/v0.3.1` 中的 Setup EXE、Portable ZIP 和 SHA256SUMS.txt。测试真实安装到带中文和空格的独立目录，再执行原生卸载，检查保留无关文件；`/ISOLATEDTEST=1` 禁止修改用户启动项、快捷方式、卸载注册项、设置和既有监听器。绝不对用户真实安装运行卸载测试。
 
 0.2.0 默认使用自己的版本目录，不把旧 .NET 目录混入新负载。旧安装目录保留，设置继续使用 `%LOCALAPPDATA%/CodexQuotaBar/settings.json`。安装版设置中的卸载按钮只认同目录、相同产品与版本的 Inno 卸载器，启动前再次确认。卸载旧安装前退出程序；旧卸载器可能清理共用的启动项，可在新版本中重新启用。
 
@@ -109,3 +109,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/NativeInstaller.Te
 多屏验证仅覆盖本机已连接屏幕；自动隐藏、竖直或第三方任务栏、其他设备尚未专项验证。额度组件是任务栏的透明自绘子窗口，跟随系统任务栏层级，避免快速设置打开时被遮挡；无任务栏时回退到置顶弹窗。控制器检测任务栏窗口失效或更换并重新创建组件。详情使用独立顶层窗口，避免被任务栏边界裁剪，标题右侧展示实际读取的套餐类型。UI 检查还覆盖嵌入关系、拖动坐标、焦点保持，以及独立任务栏替身升层、销毁和重建，不重启真实 Explorer。快速设置真实面板仍需手动回归。
 
 程序尚未代码签名，依赖已登录的本机 Codex CLI 和上游 app-server 协议。
+
+## 0.3.1 卸载与备用窗口
+
+便携 ZIP 附带 portable.json 和 portable-uninstall.ps1；设置页识别产品、版本与脚本后启用卸载按钮。脚本等待当前进程退出，仅删除固定的发布文件列表，保留额外文件；安装版仍使用其 Inno 卸载器。便携卸载依赖 Windows PowerShell，企业策略禁止执行 PowerShell 时需退出后手动删除。测试使用独立目录，不清除真实设置和凭证。
+
+Windows 返回 ACCESS_DENIED 拒绝任务栏子窗口创建时，组件回退置顶窗口并按真实任务栏矩形居中；记录拒绝的宿主句柄，避免维护周期不断重建。任务栏宿主更换后重新尝试。该模式不能保证处于所有系统浮层之上。

@@ -1,4 +1,5 @@
 #include "core.hpp"
+#include "deepseek.hpp"
 #include <cwctype>
 namespace quota {
 std::wstring wide(const std::string &s) {
@@ -235,10 +236,25 @@ bool nativeInstalled(const fs::path &dir) {
     return std::wstring(product) == L"CodexQuotaBar" && std::wstring(version) == Version &&
            fs::is_regular_file(dir / L"unins000.exe");
 }
+bool portableInstalled(const fs::path &dir) {
+    try {
+        std::ifstream input(dir / L"portable.json"); json marker; input >> marker;
+        return marker.value("product", "") == "CodexQuotaBar" && marker.value("version", "") == VersionUtf8 &&
+               fs::is_regular_file(dir / L"portable-uninstall.ps1") && !fs::exists(dir / L"installer.ini");
+    } catch (...) { return false; }
+}
 bool launchUninstaller(HWND owner) {
     auto dir = executable().parent_path();
-    if (!nativeInstalled(dir))
-        return false;
+    if (!nativeInstalled(dir)) {
+        if (!portableInstalled(dir)) return false;
+        wchar_t system[MAX_PATH]{}; if (!GetSystemDirectoryW(system, MAX_PATH)) return false;
+        auto shell = fs::path(system) / L"WindowsPowerShell/v1.0/powershell.exe";
+        auto arguments = L"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File " + quote((dir / L"portable-uninstall.ps1").wstring()) +
+                         L" -ParentId " + std::to_wstring(GetCurrentProcessId()) + L" -InstallDirectory " + quote(dir.wstring());
+        if (reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open", shell.c_str(), arguments.c_str(), dir.c_str(), SW_HIDE)) <= 32) return false;
+        try { saveDeepSeekCredential(""); setStartup(false); fs::remove(dataDirectory() / L"settings.json"); } catch (...) {}
+        return true;
+    }
     return reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open", (dir / L"unins000.exe").c_str(),
                                                    L"/SILENT /NORESTART /RemoveSettings", dir.c_str(),
                                                    SW_SHOWNORMAL)) > 32;

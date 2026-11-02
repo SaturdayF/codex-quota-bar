@@ -1,0 +1,2 @@
+9de5621a661e4c42a1b2b4d93ee7ee192fde0e04d1d89dcad28d968ef6e3f74d  CodexQuotaBar-v0.3.1-Setup.exe
+889dc38476c7e55a0e359d03ed24d3066489931881b15f7bbd5cda336b3553c6  CodexQuotaBar-v0.3.1-Portable-win-x64.zip

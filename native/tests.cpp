@@ -281,6 +281,12 @@ int selfTests(const fs::path &output) {
     WritePrivateProfileStringW(L"Installation", L"Product", L"OtherProduct", marker.c_str());
     check(!nativeInstalled(fixture), "native uninstall rejects unrelated marker");
     fs::remove(marker);
+    { std::ofstream out(fixture / L"portable.json"); out << json{{"product", "CodexQuotaBar"}, {"version", VersionUtf8}}; }
+    { std::ofstream out(fixture / L"portable-uninstall.ps1"); out << "fixture"; }
+    check(portableInstalled(fixture), "portable uninstall recognizes versioned manifest and helper");
+    { std::ofstream out(fixture / L"portable.json"); out << json{{"product", "OtherProduct"}, {"version", VersionUtf8}}; }
+    check(!portableInstalled(fixture), "portable uninstall rejects unrelated product");
+    fs::remove(fixture / L"portable.json"); fs::remove(fixture / L"portable-uninstall.ps1");
     fs::remove(fixture / L"unins000.exe");
     fs::remove(fixture);
     checks += deepSeekTests(log);
@@ -324,6 +330,7 @@ int uiTests(const fs::path &dir) {
         auto bar = taskbar(overlay.monitor.handle);
         RECT r;
         GetWindowRect(overlay.window, &r);
+        log << "INFO embed error " << reinterpret_cast<INT_PTR>(GetPropW(app.controller, L"QuotaEmbedError")) << std::endl;
         log << "INFO monitor " << i << " widget " << r.left << ',' << r.top << ',' << r.right << ','
             << r.bottom << " intended " << overlay.x << ',' << overlay.y << " host " << overlay.host
             << " parent " << GetParent(overlay.window) << " style "
@@ -334,7 +341,9 @@ int uiTests(const fs::path &dir) {
         check(!bar || std::abs((r.top + r.bottom) - (bar->top + bar->bottom)) <= 1,
               "taskbar vertical center monitor " + std::to_string(i));
         check(!bar || (GetParent(overlay.window) == taskbarWindow(overlay.monitor.handle) &&
-                      (GetWindowLongPtrW(overlay.window, GWL_STYLE) & WS_CHILD)),
+                      (GetWindowLongPtrW(overlay.window, GWL_STYLE) & WS_CHILD)) ||
+                      (!overlay.host && GetPropW(overlay.window, L"QuotaRejectedHost") == taskbarWindow(overlay.monitor.handle) &&
+                       (GetWindowLongPtrW(overlay.window, GWL_STYLE) & WS_POPUP)),
               "widget embedded in monitor taskbar " + std::to_string(i));
         check(GetAncestor(overlay.details, GA_ROOT) == overlay.details &&
                   GetWindow(overlay.details, GW_OWNER) == app.controller,
@@ -650,6 +659,9 @@ int uiTests(const fs::path &dir) {
     settings.reveal(nullptr);
     check(IsWindowVisible(settings.window), "hidden settings recover");
     app.settingsWindow.reset();
+    // Hide the earlier live-shell fixture: fallback topmost popups must not
+    // intercept hit-testing of this independent, synthetic shell fixture.
+    for (auto &overlay : app.overlays) { ShowWindow(overlay->window, SW_HIDE); overlay->hideDetails(); }
     // Exercise shell elevation and host loss without changing the real taskbar
     // or restarting the user's Explorer process.
     {
@@ -719,7 +731,16 @@ int uiTests(const fs::path &dir) {
             GetWindowRect(overlay->window, &widgetBounds);
             POINT center{(widgetBounds.left + widgetBounds.right) / 2,
                          (widgetBounds.top + widgetBounds.bottom) / 2};
-            recovered = recovered && WindowFromPoint(center) == overlay->window;
+            bool exposed = WindowFromPoint(center) == overlay->window;
+            // Layered windows intentionally pass hits through transparent gaps.
+            for (int yy = widgetBounds.top; !exposed && yy < widgetBounds.bottom; yy += 3)
+                for (int xx = widgetBounds.left; !exposed && xx < widgetBounds.right; xx += 3)
+                    exposed = WindowFromPoint(POINT{xx, yy}) == overlay->window;
+            bool aboveShell = false;
+            for (HWND sibling = GetWindow(overlay->window, GW_HWNDNEXT); sibling; sibling = GetWindow(sibling, GW_HWNDNEXT))
+                if (sibling == shellChild) { aboveShell = true; break; }
+            log << "INFO recovery " << int(overlay->kind) << " exposed " << exposed << " above " << aboveShell << " blocked " << overlay->blocked << " host " << overlay->host << " expected " << host << std::endl;
+            recovered = recovered && exposed && aboveShell;
         }
         check(recovered, "both providers recover above newly raised shell content");
         positionRequests = 0;

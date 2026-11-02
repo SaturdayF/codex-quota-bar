@@ -9,3 +9,7 @@ codex_tmp/
 __pycache__/
 auth.json
 .env
+harness_tmp/
+
+# Local promotional images, videos and design sources
+/local-media/

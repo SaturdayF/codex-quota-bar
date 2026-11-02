@@ -9,7 +9,7 @@ Windows 任务栏额度与余额显示工具。支持 Codex 5 小时额度、周
 | 版本 | 状态 | 内容 |
 | --- | --- | --- |
 | [0.2.2](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.2.2) | 已发布 | Codex 额度显示、外观设置、动画、多屏支持 |
-| 0.3.0 修订 | 未发布；原发布已撤回 | DeepSeekHarness 余额与消费、图标避让、拖动交换与平滑落位 |
+| [0.3.1](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.3.1) | 当前封存版本 | DeepSeekHarness 余额与消费、图标避让、拖动交换与平滑落位 |
 
 [下载发布包](https://github.com/SaturdayF/codex-quota-bar/releases) · [版本记录](CHANGELOG.md) · [开发说明](docs/DEVELOPMENT.md)
 
@@ -92,12 +92,12 @@ DeepSeek 功能使用平台登录态 `userToken`，读取账户余额、当日�
 
 ## 安装与使用
 
-当前发布包为 **0.2.2**，包含 Codex 功能。0.3.0 的原发布和下载文件已撤回，当前修订尚未发布；DeepSeekHarness 相关功能位于开发代码中。
+当前发布包为 **0.3.1**（封存标签 `v0.3.1`），包含 Codex 额度及 DeepSeekHarness 余额、消费功能。旧 `v0.3.0` 标签与 0.2.2 发布资产保留。
 
-- [EXE 安装包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.2.2/CodexQuotaBar-v0.2.2-Setup.exe)：安装时可选择路径和登录启动。
-- [Portable ZIP](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.2.2/CodexQuotaBar-v0.2.2-Portable-win-x64.zip)：解压后运行 `CodexQuotaBar.exe`。
+- [EXE 安装包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.1/CodexQuotaBar-v0.3.1-Setup.exe)：安装时可选择路径和登录启动。
+- [Portable ZIP](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.1/CodexQuotaBar-v0.3.1-Portable-win-x64.zip)：解压后运行 `CodexQuotaBar.exe`。
 
-安装版默认目录为 `%LOCALAPPDATA%\Programs\CodexQuotaBar\0.2.2`，也可选择其他当前用户可写的专用目录。
+安装版默认目录为 `%LOCALAPPDATA%\Programs\CodexQuotaBar\0.3.1`，也可选择其他当前用户可写的专用目录。
 
 Codex 额度读取需要本机 Codex CLI 已通过 ChatGPT 账户登录。自动识别失败时，可在“高级”页指定 `codex.exe`。显示的数据属于 **CLI 当前登录账户**，可能与桌面应用登录的账户不同。
 
@@ -107,8 +107,8 @@ Codex 额度读取需要本机 Codex CLI 已通过 ChatGPT 账户登录。自动
 
 - “高级 → 退出额度工具”结束程序及后台监听。
 - 安装版可通过“高级 → 卸载程序”或 Windows 应用列表卸载。卸载器按安装记录删除程序文件，保留目录中的无关文件。
-- 便携版退出后可删除解压目录。
-- 0.3.0 安装版在卸载时选择删除设置，会同时删除 DeepSeek 凭证；便携版可在删除目录前通过设置清除凭证。
+- 0.3.1 便携版也支持“高级 → 卸载程序”，确认后退出并删除随包文件，保留目录中的无关文件。
+- 0.3.1 安装版在卸载时选择删除设置，会同时删除 DeepSeek 凭证；便携版通过卸载按钮同时清除本工具设置、登录启动项和 DeepSeek 凭证。
 
 本工具的卸载操作不影响 ChatGPT / Codex 的安装和登录数据。
 
