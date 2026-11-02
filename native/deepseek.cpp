@@ -125,9 +125,26 @@ static DeepSeekModel &modelRow(std::vector<DeepSeekModel> &rows, const std::stri
     return rows.back();
 }
 static void checkWindow(const json &body, int64_t day) {
-    if (body.at("start").get<int64_t>() != day || body.at("end").get<int64_t>() != day + 86400 ||
-        body.at("bucket").get<std::string>() != "1d")
+    if (body.at("start").get<int64_t>() != day || body.at("end").get<int64_t>() != day + 86400)
         throw std::runtime_error("Unexpected DeepSeek reporting window");
+    auto &bucket = body.at("bucket");
+    int64_t seconds = 0;
+    if (bucket.is_number_integer()) seconds = bucket.get<int64_t>();
+    else if (bucket.is_string()) {
+        auto text = bucket.get<std::string>();
+        if (text.size() >= 2 && text.size() <= 6) {
+            int factor = text.back() == 's' ? 1 : text.back() == 'm' ? 60 :
+                         text.back() == 'h' ? 3600 : text.back() == 'd' ? 86400 : 0;
+            int64_t count = 0;
+            for (size_t i = 0; i + 1 < text.size(); ++i) {
+                if (text[i] < '0' || text[i] > '9') { count = 0; break; }
+                count = count * 10 + text[i] - '0';
+            }
+            seconds = count * factor;
+        }
+    }
+    if (seconds <= 0 || seconds > 86400 || 86400 % seconds != 0)
+        throw std::runtime_error("Unsupported DeepSeek bucket");
 }
 void parseDeepSeekCosts(DeepSeekState &state, const json &value) {
     auto &body = platformData(value);
@@ -241,7 +258,7 @@ static json get(const std::wstring &host, const std::wstring &path, const std::s
     if (status == 401) throw std::runtime_error("DeepSeek session expired");
     if (status == 403) throw std::runtime_error("DeepSeek access denied");
     if (status == 429) throw std::runtime_error("DeepSeek rate limited");
-    if (status != 200) throw std::runtime_error("DeepSeek HTTP error");
+    if (status != 200) throw std::runtime_error("DeepSeek HTTP " + std::to_string(status));
     std::string body;
     for (;;) {
         if (stop) throw std::runtime_error("Cancelled");
@@ -259,6 +276,16 @@ static std::wstring failure(const std::exception &e) {
     if (kind == "DeepSeek session expired") return L"登录态已失效，请重新登录平台并更新 userToken";
     if (kind == "DeepSeek access denied") return L"DeepSeek 拒绝访问，请检查凭证或稍后重试";
     if (kind == "DeepSeek rate limited") return L"请求过于频繁，稍后自动重试";
+    if (kind == "DeepSeek network error") return L"网络请求失败，请检查网络或代理";
+    if (kind == "Unsupported DeepSeek bucket") return L"平台时间分桶格式不兼容，请更新程序";
+    if (kind == "Unexpected DeepSeek reporting window") return L"平台返回的统计日期范围不匹配";
+    if (dynamic_cast<const json::exception *>(&e)) return L"平台数据字段格式不兼容，请更新程序";
+    const std::string httpPrefix = "DeepSeek HTTP ";
+    if (kind.rfind(httpPrefix, 0) == 0) {
+        auto code = kind.substr(httpPrefix.size());
+        if (code.size() == 3 && std::all_of(code.begin(), code.end(), [](char c) { return c >= '0' && c <= '9'; }))
+            return L"平台请求失败（HTTP " + wide(code) + L"）";
+    }
     return L"读取失败：网络异常或平台数据格式变化";
 }
 DeepSeekState readDeepSeek(const std::string &sessionText,

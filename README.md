@@ -82,7 +82,7 @@ DeepSeek 功能使用平台登录态 `userToken`，读取账户余额、当日�
 - 消费金额来自平台账单，按模型聚合；不同币种分别显示。
 - 详情显示余额和账单的更新时间，读取失败时显示状态提示；平台数据可能存在更新延迟。
 - 余额、费用和 Token 明细来自 [DeepSeek 平台](https://platform.deepseek.com/usage)的私有接口，接口变化、登录态失效或访问失败时显示错误状态。
-- 当前开发验证使用模拟数据，真实账户联调尚未完成。
+- 已完成一次真实账户的余额、费用和 Token 接口只读验证；文档截图及自动化回归使用模拟数据。
 
 ![DeepSeekHarness 任务栏显示（模拟数据）](docs/deepseek-widget-preview.png)
 

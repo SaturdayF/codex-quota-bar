@@ -103,6 +103,37 @@ int deepSeekTests(std::ostream &log) {
     check(data.models.size() == 2 && data.models[0].hit == 11 && data.models[0].miss == 22 &&
               data.models[0].output == 33 && data.models[0].requests == 7,
           "daily token counts aggregate per model and keep requests separate");
+    // Live one-day responses use numeric bucket seconds and 24 hourly rows.
+    // Keep these fixtures synthetic; never commit a real account response.
+    auto hourlyCost = costFixture(day), hourlyTokens = tokenFixture(day);
+    hourlyCost["data"]["biz_data"]["bucket"] = 3600;
+    hourlyTokens["data"]["biz_data"]["bucket"] = 3600;
+    for (auto &currency : hourlyCost["data"]["biz_data"]["data"])
+        for (auto &series : currency["series"]) {
+            series["buckets"] = json::array();
+            for (int i = 0; i < 24; ++i) series["buckets"].push_back({{"time", day + i * 3600}, {"cost", "0.01"}});
+        }
+    for (auto &series : hourlyTokens["data"]["biz_data"]["series"]) {
+        series["buckets"] = json::array();
+        for (int i = 0; i < 24; ++i)
+            series["buckets"].push_back({{"time", day + i * 3600}, {"usage", {{"PROMPT_CACHE_HIT_TOKEN", 1},
+                {"PROMPT_CACHE_MISS_TOKEN", 2}, {"RESPONSE_TOKEN", 3}, {"REQUEST", 1}}}});
+    }
+    DeepSeekState hourly; hourly.day = day;
+    parseDeepSeekCosts(hourly, hourlyCost);
+    parseDeepSeekTokens(hourly, hourlyTokens);
+    check(hourly.costs["CNY"] == 72000000 && hourly.costs["USD"] == 24000000 && hourly.models.size() == 2,
+          "numeric hourly cost buckets aggregate all 24 hours into today's bill");
+    check(hourly.models[0].hit == 48 && hourly.models[0].miss == 96 && hourly.models[0].output == 144 &&
+              hourly.models[0].requests == 48, "numeric hourly token buckets preserve integer usage counters");
+    hourlyCost["data"]["biz_data"]["bucket"] = "1h";
+    parseDeepSeekCosts(hourly, hourlyCost);
+    check(hourly.costs["CNY"] == 72000000, "text hourly intervals remain compatible without double counting");
+    for (auto bad : {json(0), json(-3600), json(90000), json(3600.5), json("0h"), json("hour"), json("3601s")}) {
+        auto invalid = hourlyCost; invalid["data"]["biz_data"]["bucket"] = bad;
+        check(rejected([&] { parseDeepSeekCosts(hourly, invalid); }) && hourly.costs["CNY"] == 72000000,
+              "invalid bucket interval cannot replace verified bill " + bad.dump());
+    }
     data.costAt = now;
     check(data.todayCost("CNY", now) == 35001000 && !data.todayCost("CNY", day + 86400),
           "yesterday cost can never be displayed as today's total");
@@ -153,6 +184,21 @@ int deepSeekTests(std::ostream &log) {
         }, now);
     check(costFailure.balanceAt && !costFailure.costAt && costFailure.tokensAt && !costFailure.costError.empty(),
           "independent failure preserves balance and token success");
+    auto hourlyRead = readDeepSeek("platform-fixture", stop,
+        [&](auto &host, auto &path, auto &credential, auto &cancel) -> json {
+            if (path.find(L"/cost?") != std::wstring::npos) return hourlyCost;
+            if (path.find(L"/amount?") != std::wstring::npos) return hourlyTokens;
+            return transport(host, path, credential, cancel);
+        }, now);
+    check(hourlyRead.balanceAt && hourlyRead.costAt && hourlyRead.tokensAt && hourlyRead.costError.empty(),
+          "hourly live-shape responses complete the full provider refresh");
+    auto httpFailure = readDeepSeek("platform-fixture", stop,
+        [&](auto &host, auto &path, auto &credential, auto &cancel) -> json {
+            if (path.find(L"/cost?") != std::wstring::npos) throw std::runtime_error("DeepSeek HTTP 500");
+            return transport(host, path, credential, cancel);
+        }, now);
+    check(httpFailure.costError.find(L"HTTP 500") != std::wstring::npos,
+          "billing HTTP errors expose status without raw response or credential data");
     calls = 0; stop = true;
     readDeepSeek("platform-fixture", stop, [&](auto &, auto &, auto &, auto &) -> json { ++calls; return {}; }, now);
     check(calls == 0, "cancelled DeepSeek refresh performs no requests");

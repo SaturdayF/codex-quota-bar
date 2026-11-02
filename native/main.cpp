@@ -37,6 +37,19 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             result = uiTests(after(L"--output", L"native-ui-tests"));
         else if (has(L"--render-ui"))
             renderPreviews(after(L"--render-ui", L"native-previews"));
+        else if (has(L"--deepseek-probe")) {
+            // Status-only diagnostics: never serialize credentials, raw API
+            // responses, account identifiers, balances or individual usage.
+            std::atomic<bool> cancel{false};
+            auto state = readDeepSeek(deepSeekCredential(), cancel);
+            json report = {{"balanceAvailable", state.balanceAt > 0}, {"costAvailable", state.costAt > 0},
+                           {"tokensAvailable", state.tokensAt > 0}, {"modelCount", state.models.size()},
+                           {"balanceError", utf8(state.balanceError)}, {"costError", utf8(state.costError)},
+                           {"tokensError", utf8(state.tokensError)}};
+            std::ofstream out(after(L"--output", L"deepseek-probe.json"));
+            out << report.dump(2);
+            result = state.balanceAt && state.costAt && state.tokensAt ? 0 : 1;
+        }
         else if (has(L"--probe")) {
             std::atomic<bool> canceled{false};
             Rpc rpc(findCodex(Settings::load().codexPath), &canceled);

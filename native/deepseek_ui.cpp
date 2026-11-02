@@ -97,7 +97,9 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
             yy += 100;
         }
         if (!totalRows)
-            line(data.costAt && today ? L"今天暂无模型消耗明细" : L"配置平台凭证后显示模型费用与 Token 明细", yy, 13, muted);
+            line(data.costAt && today ? L"今天暂无模型消耗明细" :
+                 !data.costError.empty() || !data.tokensError.empty() ? L"明细暂不可用，详见下方读取状态" :
+                 L"正在读取模型费用与 Token 明细", yy, 13, muted);
         else if (rows < totalRows)
             line(L"模型 " + std::to_wstring(detailPage + 1) + L"–" + std::to_wstring(detailPage + rows) +
                      L" / " + std::to_wstring(totalRows) + L" · 滚轮查看更多", yy, 12, muted);

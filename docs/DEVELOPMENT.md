@@ -10,13 +10,17 @@
 
 ## DeepSeekHarness 实现
 
+单日账单响应的 `bucket` 已实测为数值 `3600`，即 24 个小时分桶，不应限定为字符串 `1d`。解析同时接受正整数秒数和 `s/m/h/d` 文本粒度，要求粒度不大于一天且能整除一天，继续严格校验统计日期范围并过滤当日 bucket；费用和 Token 在当天范围内逐桶聚合。
+
+`--deepseek-probe --output codex_tmp/deepseek-probe.json` 使用本机 Windows 凭据管理器中的平台登录态进行一次只读查询，仅输出各接口成功状态、固定错误文案和模型数量，不输出凭证、账户标识、余额、用量或原始响应。2026-11-02 已使用该入口确认真实账户的余额、费用和 Token 三项均成功；该状态文件位于忽略目录，不提交账户数据。
+
 `DeepSeekShowWhenStopped` 为独立显示选项，默认 false。实际显示及 worker 查询条件统一为 `DeepSeekShowWhenStopped || (DeepSeekHarnessEnabled && harnessRunning)`；前者开启时应用启停不会重置查询会话。任意显示条件满足即可自动或手动刷新，两项均关闭时取消当前请求并清空显示。
 
 默认联动模式下组件平时待机，500 ms 维护检查 Harness 桌面进程。官方桌面产品名参考 [Harness 打包配置](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/desktop/scripts/electron-builder-config.mjs)，识别 `DeepSeek Harness.exe`、`DeepSeekHarness.exe`、`deepseek-harness.exe`，不将普通 Node、安装器、余额监控工具视为 Harness；不检测浏览器和 CLI 会话。`DeepSeekHarnessEnabled` 表示是否自动跟随，默认 true；旧的常驻 `DeepSeekEnabled` 不再决定运行状态，序列化时删除旧键。默认模式下，未运行时不显示组件，也不启动平台查询。显示条件或设置更改时更新会话代次并替换共享取消标记，停止显示时隐藏并取消后续请求，响应必须同时匹配配置代次和应用会话代次才可应用；重新显示不会沿用旧会话数据。
 
 `deepseek.cpp` 负责 Windows 凭据管理器、固定 HTTPS 端点的 WinHTTP 只读请求、账单解析与 UTC+8 日期；`deepseek_ui.cpp` 负责独立 worker、任务栏文字与悬浮明细。启用状态和刷新间隔保存在 JSON；userToken 只存入本机 Windows 凭据管理器，不写入配置、命令行或日志。余额与账单均由平台登录态读取。程序不提供 API Key 输入、读取或保存接口，不访问 `api.deepseek.com/user/balance`，也不读取 API Key 环境变量。会话导入支持原始令牌、Bearer 文本及浏览器本地存储的 `{"value":"…"}` 结构。识别为 `sk-` 前缀的 API Key 在网络请求和持久化之前拒绝。
 
-平台请求为 `/api/v0/users/get_user_summary` 及 `/api/v0/usage/by_api_key/{cost,amount}?start=<北京时间零点 Unix 秒>&end=<翌日零点>&tz=28800`。按 `series[].model` 聚合账户的当天 bucket，忽略 API Key 元数据；费用按货币分别累计，Token 的 `REQUEST` 不计入 Token 总量。金额以 10^-8 货币单位的定点数累计，异常数值或结构失败不能退化成零。参考公开实现的协议结构：[平台接口记录](https://github.com/MCwasd/deepseek-platform-widget/blob/main/deepseek-api-reference.md)、[CodexBar 数据源说明](https://github.com/steipete/CodexBar/blob/main/docs/deepseek.md)；这是平台私有接口，不是官方稳定 API 合约。平台入口见 [DeepSeek 用量页](https://platform.deepseek.com/usage)。本机未使用真实账户凭证，实账户联调需用户在设置内完成。
+平台请求为 `/api/v0/users/get_user_summary` 及 `/api/v0/usage/by_api_key/{cost,amount}?start=<北京时间零点 Unix 秒>&end=<翌日零点>&tz=28800`。按 `series[].model` 聚合账户的当天 bucket，忽略 API Key 元数据；费用按货币分别累计，Token 的 `REQUEST` 不计入 Token 总量。金额以 10^-8 货币单位的定点数累计，异常数值或结构失败不能退化成零。参考公开实现的协议结构：[平台接口记录](https://github.com/MCwasd/deepseek-platform-widget/blob/main/deepseek-api-reference.md)、[CodexBar 数据源说明](https://github.com/steipete/CodexBar/blob/main/docs/deepseek.md)；这是平台私有接口，不是官方稳定 API 合约。平台入口见 [DeepSeek 用量页](https://platform.deepseek.com/usage)。协议兼容性同时通过合成回归及一次真实账户只读查询验证。
 
 网络请求禁用跨站重定向，保持 TLS 默认验证，设置连接与读取超时，错误不包含原始响应或凭证。worker 在配置代次变化后丢弃过期响应，跨日先清除费用再取当天账单；暂时失败时仅保留同代次、同日的旧结果和时间戳。关闭开关后不查询，独立显示不受 Codex 进程退出影响。
 
