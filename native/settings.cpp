@@ -209,13 +209,24 @@ Settings SettingsWindow::previewSettings() const {
     return preview;
 }
 void SettingsWindow::layout() {
-    // Moving overlapping child HWNDs with MoveWindow(TRUE) copies stale pixels.
-    // Reposition without copying, then repaint the complete child tree once.
-    SendMessageW(content, WM_SETREDRAW, FALSE, 0);
+    if (layingOut) return;
+    layingOut = true;
+    struct ResetLayout { bool &flag; ~ResetLayout() { flag = false; } } reset{layingOut};
+    // Keep inactive pages hidden and stationary. Suppressing only the parent's
+    // redraw does not stop native child controls from repainting during moves.
+    for (HWND ctrl : controls) {
+        int ownerPage = int(reinterpret_cast<INT_PTR>(GetPropW(ctrl, L"QuotaPage"))) - 2;
+        if (ownerPage >= 0 && ownerPage != page && (GetWindowLongPtrW(ctrl, GWL_STYLE) & WS_VISIBLE)) {
+            SendMessageW(ctrl, WM_CANCELMODE, 0, 0);
+            SetWindowPos(ctrl, nullptr, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW | SWP_NOREDRAW);
+        }
+    }
     RECT r;
     GetClientRect(window, &r);
     int w = r.right, h = r.bottom;
-    MoveWindow(content, px(218), px(22), std::max(1, w - px(246)), std::max(1, h - px(100)), TRUE);
+    SetWindowPos(content, nullptr, px(218), px(22), std::max(1, w - px(246)), std::max(1, h - px(100)),
+                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
     RECT c;
     GetClientRect(content, &c);
     contentWidth = int(c.right * 96. / dpi);
@@ -226,16 +237,24 @@ void SettingsWindow::layout() {
                   needed - 1, UINT(std::max(1, contentHeight)), scroll,
                   0};
     SetScrollInfo(content, SB_VERT, &si, TRUE);
+    // Scrollbar visibility can change the usable width between pages.
+    GetClientRect(content, &c);
+    contentWidth = int(c.right * 96. / dpi);
+    struct Placement { HWND window; int x, y, width, height; };
+    std::vector<Placement> placements;
     auto place = [&](int id, double x, double y, double ww, double hh) {
         HWND ctrl = GetDlgItem(content, id);
-        SetWindowPos(ctrl, nullptr, px(x), px(y - scroll), px(ww), px(hh),
-                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
+        int ownerPage = int(reinterpret_cast<INT_PTR>(GetPropW(ctrl, L"QuotaPage"))) - 2;
+        if (ownerPage == page) placements.push_back({ctrl, px(x), px(y - scroll), px(ww), px(hh)});
     };
     int right = contentWidth - 224;
     for (int i = 0; i < 4; ++i)
-        MoveWindow(GetDlgItem(window, NavAppearance + i), px(15), px(82 + i * 43), px(166), px(38), TRUE);
-    MoveWindow(GetDlgItem(window, Save), w - px(148), h - px(58), px(120), px(36), TRUE);
-    MoveWindow(GetDlgItem(window, Cancel), w - px(256), h - px(58), px(96), px(36), TRUE);
+        SetWindowPos(GetDlgItem(window, NavAppearance + i), nullptr, px(15), px(82 + i * 43), px(166), px(38),
+                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
+    SetWindowPos(GetDlgItem(window, Save), nullptr, w - px(148), h - px(58), px(120), px(36),
+                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
+    SetWindowPos(GetDlgItem(window, Cancel), nullptr, w - px(256), h - px(58), px(96), px(36),
+                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
     place(Style, right, 89, 210, 280);
     place(Scale, right - 24, 153, 180, 32);
     place(HourColor, contentWidth - 292, 212, 80, 32);
@@ -266,17 +285,20 @@ void SettingsWindow::layout() {
     place(DeepSeekClear, contentWidth - 124, 461, 110, 34);
     place(DeepSeekPlatform, contentWidth - 194, 209, 180, 28);
     place(DeepSeekHelp, contentWidth - 164, 241, 150, 26);
-    SendMessageW(content, WM_SETREDRAW, TRUE, 0);
-    RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS | SWP_SHOWWINDOW;
+    HDWP batch = BeginDeferWindowPos(int(placements.size()));
+    for (auto &p : placements)
+        if (batch) batch = DeferWindowPos(batch, p.window, nullptr, p.x, p.y, p.width, p.height, flags);
+    bool applied = batch && EndDeferWindowPos(batch);
+    if (!applied)
+        for (auto &p : placements) SetWindowPos(p.window, nullptr, p.x, p.y, p.width, p.height, flags);
+    RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
 void SettingsWindow::selectPage(int index) {
     page = index;
     scroll = 0;
     closePalette();
-    for (HWND w : controls) {
-        int p = int(reinterpret_cast<INT_PTR>(GetPropW(w, L"QuotaPage"))) - 2;
-        ShowWindow(w, p < 0 || p == page ? SW_SHOW : SW_HIDE);
-    }
+    for (HWND combo : {styles, display, interval, deepSeekInterval}) SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
     layout();
 }
 void SettingsWindow::reveal(HMONITOR requested) {

@@ -532,6 +532,41 @@ int uiTests(const fs::path &dir) {
     };
     RECT originalBounds{};
     GetWindowRect(settings.window, &originalBounds);
+    // Exercise the real command path and read live pixels before a repair
+    // repaint. WM_PRINTCLIENT alone cannot detect stale cross-page controls.
+    for (int page : {2, 1, 3, 0, 1, 2, 0, 3, 1}) {
+        HWND navigation = GetDlgItem(settings.window, 100 + page);
+        SetFocus(navigation);
+        SendMessageW(settings.window, WM_COMMAND, MAKEWPARAM(100 + page, BN_CLICKED), reinterpret_cast<LPARAM>(navigation));
+        auto until = GetTickCount64() + 30;
+        pumpUntil([&] { return GetTickCount64() >= until; });
+        bool visiblePages = true;
+        for (HWND ctrl : settings.controls) {
+            int ownerPage = int(reinterpret_cast<INT_PTR>(GetPropW(ctrl, L"QuotaPage"))) - 2;
+            visiblePages = visiblePages && bool(GetWindowLongPtrW(ctrl, GWL_STYLE) & WS_VISIBLE) ==
+                                              (ownerPage < 0 || ownerPage == page);
+        }
+        check(visiblePages, "page switch hides every inactive control " + std::to_string(page));
+        std::vector<std::pair<HWND, RECT>> inactive;
+        for (HWND ctrl : settings.controls) {
+            int ownerPage = int(reinterpret_cast<INT_PTR>(GetPropW(ctrl, L"QuotaPage"))) - 2;
+            if (ownerPage >= 0 && ownerPage != page) { RECT r{}; GetWindowRect(ctrl, &r); inactive.push_back({ctrl, r}); }
+        }
+        settings.scroll = 19;
+        settings.layout();
+        bool inactiveStationary = true;
+        for (auto &item : inactive) {
+            RECT after{}; GetWindowRect(item.first, &after);
+            inactiveStationary = inactiveStationary && EqualRect(&item.second, &after);
+        }
+        check(inactiveStationary, "page layout never moves hidden controls from other pages " + std::to_string(page));
+        settings.scroll = 0;
+        settings.layout();
+        auto beforeRepair = readControl(settings.content);
+        RedrawWindow(settings.content, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+        check(beforeRepair == readControl(settings.content), "page switch live pixels match a clean repaint " + std::to_string(page));
+    }
+    settings.selectPage(0);
     SetWindowPos(settings.window, nullptr, 0, 0, originalBounds.right - originalBounds.left,
                  settings.px(520), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     for (int offset : {19, 93, 157, 211, 37, 0}) {

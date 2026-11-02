@@ -108,6 +108,7 @@ struct SettingsWindow {
     int dpi = 96, page = 0, scroll = 0, oldStyle = 0;
     bool startup = false, closing = false;
     bool loading = false;
+    bool layingOut = false;
     bool clearDeepSeekCredentials = false;
     int64_t previewStart = -1;
     int contentWidth = 700, contentHeight = 600;
