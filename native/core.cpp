@@ -222,21 +222,43 @@ bool launchUninstaller(HWND owner) {
                                                    L"/SILENT /NORESTART /RemoveSettings", dir.c_str(),
                                                    SW_SHOWNORMAL)) > 32;
 }
-bool Quotas::weekOnly() const {
-    std::string p = plan;
+static std::string planKey(const std::string &plan) {
+    auto p = plan;
     std::transform(p.begin(), p.end(), p.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-    return p == "pro";
+    return p;
+}
+bool Quotas::weekOnly() const {
+    auto p = planKey(plan);
+    // Keep the app's weekly-only preference for every known consumer Pro tier.
+    // A weekly-only payload must not invent an unavailable 5-hour window,
+    // including for future plans that this version does not know by name.
+    return p == "pro" || p == "prolite" || p == "promax" || (week && !hour);
 }
 std::wstring Quotas::planLabel() const {
-    std::string p = plan;
-    std::transform(p.begin(), p.end(), p.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    auto p = planKey(plan);
+    if (p == "prolite")
+        return L"Pro Lite";
+    if (p == "promax")
+        return L"Pro Max";
+    if (p == "edu")
+        return L"Edu";
+    if (p == "edu_plus")
+        return L"Edu Plus";
+    if (p == "edu_pro")
+        return L"Edu Pro";
+    if (p == "sci")
+        return L"Sci";
+    if (p == "sci_plus")
+        return L"Sci Plus";
+    if (p.empty() || p == "unknown")
+        return L"套餐未知";
     for (auto name : {"Free", "Go", "Plus", "Pro", "Team", "Business", "Enterprise", "Education"}) {
         std::string key = name;
         std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return char(std::tolower(c)); });
         if (p == key)
             return wide(name);
     }
-    return plan.empty() ? L"套餐未知" : wide(plan);
+    return wide(plan);
 }
 Quotas Quotas::parse(const json &j) {
     Quotas q;

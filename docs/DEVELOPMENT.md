@@ -36,6 +36,19 @@ Start-Process $app -ArgumentList '--preview --smoke-ui' -Wait
 
 `--probe` 只调用 initialize / account/read / account/rateLimits/read，不创建聊天。真实服务端的周期重置不人为触发，动画重置逻辑由模拟输入验证。
 
+## 套餐识别
+
+本机 CLI `0.164.0-alpha.11.1` 通过 `codex app-server generate-json-schema --out codex_tmp/codex-schema` 导出的 `GetAccountResponse.json` 定义以下 `PlanType` 值；该枚举随 CLI 版本变化，不将未识别的新值改写为已知套餐。
+
+```text
+free, go, plus, pro, prolite, promax, team,
+self_serve_business_prolite, self_serve_business_usage_based,
+business, ent26, enterprise_cbp_automation, enterprise_cbp_usage_based,
+enterprise, edu, edu_plus, edu_pro, sci, sci_plus, unknown
+```
+
+`pro` / `prolite` / `promax` 统一遵循本工具的 Pro 单周展示偏好，这不是对官方套餐限额的承诺。其余套餐若响应有周窗口而无 300 分钟窗口，也使用单周布局。缺失额度不用于推断套餐名称；未知值原样展示。模拟 UI 回归覆盖从 Plus 切换到三个 Pro 值、未知单周套餐，再切回 Plus 的任务栏和详情布局；真实账户只读查询输出保存在忽略目录，不提交个人额度数据。
+
 ## 安装与打包
 
 使用官方 Inno Setup 6.7.4（当前已验证），或兼容版本。安装器同样不需要 .NET。运行负载只有 EXE、版本、说明和许可证，不含 .NET 文件夹或 DLL。

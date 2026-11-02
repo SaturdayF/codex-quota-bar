@@ -46,6 +46,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             };
             json report = {{"hour", window(q.hour)}, {"week", window(q.week)},
                            {"plan", q.plan},         {"desktopRunning", desktopRunning()},
+                           {"planLabel", utf8(q.planLabel())}, {"weekOnly", q.weekOnly()},
                            {"native", true},         {"version", VersionUtf8}};
             std::ofstream out(after(L"--output", L"native-probe.json"));
             out << report.dump(2);

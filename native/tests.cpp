@@ -39,6 +39,30 @@ int selfTests(const fs::path &output) {
     check(q.planLabel() == L"future_plan", "unrecognized plan preserved");
     q.plan.clear();
     check(q.planLabel() == L"套餐未知", "missing plan never inferred from quota windows");
+    for (auto plan : {"pro", "prolite", "promax", "ProLite", "PROMAX"}) {
+        auto pro = Quotas::parse({{"rateLimits", {{"planType", plan}, {"primary", nullptr},
+                                                  {"secondary", quota(9, 10080)}}}});
+        check(pro.weekOnly() && !pro.hour && pro.week && pro.week->remaining == 91,
+              std::string("weekly-only Pro payload ") + plan);
+        pro.hour = WindowQuota{68, 1000};
+        check(pro.weekOnly(), std::string("Pro display preference with both windows ") + plan);
+    }
+    q.plan = "prolite";
+    check(q.planLabel() == L"Pro Lite", "Pro Lite plan label");
+    q.plan = "promax";
+    check(q.planLabel() == L"Pro Max", "Pro Max plan label");
+    for (auto plan : {"free", "go", "plus", "team", "self_serve_business_prolite",
+                      "self_serve_business_usage_based", "business", "ent26", "enterprise_cbp_automation",
+                      "enterprise_cbp_usage_based", "enterprise", "edu", "edu_plus", "edu_pro", "sci",
+                      "sci_plus", "unknown", "future_pro_tier"}) {
+        q.plan = plan;
+        check(!q.weekOnly(), std::string("non-consumer-Pro retains both available windows ") + plan);
+    }
+    q.hour.reset();
+    check(q.weekOnly() && q.planLabel() == L"future_pro_tier",
+          "unknown plan with only weekly data hides missing hour without inferring plan");
+    q.week.reset();
+    check(!q.weekOnly(), "no quota data does not imply weekly-only plan");
     check(
         !Quotas::parse({{"rateLimits", {{"primary", {{"usedPercent", "32"}, {"windowDurationMins", 300}}}}}})
              .hour,
@@ -111,18 +135,18 @@ int selfTests(const fs::path &output) {
     actual.q.hour = WindowQuota{68, 0};
     actual.q.week = WindowQuota{27, 0};
     for (auto &style : StyleIds)
-        for (bool pro : {false, true})
+        for (auto plan : {"plus", "pro", "prolite", "promax"})
             for (int dpi : {96, 144, 192}) {
                 draw.style = style;
-                actual.q.plan = pro ? "pro" : "plus";
-                auto l = widgetLayout(draw, pro, dpi, int(40 * dpi / 96.));
+                actual.q.plan = plan;
+                auto l = widgetLayout(draw, actual.q.weekOnly(), dpi, int(40 * dpi / 96.));
                 check(l.width > 0 && l.height <= 40 * dpi / 96,
-                      "taskbar layout " + style + (pro ? " pro " : " ") + std::to_string(dpi));
+                      "taskbar layout " + style + " " + plan + " " + std::to_string(dpi));
                 Surface start(l.width, l.height), finish(l.width, l.height);
                 paintWidget(start, l, actual, draw, false, 0, 0);
                 paintWidget(finish, l, actual, draw, false, 1, 1);
                 check(memcmp(start.pixels, finish.pixels, l.width * l.height * 4) != 0,
-                      "animated pixel frames " + style + (pro ? " pro " : " ") + std::to_string(dpi));
+                      "animated pixel frames " + style + " " + plan + " " + std::to_string(dpi));
             }
     draw = Settings{};
     draw.style = "outlined";
@@ -264,6 +288,30 @@ int uiTests(const fs::path &dir) {
         check(IsWindowVisible(overlay.details),
               "hover restored after right-click close monitor " + std::to_string(i));
         overlay.hideDetails();
+    }
+    // Verify a live account-plan change rebuilds both the widget and hover card.
+    auto regularState = app.state;
+    for (auto plan : {"pro", "prolite", "promax", "future_weekly_plan"}) {
+        auto weekly = regularState;
+        weekly.q.plan = plan;
+        weekly.q.hour.reset();
+        app.apply(weekly);
+        for (size_t i = 0; i < app.overlays.size(); ++i) {
+            auto &overlay = *app.overlays[i];
+            auto bar = taskbar(overlay.monitor.handle);
+            auto expected = widgetLayout(app.settings, true, overlay.monitor.dpi,
+                                        bar ? bar->bottom - bar->top : int(40 * overlay.monitor.dpi / 96.));
+            check(overlay.state.q.weekOnly() && overlay.layout.width == expected.width,
+                  std::string("weekly-only widget after account update ") + plan);
+            overlay.showDetails(dir / wide(std::string("details-") + plan + "-monitor-" + std::to_string(i) + ".png"));
+            RECT card{};
+            GetWindowRect(overlay.details, &card);
+            check(card.bottom - card.top == int(270 * overlay.monitor.dpi / 96.f),
+                  std::string("weekly-only details omit 5h row ") + plan);
+            overlay.hideDetails();
+        }
+        app.apply(regularState);
+        check(!app.overlays.front()->state.q.weekOnly(), "Plus restores two-window widget");
     }
     app.showSettings();
     auto &settings = *app.settingsWindow;
