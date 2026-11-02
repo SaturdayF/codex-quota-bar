@@ -14,6 +14,24 @@ int selfTests(const fs::path &output) {
     auto quota = [](double used, int mins, int64_t reset = 1000) -> json {
         return {{"usedPercent", used}, {"windowDurationMins", mins}, {"resetsAt", reset}};
     };
+    check(Settings{}.avoidIcons && !Settings::fromJson({{"AvoidTaskbarIcons", false}}).avoidIcons &&
+              Settings::fromJson({{"AvoidTaskbarIcons", "invalid"}}).avoidIcons,
+          "taskbar avoidance defaults on and accepts only boolean settings");
+    auto avoidSetting = Settings{}; avoidSetting.avoidIcons = false;
+    check(!Settings::fromJson(avoidSetting.toJson()).avoidIcons, "taskbar avoidance setting round trip");
+    RECT lane{0, 100, 1000, 148};
+    check(freeTaskbarX(lane, 100, 16, {{0, 100, 180, 148}, {500, 100, 800, 148}}, 8) == 188,
+          "taskbar placement avoids left-aligned Start and centered app buttons");
+    check(freeTaskbarX(lane, 100, 850, {{800, 100, 1000, 148}}, 8) == 692,
+          "taskbar placement avoids notification area at right edge");
+    check(freeTaskbarX(lane, 100, 300, {{0, 100, 150, 148}, {600, 100, 1000, 148}}, 8) == 300,
+          "taskbar placement retains a safe position without jitter");
+    check(!freeTaskbarX(lane, 100, 16, {{0, 100, 450, 148}, {500, 100, 1000, 148}}, 8),
+          "insufficient taskbar space never falls back to overlapping icons");
+    check(freeTaskbarX({-1920, 100, 0, 148}, 200, -1900, {{-1920, 100, -1600, 148}}, 12) == -1588,
+          "taskbar placement supports negative monitor coordinates");
+    check(freeTaskbarX(lane, 100, 16, {{0, 0, 1000, 90}}, 8) == 16,
+          "elements outside the taskbar row do not occupy its space");
     auto q = Quotas::parse(
         {{"rateLimits",
           {{"limitId", "codex"}, {"primary", quota(32, 300)}, {"secondary", quota(73, 10080)}}}});
@@ -525,7 +543,9 @@ int uiTests(const fs::path &dir) {
     // or restarting the user's Explorer process.
     {
         Application fixture(false, true);
+        fixture.settings = Settings{};
         fixture.settings.displayMode = "primary";
+        fixture.settings.deepSeekEnabled = true;
         auto monitor = selectedMonitors(fixture.settings).front();
         RECT bar = taskbar(monitor.handle).value_or(
             RECT{monitor.bounds.left, monitor.work.bottom - 48, monitor.bounds.right, monitor.work.bottom});
@@ -539,6 +559,7 @@ int uiTests(const fs::path &dir) {
         fixture.taskbarProbe = [&](HMONITOR) { return host; };
         fixture.state = app.state;
         fixture.rebuild();
+        check(fixture.overlays.size() == 2, "paired-provider taskbar fixture created");
         auto &widget = *fixture.overlays.front();
         auto foreground = GetForegroundWindow();
         SetWindowPos(host, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -549,6 +570,89 @@ int uiTests(const fs::path &dir) {
         check(IsWindowVisible(widget.window) && WindowFromPoint(p) == widget.window,
               "elevated taskbar still exposes widget hit surface");
         check(GetForegroundWindow() == foreground, "taskbar maintenance does not steal focus");
+        // Both providers share one taskbar. An idle timer must not repeatedly
+        // move either sibling to HWND_TOP and force the layered windows to swap.
+        int positionRequests = 0;
+        auto countPosition = [](HWND w, UINT message, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR data) -> LRESULT {
+            if (message == WM_WINDOWPOSCHANGING) ++*reinterpret_cast<int *>(data);
+            return DefSubclassProc(w, message, wp, lp);
+        };
+        for (auto &overlay : fixture.overlays)
+            SetWindowSubclass(overlay->window, countPosition, 1, reinterpret_cast<DWORD_PTR>(&positionRequests));
+        auto first = GetWindow(host, GW_CHILD);
+        bool stableOrder = true;
+        POINT away{monitor.work.left, monitor.work.top};
+        for (int i = 0; i < 40; ++i) {
+            for (auto &overlay : fixture.overlays) {
+                overlay->tick(&away);
+                stableOrder = stableOrder && GetWindow(host, GW_CHILD) == first;
+            }
+            fixture.checkTaskbars();
+        }
+        log << "INFO paired widgets idle position requests " << positionRequests << std::endl;
+        check(stableOrder, "Codex and DeepSeek keep stable sibling order during idle polling");
+        check(positionRequests == 0, "idle polling does not reposition unchanged layered widgets");
+        HWND shellChild = CreateWindowExW(0, L"STATIC", L"Quota test shell content", WS_CHILD | WS_VISIBLE,
+                                         0, 0, bar.right - bar.left, bar.bottom - bar.top, host, nullptr,
+                                         GetModuleHandleW(nullptr), nullptr);
+        SetWindowPos(shellChild, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        check(shellChild != nullptr && GetWindow(host, GW_CHILD) == shellChild,
+              "isolated shell child can cover both taskbar providers");
+        fixture.checkTaskbars();
+        bool recovered = true;
+        for (auto &overlay : fixture.overlays) {
+            RECT widgetBounds{};
+            GetWindowRect(overlay->window, &widgetBounds);
+            POINT center{(widgetBounds.left + widgetBounds.right) / 2,
+                         (widgetBounds.top + widgetBounds.bottom) / 2};
+            recovered = recovered && WindowFromPoint(center) == overlay->window;
+        }
+        check(recovered, "both providers recover above newly raised shell content");
+        positionRequests = 0;
+        fixture.checkTaskbars();
+        check(positionRequests == 0, "shell layer recovery settles without repeated reordering");
+        DestroyWindow(shellChild);
+        TaskbarSpace space{monitor.handle, host, bar, {bar}};
+        fixture.taskbarSpaces = {space};
+        fixture.checkTaskbars();
+        check(std::all_of(fixture.overlays.begin(), fixture.overlays.end(),
+                          [](auto &o) { return o->blocked && !IsWindowVisible(o->window); }),
+              "full taskbar hides widgets instead of covering native icons");
+        space.occupied = {{bar.left, bar.top, bar.left + (bar.right - bar.left) / 3, bar.bottom},
+                          {bar.right - 150, bar.top, bar.right, bar.bottom}};
+        fixture.taskbarSpaces = {space};
+        fixture.checkTaskbars();
+        bool avoided = true;
+        RECT codex{}, deepseek{}, overlap{};
+        GetWindowRect(fixture.overlays[0]->window, &codex);
+        GetWindowRect(fixture.overlays[1]->window, &deepseek);
+        for (auto &overlay : fixture.overlays) {
+            RECT r{};
+            GetWindowRect(overlay->window, &r);
+            avoided = avoided && !overlay->blocked && IsWindowVisible(overlay->window);
+            for (auto &occupied : space.occupied)
+                avoided = avoided && !IntersectRect(&overlap, &r, &occupied);
+        }
+        check(avoided && !IntersectRect(&overlap, &codex, &deepseek),
+              "widgets recover in free space without overlapping native icons or each other");
+        positionRequests = 0;
+        fixture.checkTaskbars();
+        check(positionRequests == 0, "automatic avoidance remains still when taskbar occupancy is unchanged");
+        fixture.settingsWindow = std::make_unique<SettingsWindow>(&fixture, monitor.handle);
+        fixture.settingsWindow->selectPage(1);
+        fixture.settingsWindow->command(225, BN_CLICKED);
+        check(!fixture.settingsWindow->draft.avoidIcons && fixture.settings.avoidIcons,
+              "avoidance toggle stages changes until Save");
+        fixture.settingsWindow->command(225, BN_CLICKED);
+        fixture.settingsWindow.reset();
+        for (auto &overlay : fixture.overlays) overlay->settings.avoidIcons = false;
+        fixture.taskbarSpaces = {TaskbarSpace{monitor.handle, host, bar, {bar}}};
+        fixture.checkTaskbars();
+        check(std::all_of(fixture.overlays.begin(), fixture.overlays.end(),
+                          [](auto &o) { return !o->blocked && IsWindowVisible(o->window); }),
+              "disabling avoidance permits manual placement even on a full taskbar");
+        for (auto &overlay : fixture.overlays)
+            RemoveWindowSubclass(overlay->window, countPosition, 1);
         DestroyWindow(host);
         host = nullptr;
         fixture.checkTaskbars();
@@ -560,6 +664,21 @@ int uiTests(const fs::path &dir) {
               "replacement taskbar reattaches widget");
         fixture.overlays.clear();
         DestroyWindow(host);
+    }
+    {
+        Application detection(false, true);
+        detection.settings = Settings{};
+        detection.taskbarWorker = std::thread(&Application::runTaskbarWorker, &detection);
+        pumpUntil([&] { return !detection.taskbarSpaces.empty(); });
+        check(detection.taskbarSpaces.size() == selectedMonitors(detection.settings).size(),
+              "background taskbar scan publishes a snapshot for every selected monitor");
+        for (auto &space : detection.taskbarSpaces) {
+            log << "INFO detected taskbar occupied regions " << space.occupied.size() << std::endl;
+            check(space.host && !space.occupied.empty(), "live taskbar icons expose occupied rectangles");
+        }
+        detection.stopping = true;
+        detection.wake.notify_all();
+        detection.taskbarWorker.join();
     }
     app.state = State{};
     app.rebuild();

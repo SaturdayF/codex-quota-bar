@@ -1,6 +1,7 @@
 #pragma once
 #include "drawing.hpp"
 #include "deepseek.hpp"
+#include "taskbar.hpp"
 namespace quota {
 enum class WidgetKind { Codex, DeepSeek };
 Layout deepSeekLayout(const Settings &settings, int dpi, int available);
@@ -21,11 +22,13 @@ struct Overlay {
     int64_t hoverStart = 0, lastInside = 0;
     int x = 0, y = 0;
     bool placed = false;
+    bool blocked = false;
     Overlay(Application *a, const Monitor &m, const Settings &s, const State &initial,
             WidgetKind type = WidgetKind::Codex);
     ~Overlay();
     void update(const State &s);
     void position(bool reset = false);
+    void ensureLayer();
     void render();
     void tick(const POINT *simulatedPointer = nullptr);
     void showDetails(const fs::path &capture = {});
@@ -44,6 +47,8 @@ struct Application {
     std::unique_ptr<SettingsWindow> settingsWindow;
     std::thread worker;
     std::thread deepSeekWorker;
+    std::thread taskbarWorker;
+    std::vector<TaskbarSpace> taskbarSpaces;
     std::mutex mutex;
     std::condition_variable wake;
     std::atomic<bool> stopping{false};
@@ -69,6 +74,7 @@ struct Application {
     void apply(const State &value);
     void rebuild();
     void checkTaskbars();
+    void runTaskbarWorker();
     void refresh();
     void saved(const Settings &value);
     void showSettings(HMONITOR monitor = nullptr);

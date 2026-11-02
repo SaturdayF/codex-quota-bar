@@ -41,7 +41,7 @@ Overlay::Overlay(Application *a, const Monitor &m, const Settings &s, const Stat
     update(initial);
     position(true);
     SetWindowPos(window, host ? HWND_TOP : HWND_TOPMOST, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | (blocked ? 0 : SWP_SHOWWINDOW));
     render();
     SetTimer(window, 1, 50, nullptr);
 }
@@ -69,12 +69,68 @@ void Overlay::position(bool reset) {
     x = std::clamp(x, int(monitor.bounds.left),
                    std::max(int(monitor.bounds.left), int(monitor.bounds.right) - layout.width));
     y = bar ? bar->top + (available - layout.height) / 2 : monitor.work.bottom - layout.height - 4;
+    bool nextBlocked = false;
+    if (settings.avoidIcons) {
+        RECT lane{x, y, monitor.bounds.right, y + layout.height};
+        lane.left = bar ? std::max(bar->left, monitor.bounds.left) : monitor.bounds.left;
+        lane.right = bar ? std::min(bar->right, monitor.bounds.right) : monitor.bounds.right;
+        int gap = std::max(1, 8 * monitor.dpi / 96);
+        lane.left += gap; lane.right -= gap;
+        std::vector<RECT> occupied;
+        bool ready = !host || app->testing || app->preview;
+        for (auto &space : app->taskbarSpaces)
+            if (space.monitor == monitor.handle && space.host == host && bar && EqualRect(&space.bounds, &*bar)) {
+                occupied = space.occupied;
+                ready = true;
+                break;
+            }
+        for (auto &other : app->overlays)
+            if (other.get() != this && other->monitor.handle == monitor.handle && !other->blocked)
+                occupied.push_back(RECT{other->x, other->y, other->x + other->layout.width, other->y + other->layout.height});
+        auto free = freeTaskbarX(lane, layout.width, x, occupied, gap);
+        nextBlocked = !ready || !free;
+        if (free) x = *free;
+    }
+    if (blocked != nextBlocked) {
+        blocked = nextBlocked;
+        if (blocked) hideDetails();
+        ShowWindow(window, blocked ? SW_HIDE : SW_SHOWNOACTIVATE);
+    }
     placed = true;
     POINT local{x, y};
     if (host)
         ScreenToClient(host, &local);
-    SetWindowPos(window, host ? HWND_TOP : HWND_TOPMOST, local.x, local.y, layout.width, layout.height,
-                 SWP_NOACTIVATE);
+    RECT current{};
+    if (!GetWindowRect(window, &current) || current.left != x || current.top != y ||
+        current.right - current.left != layout.width || current.bottom - current.top != layout.height)
+        SetWindowPos(window, nullptr, local.x, local.y, layout.width, layout.height,
+                     SWP_NOACTIVATE | SWP_NOZORDER);
+}
+void Overlay::ensureLayer() {
+    if (blocked) return;
+    if (!host) {
+        if (!(GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST))
+            SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        return;
+    }
+    RECT bounds{};
+    if (!GetWindowRect(window, &bounds)) return;
+    for (HWND sibling = GetWindow(window, GW_HWNDPREV); sibling;
+         sibling = GetWindow(sibling, GW_HWNDPREV)) {
+        // Our providers must not compete for HWND_TOP. Only recover when an
+        // overlapping shell child has actually been placed above the widget.
+        if (!IsWindowVisible(sibling) ||
+            std::any_of(app->overlays.begin(), app->overlays.end(),
+                        [&](auto &other) { return other->window == sibling; }))
+            continue;
+        RECT other{}, intersection{};
+        if (GetWindowRect(sibling, &other) && IntersectRect(&intersection, &bounds, &other)) {
+            SetWindowPos(window, HWND_TOP, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            break;
+        }
+    }
 }
 void Overlay::render() {
     if (!window || !placed)
@@ -177,6 +233,11 @@ void Overlay::showDetails(const fs::path &capture) {
     SetWindowPos(details, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 void Overlay::tick(const POINT *simulatedPointer) {
+    if (blocked) {
+        hover = false;
+        hideDetails();
+        return;
+    }
     POINT p;
     if (simulatedPointer)
         p = *simulatedPointer;
@@ -213,8 +274,6 @@ void Overlay::tick(const POINT *simulatedPointer) {
     }
     if (dragging)
         hideDetails();
-    SetWindowPos(window, host ? HWND_TOP : HWND_TOPMOST, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 LRESULT CALLBACK Overlay::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
     auto self = reinterpret_cast<Overlay *>(GetWindowLongPtrW(w, GWLP_USERDATA));
@@ -320,6 +379,7 @@ Application::Application(bool previewMode, bool test) : preview(previewMode), te
     } else if (!testing) {
         worker = std::thread(&Application::runWorker, this);
         deepSeekWorker = std::thread(&Application::runDeepSeekWorker, this);
+        taskbarWorker = std::thread(&Application::runTaskbarWorker, this);
     }
 }
 Application::~Application() {
@@ -329,6 +389,8 @@ Application::~Application() {
         worker.join();
     if (deepSeekWorker.joinable())
         deepSeekWorker.join();
+    if (taskbarWorker.joinable())
+        taskbarWorker.join();
     settingsWindow.reset();
     overlays.clear();
     if (quitEvent)
@@ -339,6 +401,8 @@ Application::~Application() {
             delete reinterpret_cast<State *>(msg.lParam);
         while (PeekMessageW(&msg, controller, DeepSeekMessage, DeepSeekMessage, PM_REMOVE))
             delete reinterpret_cast<DeepSeekUpdate *>(msg.lParam);
+        while (PeekMessageW(&msg, controller, TaskbarMessage, TaskbarMessage, PM_REMOVE))
+            delete reinterpret_cast<TaskbarUpdate *>(msg.lParam);
         DestroyWindow(controller);
     }
 }
@@ -365,6 +429,7 @@ void Application::saved(const Settings &value) {
     }
     wake.notify_all();
     state.interval = value.interval;
+    taskbarSpaces.clear();
     deepseek = DeepSeekState{};
     if (!testing) {
         std::error_code ec;
@@ -405,7 +470,29 @@ void Application::checkTaskbars() {
         o->position();
         if (oldX != o->x || oldY != o->y || oldWidth != o->layout.width || oldHeight != o->layout.height)
             o->render();
+        o->ensureLayer();
     }
+}
+void Application::runTaskbarWorker() {
+    auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    int seen = -1;
+    while (!stopping) {
+        Settings cfg;
+        { std::lock_guard<std::mutex> lock(mutex); cfg = settings; seen = generation; }
+        if (cfg.avoidIcons) {
+            auto update = std::make_unique<TaskbarUpdate>();
+            update->generation = seen;
+            for (auto &monitor : selectedMonitors(cfg)) {
+                if (stopping) break;
+                update->spaces.push_back(readTaskbarSpace(monitor, stopping));
+            }
+            if (!stopping && PostMessageW(controller, TaskbarMessage, 0, reinterpret_cast<LPARAM>(update.get())))
+                update.release();
+        }
+        std::unique_lock<std::mutex> lock(mutex);
+        wake.wait_for(lock, std::chrono::milliseconds(1500), [&] { return stopping || seen != generation; });
+    }
+    if (SUCCEEDED(initialized)) CoUninitialize();
 }
 void Application::apply(const State &value) {
     bool layoutChanged = value.active != state.active ||
@@ -522,6 +609,14 @@ LRESULT CALLBACK Application::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) 
     if (!self)
         return DefWindowProcW(w, msg, wp, lp);
     switch (msg) {
+    case TaskbarMessage: {
+        std::unique_ptr<TaskbarUpdate> update(reinterpret_cast<TaskbarUpdate *>(lp));
+        if (!self->stopping && update->generation == self->generation && self->settings.avoidIcons) {
+            self->taskbarSpaces = std::move(update->spaces);
+            self->checkTaskbars();
+        }
+        return 0;
+    }
     case DeepSeekMessage: {
         std::unique_ptr<DeepSeekUpdate> update(reinterpret_cast<DeepSeekUpdate *>(lp));
         if (!self->stopping) self->applyDeepSeek(*update);

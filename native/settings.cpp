@@ -24,6 +24,7 @@ enum {
     ShowHour,
     ShowWeek,
     ResetQuotas,
+    AvoidIcons,
     Path = 240,
     Browse,
     Interval,
@@ -57,7 +58,7 @@ static void registerSettingsClass(const wchar_t *name, WNDPROC proc) {
 }
 static bool isToggle(int id) {
     return id == Letters || id == Remaining || id == Percent || id == Animate || id == Startup ||
-           id == ShowHour || id == ShowWeek || id == DeepSeekEnabled;
+           id == ShowHour || id == ShowWeek || id == DeepSeekEnabled || id == AvoidIcons;
 }
 SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
     : app(a), draft(a->settings), startup(startupEnabled()) {
@@ -158,6 +159,7 @@ void SettingsWindow::createControls() {
     button(L"显示 5 小时额度", ShowHour, 1);
     button(L"显示周额度", ShowWeek, 1);
     button(L"恢复套餐默认", ResetQuotas, 1);
+    button(L"图标自动避让", AvoidIcons, 1);
     button(L"显示 DeepSeek 余额", DeepSeekEnabled, 3);
     deepSeekToken = control(L"EDIT", L"", DeepSeekToken, 3, ES_PASSWORD | ES_AUTOHSCROLL);
     SendMessageW(deepSeekToken, EM_SETLIMITTEXT, 2560, 0);
@@ -216,7 +218,7 @@ void SettingsWindow::layout() {
     GetClientRect(content, &c);
     contentWidth = int(c.right * 96. / dpi);
     contentHeight = int(c.bottom * 96. / dpi);
-    int needed = page == 0 ? 704 : page == 1 ? 554 : page == 3 ? 542 : 540;
+    int needed = page == 0 ? 704 : page == 1 ? 620 : page == 3 ? 542 : 540;
     scroll = std::clamp(scroll, 0, std::max(0, needed - contentHeight));
     SCROLLINFO si{sizeof(si), SIF_RANGE | SIF_PAGE | SIF_POS,   0,
                   needed - 1, UINT(std::max(1, contentHeight)), scroll,
@@ -247,6 +249,7 @@ void SettingsWindow::layout() {
     place(ShowHour, contentWidth - 60, 221, 44, 26);
     place(ShowWeek, contentWidth - 60, 287, 44, 26);
     place(ResetQuotas, contentWidth - 154, 353, 140, 34);
+    place(AvoidIcons, contentWidth - 60, 419, 44, 26);
     place(Path, 0, 140, contentWidth - 112, 30);
     place(Browse, contentWidth - 100, 139, 86, 32);
     place(Interval, right + 60, 207, 150, 230);
@@ -379,10 +382,11 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 row(214, L"显示 5 小时额度", L"默认 Plus 显示，Pro 系列隐藏。", 110);
                 row(280, L"显示周额度", L"默认显示；可与 5 小时额度独立选择。", 110);
                 row(346, L"按套餐自动选择", L"恢复 Plus 两项、Pro 系列仅周额度。", 170);
-                row(412, L"跟随应用运行", L"两款桌面应用均退出后停止读取和显示。", 80);
-                drawUiText(g, L"自动", RectF(contentWidth - 80.f, 412, 65, 30), 13, muted, false, true);
+                row(412, L"图标自动避让", L"避开任务栏按钮与其他组件；空间不足时暂时隐藏。", 110);
+                row(478, L"跟随应用运行", L"两款桌面应用均退出后停止读取和显示。", 80);
+                drawUiText(g, L"自动", RectF(contentWidth - 80.f, 478, 65, 30), 13, muted, false, true);
                 drawUiText(g, L"两项关闭时隐藏组件，可从开始菜单打开设置。",
-                         RectF(0, 491, float(contentWidth), 32), 14, muted);
+                         RectF(0, 557, float(contentWidth), 32), 14, muted);
             } else if (page == 2) {
                 drawUiText(g, L"Codex CLI 路径", RectF(0, 82, float(contentWidth), 26), 16, ink);
                 drawUiText(g, L"留空时自动查找已安装的 Codex。", RectF(0, 108, float(contentWidth), 26), 14,
@@ -434,6 +438,7 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
                            : id == ShowHour  ? visible.hour
                            : id == ShowWeek  ? visible.week
                            : id == DeepSeekEnabled ? draft.deepSeekEnabled
+                           : id == AvoidIcons ? draft.avoidIcons
                                              : startup;
             Color track = enabled ? (light ? Color(255, 35, 35, 35) : Color(255, 225, 225, 225))
                                   : (light ? Color(255, 180, 180, 180) : Color(255, 85, 85, 85));
@@ -552,6 +557,9 @@ void SettingsWindow::command(int id, int notice) {
         break;
     case Startup:
         startup = !startup;
+        break;
+    case AvoidIcons:
+        draft.avoidIcons = !draft.avoidIcons;
         break;
     case ShowHour:
         draft.showHour = !draft.visibility(app->state.q).hour;

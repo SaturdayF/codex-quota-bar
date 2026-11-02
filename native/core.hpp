@@ -37,6 +37,7 @@ constexpr wchar_t Version[] = L"0.3.0";
 constexpr char VersionUtf8[] = "0.3.0";
 constexpr UINT StateMessage = WM_APP + 1, SettingsMessage = WM_APP + 2, RebuildMessage = WM_APP + 3;
 constexpr UINT DeepSeekMessage = WM_APP + 5;
+constexpr UINT TaskbarMessage = WM_APP + 6;
 std::wstring wide(const std::string &s);
 std::string utf8(const std::wstring &s);
 fs::path executable();
@@ -75,6 +76,7 @@ struct Settings {
     std::wstring codexPath;
     bool letters = true;
     bool deepSeekEnabled = false;
+    bool avoidIcons = true;
     int deepSeekInterval = 60;
     std::optional<bool> showHour, showWeek; // Unset follows the account's default.
     double scale = 1;

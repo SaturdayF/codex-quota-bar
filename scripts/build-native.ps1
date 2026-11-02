@@ -14,7 +14,7 @@ try {
     $signatureFile = Join-Path $output 'build-options.txt'
     $sameOptions = (Test-Path -LiteralPath $signatureFile) -and (Get-Content -LiteralPath $signatureFile -Raw).Trim() -eq $signature
     $headers = @(Get-ChildItem -LiteralPath . -Filter '*.hpp' -File) + @(Get-Item -LiteralPath 'vendor/json.hpp')
-    foreach ($source in @('core.cpp','deepseek.cpp','deepseek_ui.cpp','deepseek_tests.cpp','drawing.cpp','app.cpp','settings.cpp','tests.cpp','main.cpp')) {
+    foreach ($source in @('core.cpp','taskbar.cpp','deepseek.cpp','deepseek_ui.cpp','deepseek_tests.cpp','drawing.cpp','app.cpp','settings.cpp','tests.cpp','main.cpp')) {
         $object = Join-Path $output ($source + '.o')
         $needsBuild = -not $sameOptions -or -not (Test-Path -LiteralPath $object)
         if (-not $needsBuild) {
