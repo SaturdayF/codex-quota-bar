@@ -4,9 +4,9 @@
 
 把 Codex 的 **5 小时额度、周额度**放到 Windows 任务栏上。打开 ChatGPT 或 Codex 桌面应用时自动出现，鼠标悬停查看详情，右键调整外观和行为。
 
-**当前版本：v0.2.1 · C++ 原生版，无需 .NET** · [下载发布包](https://github.com/SaturdayF/codex-quota-bar/releases) · [版本记录](CHANGELOG.md) · [开发说明](docs/DEVELOPMENT.md)
+**当前版本：v0.2.2 · C++ 原生版，无需 .NET** · [下载发布包](https://github.com/SaturdayF/codex-quota-bar/releases) · [版本记录](CHANGELOG.md) · [开发说明](docs/DEVELOPMENT.md)
 
-支持 Windows 10/11 x64。这是独立的 Windows 伴随工具，与 OpenAI 无隶属关系。下文插图由本工具的界面或渲染代码生成；设置与详情图来自 0.2.1，七样式图来自 0.2.0，动画和色板图保留自 0.1.0，**额度和重置时间为模拟数据**。
+支持 Windows 10/11 x64。这是独立的 Windows 伴随工具，与 OpenAI 无隶属关系。下文插图由本工具的界面或渲染代码生成；设置与详情图来自 0.2.2，七样式图来自 0.2.0，动画和色板图保留自 0.1.0，**额度和重置时间为模拟数据**。
 
 ## 已实现的功能
 
@@ -37,6 +37,8 @@
 
 动画时长约 1.2 秒。普通轮询不会反复播放；系统关闭客户端动画时不会自动播放。下图为循环演示，真实程序只在触发条件成立时播放一次。
 
+外观页切换“在图标上展示余量”时，也会重播当前样式的预览动画。
+
 ![七种样式的填充动画](docs/animation-preview.gif)
 
 ### 外观设置与颜色
@@ -47,23 +49,29 @@
 
 <img src="docs/color-palette-preview.png" width="294" alt="自动、主题颜色、标准色和其他颜色菜单" />
 
+### 额度显示
+
+在“常规”页分别开关 5 小时和周额度。默认 Plus 显示两项，Pro 系列仅显示周额度；“恢复套餐默认”会清除手动覆盖。选择同步影响任务栏、悬浮详情和预览。
+
+![额度显示设置（Pro 默认示例）](docs/native-general-preview.png)
+
 ### 悬浮详情
 
-常态保持透明；悬浮时出现 Windows 任务栏按钮式底色，并展开详细额度卡。鼠标可移入卡片继续查看。设置与详情采用 Segoe UI / 微软雅黑 UI 字体，正文与辅助文字分别为 16 / 14 逻辑像素，随屏幕 DPI 缩放。
+常态保持透明；悬浮时出现 Windows 任务栏按钮式底色，并展开详细额度卡。标题右侧显示当前套餐，鼠标可移入卡片继续查看。设置与详情采用 Segoe UI / 微软雅黑 UI 字体，正文与辅助文字分别为 16 / 14 逻辑像素，随屏幕 DPI 缩放。
 
 <img src="docs/native-details-preview.png" width="372" alt="两种额度的详情卡（模拟数据）" /> <img src="docs/native-details-pro-preview.png" width="372" alt="Pro 周额度详情卡（模拟数据）" />
 
 ## 安装与使用
 
-1. 下载 [CodexQuotaBar-v0.2.1-Setup.exe](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.2.1/CodexQuotaBar-v0.2.1-Setup.exe)，双击运行。
+1. 下载 [CodexQuotaBar-v0.2.2-Setup.exe](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.2.2/CodexQuotaBar-v0.2.2-Setup.exe)，双击运行。
 2. 在“选择目标位置”页输入路径或点击“浏览”，选择本工具专用文件夹；可选择登录启动和安装完成后启动。
 3. 打开 ChatGPT 或 Codex 桌面应用，组件会自动显示。右键组件打开设置；也可从开始菜单打开 **Codex Quota Bar Settings**。
 
-默认安装到当前用户的 `%LOCALAPPDATA%\Programs\CodexQuotaBar\0.2.1`，也可选择其他磁盘上的目录；目录需当前用户可写。0.2.1 使用 C++、Win32 和系统自带 GDI+，不包含 .NET，也不依赖全局 .NET 或另装 C++ 运行库。
+默认安装到当前用户的 `%LOCALAPPDATA%\Programs\CodexQuotaBar\0.2.2`，也可选择其他磁盘上的目录；目录需当前用户可写。0.2.2 使用 C++、Win32 和系统自带 GDI+，不包含 .NET，也不依赖全局 .NET 或另装 C++ 运行库。
 
-也可下载 [Portable ZIP](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.2.1/CodexQuotaBar-v0.2.1-Portable-win-x64.zip)，解压后直接运行 `CodexQuotaBar.exe`。不需要安装额外运行时；便携版在设置中提供登录启动开关。
+也可下载 [Portable ZIP](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.2.2/CodexQuotaBar-v0.2.2-Portable-win-x64.zip)，解压后直接运行 `CodexQuotaBar.exe`。不需要安装额外运行时；便携版在设置中提供登录启动开关。
 
-0.1.0 安装和原始源码仍保留在历史 Release / 标签中。升级时退出旧监听器再启动新版本；0.2.1 继续读取原有设置，不删除旧安装目录。
+0.1.0 安装和原始源码仍保留在历史 Release / 标签中。升级时退出旧监听器再启动新版本；0.2.2 继续读取原有设置，不删除旧安装目录。
 
 需要本机 **Codex CLI 已通过 ChatGPT 账户登录**；也可使用桌面应用附带的 CLI。自动识别失败时，在“高级”页指定 `codex.exe`。数据来自 **Codex CLI 的登录账户**：如果 ChatGPT 与 Codex 登录不同账户，看到的额度可能不同。
 
@@ -94,7 +102,7 @@ EXE 安装版还可从 Windows“已安装的应用”卸载。卸载器按安�
 
 ## 版本与项目结构
 
-0.2.0 将运行程序迁移到 C++ 原生实现；0.2.1 修复设置控件重绘，放大设置与详情文字，并清理旧实现文件。历史源码可通过 Git 标签恢复。原始 `v0.1.0`、安装器补充 `v0.1.0-installer.1` 和已有下载不变；后续修改使用新版本。
+0.2.0 将运行程序迁移到 C++ 原生实现；0.2.1 修复设置控件重绘与文字可读性；0.2.2 修复任务栏遮挡和 Pro 系列识别，加入独立额度显示与余量预览动画。历史源码可通过 Git 标签恢复。原始 `v0.1.0`、安装器补充 `v0.1.0-installer.1` 和已有下载不变；后续修改使用新版本。
 
 ```text
 native/          C++ 运行代码、原生设置、绘图与检查

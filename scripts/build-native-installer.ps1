@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$InnoCompiler, [switch]$SkipBuild)
+param([Parameter(Mandatory)][string]$InnoCompiler, [switch]$SkipBuild, [string]$Python = 'python')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 if (-not $SkipBuild) { & (Join-Path $PSScriptRoot 'build-native.ps1') }
@@ -15,7 +15,7 @@ foreach ($folder in @($payload,(Join-Path $root 'artifacts/native-win-x64'))) {
     Copy-Item -LiteralPath (Join-Path $root 'native/USER_GUIDE.md') -Destination (Join-Path $folder 'README.md') -Force
 }
 if (@(Get-ChildItem -LiteralPath $payload -Directory).Count) { throw 'Native payload must not contain runtime directories' }
-& $InnoCompiler '/DAppVersion=0.2.1' ('/DPayloadDir=' + $payload) (Join-Path $root 'installer/setup.iss')
+& $InnoCompiler '/DAppVersion=0.2.2' ('/DPayloadDir=' + $payload) (Join-Path $root 'installer/setup.iss')
 if ($LASTEXITCODE -ne 0) { throw 'Native installer compilation failed' }
-python (Join-Path $PSScriptRoot 'package-native.py')
+& $Python (Join-Path $PSScriptRoot 'package-native.py')
 if ($LASTEXITCODE -ne 0) { throw 'Native ZIP packaging failed' }

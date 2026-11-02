@@ -297,7 +297,7 @@ void SettingsWindow::draw(HDC dc, bool inner) {
             SolidBrush b(side);
             g.FillRectangle(&b, RectF(0, 0, 196, float(rect.bottom / d)));
             drawUiText(g, L"设置", RectF(26, 22, 150, 44), 27, ink, true);
-            drawUiText(g, L"Codex Quota Bar\n0.2.1", RectF(24, rect.bottom / d - 80, 155, 58), 14, muted);
+            drawUiText(g, L"Codex Quota Bar\n" + std::wstring(Version), RectF(24, rect.bottom / d - 80, 155, 58), 14, muted);
             Pen line(light ? Color(255, 235, 235, 235) : Color(255, 55, 55, 55));
             g.DrawLine(&line, 218.f, rect.bottom / d - 78, rect.right / d - 28, rect.bottom / d - 78);
         } else {
