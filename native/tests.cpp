@@ -14,6 +14,20 @@ int selfTests(const fs::path &output) {
     auto quota = [](double used, int mins, int64_t reset = 1000) -> json {
         return {{"usedPercent", used}, {"windowDurationMins", mins}, {"resetsAt", reset}};
     };
+    check(settlePosition(10, 210, -1) == 10 && settlePosition(10, 210, SettleDuration) == 210 &&
+              settlePosition(10, 210, SettleDuration + 100) == 210,
+          "drop easing clamps exactly to its starting and ending positions");
+    bool monotonic = true;
+    int previous = 10;
+    for (int elapsed = 0; elapsed <= SettleDuration; elapsed += 16) {
+        int current = settlePosition(10, 210, elapsed);
+        monotonic = monotonic && current >= previous && current >= 10 && current <= 210;
+        previous = current;
+    }
+    check(monotonic && settlePosition(10, 210, 60) - 10 > 210 - settlePosition(10, 210, 180),
+          "drop easing decelerates monotonically without overshoot");
+    check(settlePosition(-1600, -1900, 120) < -1600 && settlePosition(-1600, -1900, 120) > -1900,
+          "drop easing supports leftward motion on negative-coordinate monitors");
     check(Settings{}.avoidIcons && !Settings::fromJson({{"AvoidTaskbarIcons", false}}).avoidIcons &&
               Settings::fromJson({{"AvoidTaskbarIcons", "invalid"}}).avoidIcons,
           "taskbar avoidance defaults on and accepts only boolean settings");
@@ -557,6 +571,7 @@ int uiTests(const fs::path &dir) {
         fixture.settings.deepSeekEnabled = true;
         fixture.harnessActive = true;
         fixture.harnessProbe = [] { return true; };
+        fixture.dragMotionProbe = [] { return false; }; // Existing geometry checks use instant placement.
         auto monitor = selectedMonitors(fixture.settings).front();
         RECT bar = taskbar(monitor.handle).value_or(
             RECT{monitor.bounds.left, monitor.work.bottom - 48, monitor.bounds.right, monitor.work.bottom});
@@ -759,6 +774,98 @@ int uiTests(const fs::path &dir) {
         check(std::all_of(fixture.overlays.begin(), fixture.overlays.end(),
                           [](auto &o) { return !o->blocked && IsWindowVisible(o->window); }),
               "disabling avoidance permits manual placement even on a full taskbar");
+        for (auto &overlay : fixture.overlays) overlay->settings.avoidIcons = true;
+        fixture.taskbarSpaces = {TaskbarSpace{monitor.handle, host, bar, {}}};
+        codexWidget.x = startX;
+        deepseekWidget.x = startX + codexWidget.layout.width + gap;
+        fixture.checkTaskbars();
+        fixture.dragMotionProbe = [] { return true; };
+        grab = {codexWidget.x + codexWidget.layout.width / 2, codexWidget.y + codexWidget.layout.height / 2};
+        shallowLeft = deepseekWidget.x - codexWidget.layout.width + codexWidget.layout.width / 4;
+        drop = {grab.x + shallowLeft - codexWidget.x, grab.y};
+        codexWidget.beginDrag(grab);
+        codexWidget.dragTo(drop);
+        GetWindowRect(codexWidget.window, &movingBounds);
+        int previewX = movingBounds.left;
+        codexWidget.finishDrag(drop);
+        GetWindowRect(codexWidget.window, &movingBounds);
+        check(codexWidget.slideStart >= 0 && codexWidget.x == startX && movingBounds.left == previewX,
+              "mouse release starts a return animation without teleporting the widget");
+        auto captureDrop = [&](int elapsed) {
+            int caption = 26 * monitor.dpi / 96;
+            Surface scene(codexWidget.layout.width + deepseekWidget.layout.width + 3 * gap,
+                          std::max(codexWidget.layout.height, deepseekWidget.layout.height) + caption);
+            {
+                Graphics g(scene.bitmap.get());
+                g.Clear(Color(255, 244, 246, 249));
+                drawUiText(g, L"松手回位 · 模拟预览 · " + std::to_wstring(elapsed) + L" ms",
+                           RectF(6, 0, float(scene.width - 12), float(caption)), 12 * monitor.dpi / 96.f,
+                           Color(255, 65, 65, 65));
+                for (auto o : {&deepseekWidget, &codexWidget}) {
+                    Surface tile(o->layout.width, o->layout.height);
+                    if (o->kind == WidgetKind::DeepSeek) paintDeepSeek(tile, fixture.deepseek, o->settings, false);
+                    else paintWidget(tile, o->layout, o->state, o->settings, false);
+                    RECT r{}; GetWindowRect(o->window, &r);
+                    g.DrawImage(tile.bitmap.get(), int(r.left) - startX + gap, caption, tile.width, tile.height);
+                }
+            }
+            scene.save(dir / (L"drop-motion-" + std::to_wstring(elapsed) + L".png"));
+        };
+        captureDrop(0);
+        int64_t slideStarted = codexWidget.slideStart;
+        fixture.checkTaskbars();
+        check(codexWidget.slideStart == slideStarted, "idle layout checks do not restart a settling animation");
+        codexWidget.animatePosition(slideStarted + SettleDuration / 4);
+        captureDrop(SettleDuration / 4);
+        codexWidget.animatePosition(slideStarted + SettleDuration / 2);
+        codexWidget.render();
+        captureDrop(SettleDuration / 2);
+        GetWindowRect(codexWidget.window, &movingBounds);
+        check(movingBounds.left > startX && movingBounds.left < previewX,
+              "return animation renders an intermediate position without snapping to its logical target");
+        codexWidget.tick(&grab);
+        check(!IsWindowVisible(codexWidget.details), "settling widgets suppress hover details");
+        codexWidget.animatePosition(slideStarted + 3 * SettleDuration / 4);
+        captureDrop(3 * SettleDuration / 4);
+        codexWidget.animatePosition(slideStarted + SettleDuration);
+        captureDrop(SettleDuration);
+        GetWindowRect(codexWidget.window, &movingBounds);
+        check(codexWidget.slideStart < 0 && movingBounds.left == startX,
+              "return animation stops its timer at the exact destination");
+        grab = {codexWidget.x + codexWidget.layout.width / 2, codexWidget.y + codexWidget.layout.height / 2};
+        drop = {deepseekWidget.x + deepseekWidget.layout.width / 2, deepseekWidget.y + deepseekWidget.layout.height / 2};
+        codexWidget.beginDrag(grab);
+        codexWidget.dragTo(drop);
+        codexWidget.finishDrag(drop);
+        check(codexWidget.slideStart >= 0 && deepseekWidget.slideStart >= 0,
+              "swapped providers animate to their new positions together");
+        pumpUntil([&] { return codexWidget.slideStart < 0 && deepseekWidget.slideStart < 0; });
+        GetWindowRect(codexWidget.window, &movingBounds);
+        GetWindowRect(deepseekWidget.window, &targetBounds);
+        check(codexWidget.slideStart < 0 && deepseekWidget.slideStart < 0 && movingBounds.left == codexWidget.x &&
+                  targetBounds.left == deepseekWidget.x && !IntersectRect(&overlap, &movingBounds, &targetBounds),
+              "real animation timers finish the swap with exact non-overlapping positions");
+        codexWidget.place(codexWidget.x + 80, false, true);
+        codexWidget.animatePosition(codexWidget.slideStart + SettleDuration / 2);
+        GetWindowRect(codexWidget.window, &movingBounds);
+        int interruptedX = movingBounds.left;
+        grab = {interruptedX + codexWidget.layout.width / 2, codexWidget.y + codexWidget.layout.height / 2};
+        codexWidget.beginDrag(grab);
+        check(codexWidget.slideStart < 0 && codexWidget.origin.x == interruptedX && codexWidget.x == interruptedX,
+              "a new drag takes over from the displayed animation frame without a jump");
+        codexWidget.dragTo({grab.x + 10, grab.y});
+        GetWindowRect(codexWidget.window, &movingBounds);
+        check(movingBounds.left == interruptedX + 10, "dragging remains immediate after interrupting a settle");
+        codexWidget.finishDrag({}, true);
+        codexWidget.animatePosition(codexWidget.slideStart + SettleDuration);
+        fixture.dragMotionProbe = [] { return false; };
+        codexWidget.place(codexWidget.x + 20, false, true);
+        GetWindowRect(codexWidget.window, &movingBounds);
+        check(codexWidget.slideStart < 0 && movingBounds.left == codexWidget.x,
+              "disabled system motion applies final placement immediately");
+        positionRequests = 0;
+        fixture.checkTaskbars();
+        check(positionRequests == 0, "completed drop animations leave idle taskbar windows unchanged");
         for (auto &overlay : fixture.overlays)
             RemoveWindowSubclass(overlay->window, countPosition, 1);
         fixture.taskbarSpaces = {TaskbarSpace{monitor.handle, host, bar, {}}};
@@ -772,6 +879,17 @@ int uiTests(const fs::path &dir) {
         fixture.checkTaskbars();
         check(IsWindow(fixture.overlays.front()->window) && !fixture.overlays.front()->host,
               "destroyed taskbar recovers as temporary popup");
+        fixture.dragMotionProbe = [] { return true; };
+        auto &popup = *fixture.overlays.front();
+        int popupFrom = popup.x;
+        popup.place(popup.x + 80, false, true);
+        popup.animatePosition(popup.slideStart + SettleDuration / 2);
+        popup.render();
+        GetWindowRect(popup.window, &movingBounds);
+        check(movingBounds.left > popupFrom && movingBounds.left < popup.x,
+              "popup fallback repaints at the intermediate animation position");
+        popup.animatePosition(popup.slideStart + SettleDuration);
+        fixture.dragMotionProbe = [] { return false; };
         host = makeHost();
         fixture.checkTaskbars();
         check(GetParent(fixture.overlays.front()->window) == host,

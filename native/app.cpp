@@ -80,24 +80,61 @@ void Overlay::measure(bool reset) {
     y = bar ? bar->top + (available - layout.height) / 2 : monitor.work.bottom - layout.height - 4;
     placed = true;
 }
-void Overlay::place(int target, bool hidden) {
+void Overlay::place(int target, bool hidden, bool animate) {
     x = target;
     bool visibilityChanged = blocked != hidden;
     blocked = hidden;
     if (visibilityChanged && blocked) { hideDetails(); ShowWindow(window, SW_HIDE); }
-    POINT local{x, y};
-    if (host)
-        ScreenToClient(host, &local);
     RECT current{};
-    if (!GetWindowRect(window, &current) || current.left != x || current.top != y ||
-        current.right - current.left != layout.width || current.bottom - current.top != layout.height) {
+    bool known = GetWindowRect(window, &current);
+    bool sameShape = known && current.top == y && current.right - current.left == layout.width &&
+                     current.bottom - current.top == layout.height;
+    bool canAnimate = !hidden && !dragging && sameShape && IsWindowVisible(window) && app->dragMotionProbe();
+    if (slideStart >= 0 && slideTarget == x && canAnimate) return;
+    if ((animate || slideStart >= 0) && canAnimate && std::abs(int64_t(current.left) - x) > 1) {
+        slideFrom = visualX = current.left;
+        slideTarget = x;
+        slideStart = GetTickCount64();
+        hover = false;
+        hideDetails();
+        SetTimer(window, 3, 16, nullptr);
+        return;
+    }
+    slideStart = -1;
+    KillTimer(window, 3);
+    visualX = x;
+    POINT local{visualX, y};
+    if (host) ScreenToClient(host, &local);
+    if (!sameShape || current.left != x) {
         SetWindowPos(window, nullptr, local.x, local.y, layout.width, layout.height,
                      SWP_NOACTIVATE | SWP_NOZORDER);
         render();
     }
     if (visibilityChanged && !blocked) ShowWindow(window, SW_SHOWNOACTIVATE);
 }
+void Overlay::animatePosition(int64_t now) {
+    if (slideStart < 0) return;
+    bool done = now - slideStart >= SettleDuration || !app->dragMotionProbe();
+    visualX = done ? slideTarget : settlePosition(slideFrom, slideTarget, now - slideStart);
+    RECT current{};
+    if (GetWindowRect(window, &current) && current.left != visualX) {
+        POINT local{visualX, y};
+        if (host) ScreenToClient(host, &local);
+        SetWindowPos(window, nullptr, local.x, local.y, 0, 0,
+                     SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER);
+    }
+    if (done) { slideStart = -1; KillTimer(window, 3); }
+}
+void Overlay::stopPositionAnimation() {
+    if (slideStart < 0) return;
+    RECT current{};
+    if (GetWindowRect(window, &current)) x = visualX = current.left;
+    slideStart = -1;
+    KillTimer(window, 3);
+}
 void Overlay::beginDrag(POINT pointer) {
+    for (auto &other : app->overlays)
+        if (other->monitor.handle == monitor.handle) other->stopPositionAnimation();
     dragging = true;
     dragStart = pointer;
     origin = {x, y};
@@ -148,7 +185,7 @@ void Overlay::finishDrag(POINT pointer, bool cancel) {
     } else x = origin.x;
     hover = false;
     hideDetails();
-    app->layoutWidgets();
+    app->layoutWidgets(nullptr, true);
     render();
 }
 void Overlay::ensureLayer() {
@@ -189,7 +226,7 @@ void Overlay::render() {
                     animation.progress(false, now));
     // Child placement is already handled in parent coordinates by position().
     // Updating only the pixels avoids a second coordinate conversion by USER32.
-    image.present(window, x, y, !host);
+    image.present(window, visualX, y, !host);
 }
 void Overlay::update(const State &value) {
     bool changed = settings.visibility(state.q) != settings.visibility(value.q);
@@ -278,7 +315,7 @@ void Overlay::showDetails(const fs::path &capture) {
     SetWindowPos(details, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 void Overlay::tick(const POINT *simulatedPointer) {
-    if (blocked) {
+    if (blocked || slideStart >= 0) {
         hover = false;
         hideDetails();
         return;
@@ -338,7 +375,8 @@ LRESULT CALLBACK Overlay::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_ERASEBKGND:
         return 1;
     case WM_TIMER:
-        if (wp == 2) {
+        if (wp == 3) self->animatePosition(GetTickCount64());
+        else if (wp == 2) {
             self->render();
             if (!self->animation.running(GetTickCount64()))
                 KillTimer(w, 2);
@@ -513,7 +551,7 @@ void Application::rebuild() {
             if (p.monitor == overlay->monitor.name && p.kind == overlay->kind) overlay->x = p.x;
     layoutWidgets();
 }
-void Application::layoutWidgets(Overlay *moving) {
+void Application::layoutWidgets(Overlay *moving, bool animate) {
     for (auto &o : overlays) {
         o->measure();
         if (o->dragging) moving = o.get();
@@ -523,7 +561,7 @@ void Application::layoutWidgets(Overlay *moving) {
         for (auto &o : overlays) if (o->monitor.handle == monitor.handle) group.push_back(o.get());
         if (group.empty()) continue;
         if (!group.front()->settings.avoidIcons) {
-            for (auto o : group) o->place(o->x, false);
+            for (auto o : group) o->place(o->x, false, animate);
             continue;
         }
         RECT bar{};
@@ -554,7 +592,7 @@ void Application::layoutWidgets(Overlay *moving) {
             for (auto o : group) { widths.push_back(o->layout.width); desired.push_back(o->x); }
             auto arranged = arrangeTaskbarWidgets(lane, widths, desired, occupied, gap);
             for (size_t i = 0; i < group.size(); ++i)
-                group[i]->place(arranged[i].value_or(group[i]->x), !ready || !arranged[i]);
+                group[i]->place(arranged[i].value_or(group[i]->x), !ready || !arranged[i], animate);
         }
     }
 }

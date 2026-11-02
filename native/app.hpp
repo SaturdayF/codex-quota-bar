@@ -21,6 +21,8 @@ struct Overlay {
     POINT dragStart{}, origin{};
     int64_t hoverStart = 0, lastInside = 0;
     int x = 0, y = 0;
+    int visualX = 0, slideFrom = 0, slideTarget = 0;
+    int64_t slideStart = -1;
     bool placed = false;
     bool blocked = false;
     Overlay(Application *a, const Monitor &m, const Settings &s, const State &initial,
@@ -29,7 +31,9 @@ struct Overlay {
     void update(const State &s);
     void position(bool reset = false);
     void measure(bool reset = false);
-    void place(int target, bool hidden);
+    void place(int target, bool hidden, bool animate = false);
+    void animatePosition(int64_t now);
+    void stopPositionAnimation();
     void beginDrag(POINT pointer);
     void dragTo(POINT pointer);
     void finishDrag(POINT pointer, bool cancel = false);
@@ -71,6 +75,7 @@ struct Application {
     std::function<bool()> desktopProbe = desktopRunning;
     std::function<bool()> harnessProbe = harnessRunning;
     std::function<HWND(HMONITOR)> taskbarProbe = taskbarWindow;
+    std::function<bool()> dragMotionProbe = motionEnabled;
     bool fakeRpc = false; // Only enabled by in-process integration checks.
     std::function<DeepSeekState(std::atomic<bool> &)> deepSeekProbe = [](std::atomic<bool> &stop) {
         return readDeepSeek(deepSeekCredential(), stop);
@@ -86,7 +91,7 @@ struct Application {
     void apply(const State &value);
     void rebuild();
     void checkTaskbars();
-    void layoutWidgets(Overlay *moving = nullptr);
+    void layoutWidgets(Overlay *moving = nullptr, bool animate = false);
     void runTaskbarWorker();
     void refresh();
     void saved(const Settings &value);

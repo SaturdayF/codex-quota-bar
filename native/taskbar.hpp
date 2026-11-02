@@ -1,6 +1,8 @@
 #pragma once
 #include "core.hpp"
 namespace quota {
+constexpr int SettleDuration = 240;
+int settlePosition(int from, int to, int64_t elapsed);
 struct TaskbarSpace {
     HMONITOR monitor = nullptr;
     HWND host = nullptr;

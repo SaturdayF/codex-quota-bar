@@ -2,6 +2,11 @@
 #include <initguid.h>
 #include <uiautomation.h>
 namespace quota {
+int settlePosition(int from, int to, int64_t elapsed) {
+    double t = std::clamp(double(elapsed) / SettleDuration, 0., 1.);
+    double eased = 1 - std::pow(1 - t, 3);
+    return int(std::lround(from + (double(to) - from) * eased));
+}
 std::optional<int> freeTaskbarX(RECT lane, int width, int desired, const std::vector<RECT> &occupied, int gap) {
     if (width <= 0 || lane.bottom <= lane.top || lane.right - lane.left < width) return {};
     std::vector<std::pair<int, int>> blocked;
