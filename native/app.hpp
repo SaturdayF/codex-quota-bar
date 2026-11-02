@@ -28,6 +28,11 @@ struct Overlay {
     ~Overlay();
     void update(const State &s);
     void position(bool reset = false);
+    void measure(bool reset = false);
+    void place(int target, bool hidden);
+    void beginDrag(POINT pointer);
+    void dragTo(POINT pointer);
+    void finishDrag(POINT pointer, bool cancel = false);
     void ensureLayer();
     void render();
     void tick(const POINT *simulatedPointer = nullptr);
@@ -49,6 +54,8 @@ struct Application {
     std::thread deepSeekWorker;
     std::thread taskbarWorker;
     std::vector<TaskbarSpace> taskbarSpaces;
+    struct WidgetPosition { std::wstring monitor; WidgetKind kind; int x; };
+    std::vector<WidgetPosition> widgetPositions;
     std::mutex mutex;
     std::condition_variable wake;
     std::atomic<bool> stopping{false};
@@ -74,6 +81,7 @@ struct Application {
     void apply(const State &value);
     void rebuild();
     void checkTaskbars();
+    void layoutWidgets(Overlay *moving = nullptr);
     void runTaskbarWorker();
     void refresh();
     void saved(const Settings &value);

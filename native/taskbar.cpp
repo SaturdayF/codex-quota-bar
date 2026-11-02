@@ -24,6 +24,42 @@ std::optional<int> freeTaskbarX(RECT lane, int width, int desired, const std::ve
     consider(lane.right);
     return best;
 }
+std::vector<std::optional<int>> arrangeTaskbarWidgets(RECT lane, const std::vector<int> &widths,
+    const std::vector<int> &desired, const std::vector<RECT> &occupied, int gap) {
+    if (widths.size() != desired.size()) throw std::runtime_error("Invalid taskbar layout");
+    std::vector<std::optional<int>> best(widths.size()), current(widths.size());
+    int bestCount = -1;
+    int64_t bestDistance = 0;
+    auto used = occupied;
+    std::function<void(size_t, int, int64_t)> search = [&](size_t index, int count, int64_t distance) {
+        if (index == widths.size()) {
+            if (count > bestCount || (count == bestCount && distance < bestDistance)) {
+                best = current; bestCount = count; bestDistance = distance;
+            }
+            return;
+        }
+        if (count + int(widths.size() - index) < bestCount) return;
+        // Endpoints allow a smaller widget to leave the large gap for a wider
+        // one. The nearest point preserves already-safe positions exactly.
+        std::vector<int> candidates;
+        auto add = [&](int target) {
+            auto x = freeTaskbarX(lane, widths[index], target, used, gap);
+            if (x && std::find(candidates.begin(), candidates.end(), *x) == candidates.end()) candidates.push_back(*x);
+        };
+        add(desired[index]); add(lane.left); add(lane.right);
+        for (auto &r : used) { add(r.right + gap); add(r.left - gap - widths[index]); }
+        for (int x : candidates) {
+            current[index] = x;
+            used.push_back({x, lane.top, x + widths[index], lane.bottom});
+            search(index + 1, count + 1, distance + std::abs(int64_t(x) - desired[index]));
+            used.pop_back();
+        }
+        current[index].reset();
+        search(index + 1, count, distance);
+    };
+    search(0, 0, 0);
+    return best;
+}
 template <class T> struct ComRef {
     T *p = nullptr;
     ~ComRef() { if (p) p->Release(); }

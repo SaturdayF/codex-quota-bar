@@ -46,12 +46,21 @@ Overlay::Overlay(Application *a, const Monitor &m, const Settings &s, const Stat
     SetTimer(window, 1, 50, nullptr);
 }
 Overlay::~Overlay() {
+    dragging = false;
+    if (window && GetCapture() == window) ReleaseCapture();
     if (details)
         DestroyWindow(details);
     if (window)
         DestroyWindow(window);
 }
 void Overlay::position(bool reset) {
+    measure(reset);
+    if (std::any_of(app->overlays.begin(), app->overlays.end(), [&](auto &o) { return o.get() == this; }))
+        app->layoutWidgets(dragging ? this : nullptr);
+    else
+        place(x, settings.avoidIcons && host && !app->testing && !app->preview);
+}
+void Overlay::measure(bool reset) {
     RECT bounds{};
     std::optional<RECT> bar;
     if (host && GetWindowRect(host, &bounds))
@@ -69,42 +78,61 @@ void Overlay::position(bool reset) {
     x = std::clamp(x, int(monitor.bounds.left),
                    std::max(int(monitor.bounds.left), int(monitor.bounds.right) - layout.width));
     y = bar ? bar->top + (available - layout.height) / 2 : monitor.work.bottom - layout.height - 4;
-    bool nextBlocked = false;
-    if (settings.avoidIcons) {
-        RECT lane{x, y, monitor.bounds.right, y + layout.height};
-        lane.left = bar ? std::max(bar->left, monitor.bounds.left) : monitor.bounds.left;
-        lane.right = bar ? std::min(bar->right, monitor.bounds.right) : monitor.bounds.right;
-        int gap = std::max(1, 8 * monitor.dpi / 96);
-        lane.left += gap; lane.right -= gap;
-        std::vector<RECT> occupied;
-        bool ready = !host || app->testing || app->preview;
-        for (auto &space : app->taskbarSpaces)
-            if (space.monitor == monitor.handle && space.host == host && bar && EqualRect(&space.bounds, &*bar)) {
-                occupied = space.occupied;
-                ready = true;
-                break;
-            }
-        for (auto &other : app->overlays)
-            if (other.get() != this && other->monitor.handle == monitor.handle && !other->blocked)
-                occupied.push_back(RECT{other->x, other->y, other->x + other->layout.width, other->y + other->layout.height});
-        auto free = freeTaskbarX(lane, layout.width, x, occupied, gap);
-        nextBlocked = !ready || !free;
-        if (free) x = *free;
-    }
-    if (blocked != nextBlocked) {
-        blocked = nextBlocked;
-        if (blocked) hideDetails();
-        ShowWindow(window, blocked ? SW_HIDE : SW_SHOWNOACTIVATE);
-    }
     placed = true;
+}
+void Overlay::place(int target, bool hidden) {
+    x = target;
+    bool visibilityChanged = blocked != hidden;
+    blocked = hidden;
+    if (visibilityChanged && blocked) { hideDetails(); ShowWindow(window, SW_HIDE); }
     POINT local{x, y};
     if (host)
         ScreenToClient(host, &local);
     RECT current{};
     if (!GetWindowRect(window, &current) || current.left != x || current.top != y ||
-        current.right - current.left != layout.width || current.bottom - current.top != layout.height)
+        current.right - current.left != layout.width || current.bottom - current.top != layout.height) {
         SetWindowPos(window, nullptr, local.x, local.y, layout.width, layout.height,
                      SWP_NOACTIVATE | SWP_NOZORDER);
+        render();
+    }
+    if (visibilityChanged && !blocked) ShowWindow(window, SW_SHOWNOACTIVATE);
+}
+void Overlay::beginDrag(POINT pointer) {
+    dragging = true;
+    dragStart = pointer;
+    origin = {x, y};
+    hideDetails();
+}
+void Overlay::dragTo(POINT pointer) {
+    if (!dragging) return;
+    x = origin.x + pointer.x - dragStart.x;
+    app->layoutWidgets(this);
+}
+void Overlay::finishDrag(POINT pointer, bool cancel) {
+    if (!dragging) return;
+    dragging = false;
+    if (!cancel) {
+        for (auto &other : app->overlays) {
+            if (other.get() == this || other->monitor.handle != monitor.handle || other->blocked) continue;
+            RECT bounds{other->x, other->y, other->x + other->layout.width, other->y + other->layout.height};
+            if (!inside(bounds, pointer)) continue;
+            int gap = std::max(1, 8 * monitor.dpi / 96);
+            if (origin.x < other->x) {
+                x = std::max<int>(other->x, origin.x + other->layout.width + gap);
+                other->x = origin.x;
+            } else {
+                int left = other->x;
+                other->x = std::max<int>(origin.x, left + layout.width + gap);
+                x = left;
+            }
+            other->hideDetails();
+            break;
+        }
+    } else x = origin.x;
+    hover = false;
+    hideDetails();
+    app->layoutWidgets();
+    render();
 }
 void Overlay::ensureLayer() {
     if (blocked) return;
@@ -301,26 +329,22 @@ LRESULT CALLBACK Overlay::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
             self->tick();
         return 0;
     case WM_LBUTTONDOWN:
-        self->dragging = true;
-        GetCursorPos(&self->dragStart);
-        self->origin = {self->x, self->y};
+        { POINT pointer{}; GetCursorPos(&pointer); self->beginDrag(pointer); }
         SetCapture(w);
         return 0;
     case WM_MOUSEMOVE:
         if (self->dragging) {
             POINT p;
             GetCursorPos(&p);
-            self->x = self->origin.x + p.x - self->dragStart.x;
-            self->position();
-            self->render();
+            self->dragTo(p);
         }
         return 0;
     case WM_LBUTTONUP:
-        self->dragging = false;
+        { POINT pointer{}; GetCursorPos(&pointer); self->finishDrag(pointer); }
         ReleaseCapture();
         return 0;
     case WM_CAPTURECHANGED:
-        self->dragging = false;
+        self->finishDrag({}, true);
         return 0;
     case WM_RBUTTONUP:
     case WM_CONTEXTMENU:
@@ -449,12 +473,71 @@ void Application::checkSettingsFile() {
     }
 }
 void Application::rebuild() {
+    for (auto &overlay : overlays) {
+        auto found = std::find_if(widgetPositions.begin(), widgetPositions.end(), [&](auto &p) {
+            return p.monitor == overlay->monitor.name && p.kind == overlay->kind;
+        });
+        WidgetPosition p{overlay->monitor.name, overlay->kind, overlay->dragging ? int(overlay->origin.x) : overlay->x};
+        if (found == widgetPositions.end()) widgetPositions.push_back(p);
+        else *found = p;
+    }
     overlays.clear();
     for (auto &m : selectedMonitors(settings)) {
         if (state.active && settings.visibility(state.q).count())
             overlays.push_back(std::make_unique<Overlay>(this, m, settings, state));
         if (settings.deepSeekEnabled)
             overlays.push_back(std::make_unique<Overlay>(this, m, settings, state, WidgetKind::DeepSeek));
+    }
+    for (auto &overlay : overlays)
+        for (auto &p : widgetPositions)
+            if (p.monitor == overlay->monitor.name && p.kind == overlay->kind) overlay->x = p.x;
+    layoutWidgets();
+}
+void Application::layoutWidgets(Overlay *moving) {
+    for (auto &o : overlays) {
+        o->measure();
+        if (o->dragging) moving = o.get();
+    }
+    for (auto &monitor : selectedMonitors(settings)) {
+        std::vector<Overlay *> group;
+        for (auto &o : overlays) if (o->monitor.handle == monitor.handle) group.push_back(o.get());
+        if (group.empty()) continue;
+        if (!group.front()->settings.avoidIcons) {
+            for (auto o : group) o->place(o->x, false);
+            continue;
+        }
+        RECT bar{};
+        HWND host = group.front()->host;
+        bool hasBar = host && GetWindowRect(host, &bar);
+        RECT lane{monitor.bounds.left, group.front()->y, monitor.bounds.right,
+                  group.front()->y + group.front()->layout.height};
+        if (hasBar) {
+            lane.left = std::max(bar.left, monitor.bounds.left);
+            lane.right = std::min(bar.right, monitor.bounds.right);
+            lane.top = bar.top; lane.bottom = bar.bottom;
+        }
+        int gap = std::max(1, 8 * monitor.dpi / 96);
+        lane.left += gap; lane.right -= gap;
+        std::vector<RECT> occupied;
+        bool ready = !host || testing || preview;
+        for (auto &space : taskbarSpaces)
+            if (space.monitor == monitor.handle && space.host == host && hasBar && EqualRect(&space.bounds, &bar)) {
+                occupied = space.occupied; ready = true; break;
+            }
+        if (moving && moving->monitor.handle == monitor.handle) {
+            // Keep the drop target still while dragging. A drop over it commits
+            // the swap; ordinary drags continue to avoid its existing bounds.
+            for (auto o : group) if (o != moving && !o->blocked)
+                occupied.push_back({o->x, lane.top, o->x + o->layout.width, lane.bottom});
+            auto x = freeTaskbarX(lane, moving->layout.width, moving->x, occupied, gap);
+            moving->place(x.value_or(moving->x), !ready || !x);
+        } else {
+            std::vector<int> widths, desired;
+            for (auto o : group) { widths.push_back(o->layout.width); desired.push_back(o->x); }
+            auto arranged = arrangeTaskbarWidgets(lane, widths, desired, occupied, gap);
+            for (size_t i = 0; i < group.size(); ++i)
+                group[i]->place(arranged[i].value_or(group[i]->x), !ready || !arranged[i]);
+        }
     }
 }
 void Application::checkTaskbars() {
@@ -464,14 +547,8 @@ void Application::checkTaskbars() {
             rebuild();
             return;
         }
-    for (auto &o : overlays) {
-        auto oldX = o->x, oldY = o->y;
-        auto oldWidth = o->layout.width, oldHeight = o->layout.height;
-        o->position();
-        if (oldX != o->x || oldY != o->y || oldWidth != o->layout.width || oldHeight != o->layout.height)
-            o->render();
-        o->ensureLayer();
-    }
+    layoutWidgets();
+    for (auto &o : overlays) o->ensureLayer();
 }
 void Application::runTaskbarWorker() {
     auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);

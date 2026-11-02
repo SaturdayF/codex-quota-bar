@@ -32,6 +32,15 @@ int selfTests(const fs::path &output) {
           "taskbar placement supports negative monitor coordinates");
     check(freeTaskbarX(lane, 100, 16, {{0, 0, 1000, 90}}, 8) == 16,
           "elements outside the taskbar row do not occupy its space");
+    auto arranged = arrangeTaskbarWidgets(lane, {100, 200}, {16, 150},
+                                          {{300, 100, 500, 148}, {650, 100, 1000, 148}}, 8);
+    check(arranged[0] && arranged[1] && *arranged[0] >= 508 && *arranged[1] + 200 <= 292,
+          "joint placement moves a small widget to another gap so both providers fit");
+    arranged = arrangeTaskbarWidgets(lane, {100, 200}, {16, 150}, {}, 8);
+    check(arranged[0] == 16 && arranged[1] == 150,
+          "joint placement does not move widgets already separated safely");
+    arranged = arrangeTaskbarWidgets(lane, {100, 200}, {16, 150}, {{0, 100, 1000, 148}}, 8);
+    check(!arranged[0] && !arranged[1], "joint placement hides only when no valid gap exists");
     auto q = Quotas::parse(
         {{"rateLimits",
           {{"limitId", "codex"}, {"primary", quota(32, 300)}, {"secondary", quota(73, 10080)}}}});
@@ -638,6 +647,61 @@ int uiTests(const fs::path &dir) {
         positionRequests = 0;
         fixture.checkTaskbars();
         check(positionRequests == 0, "automatic avoidance remains still when taskbar occupancy is unchanged");
+        space.occupied.clear();
+        fixture.taskbarSpaces = {space};
+        auto &codexWidget = *fixture.overlays[0];
+        auto &deepseekWidget = *fixture.overlays[1];
+        int gap = std::max(1, 8 * monitor.dpi / 96);
+        int startX = bar.left + 16 * monitor.dpi / 96;
+        codexWidget.x = startX;
+        deepseekWidget.x = startX + codexWidget.layout.width + gap;
+        fixture.checkTaskbars();
+        POINT grab{codexWidget.x + codexWidget.layout.width / 2, codexWidget.y + codexWidget.layout.height / 2};
+        POINT drop{deepseekWidget.x + deepseekWidget.layout.width / 2,
+                   deepseekWidget.y + deepseekWidget.layout.height / 2};
+        codexWidget.beginDrag(grab);
+        codexWidget.dragTo(drop);
+        codexWidget.finishDrag(drop);
+        check(deepseekWidget.x + deepseekWidget.layout.width + gap <= codexWidget.x &&
+                  !deepseekWidget.blocked && !codexWidget.blocked,
+              "dropping Codex onto DeepSeek swaps unequal-width widgets without overlap");
+        int swappedCodex = codexWidget.x, swappedDeepseek = deepseekWidget.x;
+        positionRequests = 0;
+        fixture.checkTaskbars();
+        check(codexWidget.x == swappedCodex && deepseekWidget.x == swappedDeepseek && positionRequests == 0,
+              "swapped layout stays stable across idle maintenance");
+        grab = {deepseekWidget.x + deepseekWidget.layout.width / 2, deepseekWidget.y + deepseekWidget.layout.height / 2};
+        drop = {codexWidget.x + codexWidget.layout.width / 2, codexWidget.y + codexWidget.layout.height / 2};
+        deepseekWidget.beginDrag(grab);
+        deepseekWidget.dragTo(drop);
+        deepseekWidget.finishDrag(drop);
+        check(codexWidget.x + codexWidget.layout.width + gap <= deepseekWidget.x,
+              "dropping DeepSeek onto Codex swaps the providers back");
+        int beforeCancel = codexWidget.x;
+        codexWidget.beginDrag({codexWidget.x, codexWidget.y});
+        codexWidget.dragTo({bar.right - 16, codexWidget.y});
+        codexWidget.finishDrag({}, true);
+        check(codexWidget.x == beforeCancel && !codexWidget.dragging, "lost capture cancels a drag without swapping");
+        // Make the gap under the small widget the only place the wide widget
+        // can fit. A different gap remains large enough for the small widget.
+        int smallWidth = codexWidget.layout.width, largeWidth = deepseekWidget.layout.width;
+        int largeStart = bar.left + 4 * gap;
+        int largeEnd = largeStart + largeWidth;
+        int smallStart = largeEnd + 5 * gap;
+        int smallEnd = smallStart + smallWidth;
+        space.occupied = {{bar.left, bar.top, largeStart - gap, bar.bottom},
+                          {largeEnd + gap, bar.top, smallStart - gap, bar.bottom},
+                          {smallEnd + gap, bar.top, bar.right, bar.bottom}};
+        codexWidget.x = largeStart;
+        deepseekWidget.x = largeStart + smallWidth + gap;
+        fixture.taskbarSpaces = {space};
+        fixture.checkTaskbars();
+        log << "INFO joint gap layout widths " << smallWidth << ',' << largeWidth << " positions "
+            << codexWidget.x << ',' << deepseekWidget.x << " gaps " << largeStart << '-' << largeEnd << ','
+            << smallStart << '-' << smallEnd << " hidden " << codexWidget.blocked << ',' << deepseekWidget.blocked << std::endl;
+        check(!codexWidget.blocked && !deepseekWidget.blocked && codexWidget.x >= smallStart &&
+                  deepseekWidget.x >= largeStart && deepseekWidget.x + largeWidth <= largeEnd,
+              "space pressure relocates both widgets into other free taskbar gaps");
         fixture.settingsWindow = std::make_unique<SettingsWindow>(&fixture, monitor.handle);
         fixture.settingsWindow->selectPage(1);
         fixture.settingsWindow->command(225, BN_CLICKED);
@@ -653,6 +717,12 @@ int uiTests(const fs::path &dir) {
               "disabling avoidance permits manual placement even on a full taskbar");
         for (auto &overlay : fixture.overlays)
             RemoveWindowSubclass(overlay->window, countPosition, 1);
+        fixture.taskbarSpaces = {TaskbarSpace{monitor.handle, host, bar, {}}};
+        int rememberedCodex = fixture.overlays[0]->x, rememberedDeepseek = fixture.overlays[1]->x;
+        fixture.rebuild();
+        check(fixture.overlays[0]->x == rememberedCodex && fixture.overlays[1]->x == rememberedDeepseek &&
+                  !fixture.overlays[0]->blocked && !fixture.overlays[1]->blocked,
+              "component positions survive settings and taskbar widget rebuilds");
         DestroyWindow(host);
         host = nullptr;
         fixture.checkTaskbars();
