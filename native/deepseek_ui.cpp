@@ -120,7 +120,7 @@ void Application::refreshDeepSeek() {
     wake.notify_all();
 }
 void Application::checkHarness(bool force) {
-    bool active = settings.deepSeekEnabled && harnessProbe();
+    bool active = settings.deepSeekAlwaysShow || (settings.deepSeekEnabled && harnessProbe());
     {
         std::lock_guard<std::mutex> lock(mutex);
         if (active == harnessActive && !force) return;
@@ -135,8 +135,7 @@ void Application::checkHarness(bool force) {
     rebuild();
 }
 void Application::applyDeepSeek(const DeepSeekUpdate &update) {
-    if (update.generation != generation || update.session != harnessSession ||
-        !settings.deepSeekEnabled || !harnessActive) return;
+    if (update.generation != generation || update.session != harnessSession || !harnessActive) return;
     deepseek = update.state;
     for (auto &overlay : overlays)
         if (overlay->kind == WidgetKind::DeepSeek) {
@@ -169,7 +168,7 @@ void Application::runDeepSeekWorker() {
             deepSeekRefreshRequested = false;
         }
         auto day = beijingDay(utcNow());
-        if (active && cfg.deepSeekEnabled && previous.day != day) {
+        if (active && previous.day != day) {
             previous.day = day;
             previous.costAt = previous.tokensAt = 0;
             previous.costs.clear(); previous.models.clear();
@@ -177,7 +176,7 @@ void Application::runDeepSeekWorker() {
             emit(previous);
             next = 0;
         }
-        if (active && cfg.deepSeekEnabled && !*cancel && (force || GetTickCount64() >= next)) {
+        if (active && !*cancel && (force || GetTickCount64() >= next)) {
             DeepSeekState current;
             try { current = deepSeekProbe(*cancel); }
             catch (...) {

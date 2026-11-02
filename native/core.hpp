@@ -76,6 +76,7 @@ struct Settings {
     std::wstring codexPath;
     bool letters = true;
     bool deepSeekEnabled = true; // Automatic follow mode; idle until Harness runs.
+    bool deepSeekAlwaysShow = false;
     bool avoidIcons = true;
     int deepSeekInterval = 60;
     std::optional<bool> showHour, showWeek; // Unset follows the account's default.

@@ -74,6 +74,10 @@ int deepSeekTests(std::ostream &log) {
     check(!Settings::fromJson({{"DeepSeekHarnessEnabled", false}}).deepSeekEnabled &&
               !Settings::fromJson({{"DeepSeekHarnessEnabled", false}}).toJson().contains("DeepSeekEnabled"),
           "Harness follow opt-out round trips without legacy always-on configuration");
+    check(!Settings{}.deepSeekAlwaysShow &&
+              !Settings::fromJson({{"DeepSeekShowWhenStopped", "invalid"}}).deepSeekAlwaysShow &&
+              Settings::fromJson(Settings::fromJson({{"DeepSeekShowWhenStopped", true}}).toJson()).deepSeekAlwaysShow,
+          "show balance without Harness defaults off and persists a boolean override");
     check(harnessBinary(L"DeepSeek Harness.exe") && harnessBinary(L"DeepSeekHarness.exe") &&
               harnessBinary(L"DEEPSEEK-HARNESS.EXE") && !harnessBinary(L"node.exe") &&
               !harnessBinary(L"DeepSeekMonitor.exe") && !harnessBinary(L"DeepSeek Harness Setup.exe"),
@@ -227,6 +231,10 @@ int deepSeekUiTests(const fs::path &dir) {
     check(GetDlgItem(settings.content, 261) == nullptr, "DeepSeek has no API-key input control");
     check(GetWindowLongPtrW(settings.deepSeekToken, GWL_STYLE) & ES_PASSWORD, "platform session input is masked");
     settings.capture(dir / L"deepseek-settings.png");
+    settings.command(268, BN_CLICKED);
+    check(settings.draft.deepSeekAlwaysShow && !app.settings.deepSeekAlwaysShow,
+          "show-without-Harness setting is staged until Save");
+    settings.command(268, BN_CLICKED);
     settings.command(260, BN_CLICKED);
     check(!settings.draft.deepSeekEnabled, "DeepSeek setting toggles off");
     settings.command(260, BN_CLICKED);
@@ -280,7 +288,23 @@ int deepSeekUiTests(const fs::path &dir) {
     harness = true;
     app.checkHarness();
     check(pump([&] { return app.deepseek.costAt > 0; }), "Harness restart creates a fresh query session");
-    auto disabled = app.settings; disabled.deepSeekEnabled = false;
+    harness = false;
+    app.checkHarness();
+    auto always = app.settings;
+    always.deepSeekEnabled = false;
+    always.deepSeekAlwaysShow = true;
+    app.saved(always);
+    check(pump([&] { return app.deepseek.costAt > 0; }) && app.overlays.size() == selected.size(),
+          "standalone balance mode displays and queries while Harness and auto-follow are off");
+    int standaloneSession = app.harnessSession;
+    harness = true; app.checkHarness();
+    harness = false; app.checkHarness();
+    check(app.harnessActive && app.harnessSession == standaloneSession && app.deepseek.costAt > 0,
+          "Harness exit leaves standalone balance mode visible without resetting its query session");
+    int previousRequests = requests.load();
+    app.refreshDeepSeek();
+    check(pump([&] { return requests > previousRequests; }), "standalone balance supports manual refresh without Harness");
+    auto disabled = app.settings; disabled.deepSeekEnabled = false; disabled.deepSeekAlwaysShow = false;
     app.saved(disabled);
     check(app.overlays.empty(), "disabling DeepSeek removes independent widget");
     app.applyDeepSeek({app.generation - 1, DeepSeekState{}});

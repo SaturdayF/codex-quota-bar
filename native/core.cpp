@@ -116,6 +116,7 @@ Settings Settings::fromJson(const json &j) {
     s.codexPath = wide(string("CodexPath", ""));
     s.letters = boolean(j, "ShowDialLetters", true);
     s.deepSeekEnabled = boolean(j, "DeepSeekHarnessEnabled", true);
+    s.deepSeekAlwaysShow = boolean(j, "DeepSeekShowWhenStopped", false);
     s.avoidIcons = boolean(j, "AvoidTaskbarIcons", true);
     if (j.contains("DeepSeekRefreshSeconds") && j["DeepSeekRefreshSeconds"].is_number_integer()) {
         auto interval = j["DeepSeekRefreshSeconds"].get<int64_t>();
@@ -162,6 +163,7 @@ json Settings::toJson() const {
     j["ShowDialLetters"] = letters;
     j.erase("DeepSeekEnabled");
     j["DeepSeekHarnessEnabled"] = deepSeekEnabled;
+    j["DeepSeekShowWhenStopped"] = deepSeekAlwaysShow;
     j["AvoidTaskbarIcons"] = avoidIcons;
     j["DeepSeekRefreshSeconds"] = deepSeekInterval;
     j["ShowHourQuota"] = showHour ? json(*showHour) : json(nullptr);

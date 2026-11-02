@@ -37,7 +37,8 @@ enum {
     DeepSeekRefresh,
     DeepSeekClear,
     DeepSeekPlatform,
-    DeepSeekHelp
+    DeepSeekHelp,
+    DeepSeekAlwaysShow
 };
 static std::wstring controlText(HWND w) {
     int n = GetWindowTextLengthW(w);
@@ -58,7 +59,7 @@ static void registerSettingsClass(const wchar_t *name, WNDPROC proc) {
 }
 static bool isToggle(int id) {
     return id == Letters || id == Remaining || id == Percent || id == Animate || id == Startup ||
-           id == ShowHour || id == ShowWeek || id == DeepSeekEnabled || id == AvoidIcons;
+           id == ShowHour || id == ShowWeek || id == DeepSeekEnabled || id == DeepSeekAlwaysShow || id == AvoidIcons;
 }
 SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
     : app(a), draft(a->settings), startup(startupEnabled()) {
@@ -161,6 +162,7 @@ void SettingsWindow::createControls() {
     button(L"恢复套餐默认", ResetQuotas, 1);
     button(L"图标自动避让", AvoidIcons, 1);
     button(L"自动跟随 DeepSeekHarness", DeepSeekEnabled, 3);
+    button(L"未启动时也显示余额", DeepSeekAlwaysShow, 3);
     deepSeekToken = control(L"EDIT", L"", DeepSeekToken, 3, ES_PASSWORD | ES_AUTOHSCROLL);
     SendMessageW(deepSeekToken, EM_SETLIMITTEXT, 2560, 0);
     bool hasToken = !app->testing && !deepSeekCredential().empty();
@@ -218,7 +220,7 @@ void SettingsWindow::layout() {
     GetClientRect(content, &c);
     contentWidth = int(c.right * 96. / dpi);
     contentHeight = int(c.bottom * 96. / dpi);
-    int needed = page == 0 ? 704 : page == 1 ? 620 : page == 3 ? 542 : 540;
+    int needed = page == 0 ? 704 : page == 1 ? 620 : page == 3 ? 608 : 540;
     scroll = std::clamp(scroll, 0, std::max(0, needed - contentHeight));
     SCROLLINFO si{sizeof(si), SIF_RANGE | SIF_PAGE | SIF_POS,   0,
                   needed - 1, UINT(std::max(1, contentHeight)), scroll,
@@ -257,12 +259,13 @@ void SettingsWindow::layout() {
     place(Exit, contentWidth - 146, 339, 132, 34);
     place(Uninstall, contentWidth - 124, 405, 110, 34);
     place(DeepSeekEnabled, contentWidth - 60, 89, 44, 26);
-    place(DeepSeekToken, 0, 205, contentWidth - 14, 30);
-    place(DeepSeekInterval, contentWidth - 164, 263, 150, 220);
-    place(DeepSeekRefresh, contentWidth - 124, 329, 110, 34);
-    place(DeepSeekClear, contentWidth - 124, 395, 110, 34);
-    place(DeepSeekPlatform, contentWidth - 194, 143, 180, 28);
-    place(DeepSeekHelp, contentWidth - 164, 175, 150, 26);
+    place(DeepSeekAlwaysShow, contentWidth - 60, 155, 44, 26);
+    place(DeepSeekToken, 0, 271, contentWidth - 14, 30);
+    place(DeepSeekInterval, contentWidth - 164, 329, 150, 220);
+    place(DeepSeekRefresh, contentWidth - 124, 395, 110, 34);
+    place(DeepSeekClear, contentWidth - 124, 461, 110, 34);
+    place(DeepSeekPlatform, contentWidth - 194, 209, 180, 28);
+    place(DeepSeekHelp, contentWidth - 164, 241, 150, 26);
     SendMessageW(content, WM_SETREDRAW, TRUE, 0);
     RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
@@ -338,7 +341,7 @@ void SettingsWindow::draw(HDC dc, bool inner) {
             const wchar_t *subtitles[] = {L"调整任务栏组件的显示方式。",
                                           L"管理显示屏幕，以及应用的启动与退出。",
                                           L"配置额度读取来源，或手动刷新额度。",
-                                          L"默认待机，随 Harness 启动显示、退出关闭。"};
+                                          L"可随 Harness 启停，也可独立显示余额。"};
             drawUiText(g, headings[page], RectF(0, 0, float(contentWidth), 40), 25, ink, true);
             drawUiText(g, subtitles[page], RectF(0, 43, float(contentWidth), 26), 14, muted);
             auto row = [&](float y, const wchar_t *title, const wchar_t *description, float reserve = 240) {
@@ -400,14 +403,15 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 drawUiText(g, L"通过本机 Codex 读取，不保存登录信息。", RectF(0, 483, float(contentWidth), 32),
                          14, muted);
             } else {
-                row(82, L"自动跟随 DeepSeekHarness", L"Harness 未运行时不显示、不查询余额与账单。", 110);
-                drawUiText(g, L"平台登录凭证 userToken", RectF(0, 148, contentWidth - 210.f, 26), 16, ink);
-                drawUiText(g, L"同一平台账户的余额、费用和 Token 明细。", RectF(0, 174, contentWidth - 175.f, 26), 14, muted);
-                row(256, L"自动刷新间隔", L"失败时保留旧数据并退避重试。", 190);
-                row(322, L"读取最新数据", L"先保存凭证；Harness 运行时才读取。", 150);
-                row(388, L"本机登录态", clearDeepSeekCredentials ? L"保存后将清除原凭证，可填写新凭证替换。" : L"留空保留原凭证，清除在保存后生效。", 150);
-                drawUiText(g, L"北京时间 UTC+8 · 平台账单可能延迟更新。", RectF(0, 464, float(contentWidth), 26), 13, muted);
-                drawUiText(g, L"平台登录态保存在本机 Windows 凭据管理器。", RectF(0, 497, float(contentWidth), 26), 12, muted);
+                row(82, L"自动跟随 DeepSeekHarness", L"Harness 运行时自动显示并刷新。", 110);
+                row(148, L"未启动时也显示余额", L"默认关闭；开启后独立显示并刷新余额和账单。", 110);
+                drawUiText(g, L"平台登录凭证 userToken", RectF(0, 214, contentWidth - 210.f, 26), 16, ink);
+                drawUiText(g, L"同一平台账户的余额、费用和 Token 明细。", RectF(0, 240, contentWidth - 175.f, 26), 14, muted);
+                row(322, L"自动刷新间隔", L"失败时保留旧数据并退避重试。", 190);
+                row(388, L"读取最新数据", L"先保存凭证；组件显示期间可刷新。", 150);
+                row(454, L"本机登录态", clearDeepSeekCredentials ? L"保存后将清除原凭证，可填写新凭证替换。" : L"留空保留原凭证，清除在保存后生效。", 150);
+                drawUiText(g, L"北京时间 UTC+8 · 平台账单可能延迟更新。", RectF(0, 530, float(contentWidth), 26), 13, muted);
+                drawUiText(g, L"平台登录态保存在本机 Windows 凭据管理器。", RectF(0, 563, float(contentWidth), 26), 12, muted);
             }
         }
     }
@@ -438,6 +442,7 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
                            : id == ShowHour  ? visible.hour
                            : id == ShowWeek  ? visible.week
                            : id == DeepSeekEnabled ? draft.deepSeekEnabled
+                           : id == DeepSeekAlwaysShow ? draft.deepSeekAlwaysShow
                            : id == AvoidIcons ? draft.avoidIcons
                                              : startup;
             Color track = enabled ? (light ? Color(255, 35, 35, 35) : Color(255, 225, 225, 225))
@@ -504,6 +509,9 @@ void SettingsWindow::command(int id, int notice) {
     switch (id) {
     case DeepSeekEnabled:
         draft.deepSeekEnabled = !draft.deepSeekEnabled;
+        break;
+    case DeepSeekAlwaysShow:
+        draft.deepSeekAlwaysShow = !draft.deepSeekAlwaysShow;
         break;
     case DeepSeekRefresh:
         app->refreshDeepSeek();

@@ -505,7 +505,7 @@ void Application::rebuild() {
     for (auto &m : selectedMonitors(settings)) {
         if (state.active && settings.visibility(state.q).count())
             overlays.push_back(std::make_unique<Overlay>(this, m, settings, state));
-        if (settings.deepSeekEnabled && harnessActive)
+        if (harnessActive)
             overlays.push_back(std::make_unique<Overlay>(this, m, settings, state, WidgetKind::DeepSeek));
     }
     for (auto &overlay : overlays)

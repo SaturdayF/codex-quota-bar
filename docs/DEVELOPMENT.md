@@ -10,7 +10,9 @@
 
 ## DeepSeekHarness 实现
 
-组件平时待机，500 ms 维护检查 Harness 桌面进程。官方桌面产品名参考 [Harness 打包配置](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/desktop/scripts/electron-builder-config.mjs)，识别 `DeepSeek Harness.exe`、`DeepSeekHarness.exe`、`deepseek-harness.exe`，不将普通 Node、安装器、余额监控工具视为 Harness；不检测浏览器和 CLI 会话。`DeepSeekHarnessEnabled` 表示是否自动跟随，默认 true；旧的常驻 `DeepSeekEnabled` 不再决定运行状态，序列化时删除旧键。未运行时不显示组件，也不启动平台查询。每次应用启停或设置更改更新会话代次并替换共享取消标记，退出时立即隐藏，后续请求检查取消，响应必须同时匹配配置代次和应用会话代次才可应用；重新启动不会沿用旧数据。
+`DeepSeekShowWhenStopped` 为独立显示选项，默认 false。实际显示及 worker 查询条件统一为 `DeepSeekShowWhenStopped || (DeepSeekHarnessEnabled && harnessRunning)`；前者开启时应用启停不会重置查询会话。任意显示条件满足即可自动或手动刷新，两项均关闭时取消当前请求并清空显示。
+
+默认联动模式下组件平时待机，500 ms 维护检查 Harness 桌面进程。官方桌面产品名参考 [Harness 打包配置](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/desktop/scripts/electron-builder-config.mjs)，识别 `DeepSeek Harness.exe`、`DeepSeekHarness.exe`、`deepseek-harness.exe`，不将普通 Node、安装器、余额监控工具视为 Harness；不检测浏览器和 CLI 会话。`DeepSeekHarnessEnabled` 表示是否自动跟随，默认 true；旧的常驻 `DeepSeekEnabled` 不再决定运行状态，序列化时删除旧键。默认模式下，未运行时不显示组件，也不启动平台查询。显示条件或设置更改时更新会话代次并替换共享取消标记，停止显示时隐藏并取消后续请求，响应必须同时匹配配置代次和应用会话代次才可应用；重新显示不会沿用旧会话数据。
 
 `deepseek.cpp` 负责 Windows 凭据管理器、固定 HTTPS 端点的 WinHTTP 只读请求、账单解析与 UTC+8 日期；`deepseek_ui.cpp` 负责独立 worker、任务栏文字与悬浮明细。启用状态和刷新间隔保存在 JSON；userToken 只存入本机 Windows 凭据管理器，不写入配置、命令行或日志。余额与账单均由平台登录态读取。程序不提供 API Key 输入、读取或保存接口，不访问 `api.deepseek.com/user/balance`，也不读取 API Key 环境变量。会话导入支持原始令牌、Bearer 文本及浏览器本地存储的 `{"value":"…"}` 结构。识别为 `sk-` 前缀的 API Key 在网络请求和持久化之前拒绝。
 

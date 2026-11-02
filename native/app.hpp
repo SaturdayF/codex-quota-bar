@@ -61,7 +61,7 @@ struct Application {
     std::atomic<bool> stopping{false};
     bool refreshRequested = false;
     bool deepSeekRefreshRequested = false;
-    bool harnessActive = false;
+    bool harnessActive = false; // Component active: running Harness or standalone balance mode.
     int harnessSession = 0;
     std::shared_ptr<std::atomic<bool>> deepSeekSessionStop = std::make_shared<std::atomic<bool>>(true);
     int generation = 0;
