@@ -16,7 +16,7 @@ void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &,
         fillRound(g, RectF(.5f, .5f, image.width - 1.f, image.height - 1.f), 4 * d,
                   light ? Color(150, 230, 230, 230) : Color(150, 75, 75, 75));
     fillRound(g, RectF(5 * d, 5 * d, 24 * d, 22 * d), 5 * d, Color(255, 75, 106, 235));
-    drawUiText(g, L"DS", RectF(5 * d, 5 * d, 24 * d, 22 * d), 11 * d, Color(255, 255, 255, 255), true, true);
+    drawUiText(g, L"DSH", RectF(5 * d, 5 * d, 24 * d, 22 * d), 11 * d, Color(255, 255, 255, 255), true, true);
     auto currency = state.currency();
     std::optional<int64_t> balance;
     for (auto &wallet : state.balances) if (wallet.currency == currency) balance = wallet.total;
@@ -57,7 +57,7 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
         auto line = [&](const std::wstring &text, float y, float size, Color color, bool bold = false) {
             drawUiText(g, text, RectF(20 * d, y * d, width - 40 * d, 28 * d), size * d, color, bold);
         };
-        line(L"DeepSeek · 当日消耗", 14, 20, ink, true);
+        line(L"DeepSeekHarness · 当日消耗", 14, 20, ink, true);
         line(beijingDate(utcNow()) + L" · 北京时间 00:00 起 · 账户汇总", 49, 13, muted);
         float yy = 88;
         for (int i = 0; i < balanceRows; ++i) {
@@ -106,7 +106,7 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
                  (data.costAt && today ? timeLabel(data.costAt, false) : L"尚无"), footer, 12, muted);
         std::wstring error = !data.balanceError.empty() ? data.balanceError : !data.costError.empty() ? data.costError : data.tokensError;
         if (!today && data.costAt) error = L"日期已切换，正在读取今日账单";
-        line(error.empty() ? L"平台账单可能延迟更新 · 右键打开 DeepSeek 设置" : error,
+        line(error.empty() ? L"平台账单可能延迟更新 · 右键打开 DeepSeekHarness 设置" : error,
              footer + 30, 12, error.empty() ? muted : Color(255, 170, 110, 55));
         line(L"平台账户账单 · 不按模型单价估算费用", footer + 56, 12, muted);
     }
@@ -119,8 +119,24 @@ void Application::refreshDeepSeek() {
     { std::lock_guard<std::mutex> guard(mutex); deepSeekRefreshRequested = true; }
     wake.notify_all();
 }
+void Application::checkHarness(bool force) {
+    bool active = settings.deepSeekEnabled && harnessProbe();
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (active == harnessActive && !force) return;
+        *deepSeekSessionStop = true;
+        deepSeekSessionStop = std::make_shared<std::atomic<bool>>(!active);
+        harnessActive = active;
+        ++harnessSession;
+        deepSeekRefreshRequested = active;
+    }
+    deepseek = DeepSeekState{};
+    wake.notify_all();
+    rebuild();
+}
 void Application::applyDeepSeek(const DeepSeekUpdate &update) {
-    if (update.generation != generation || !settings.deepSeekEnabled) return;
+    if (update.generation != generation || update.session != harnessSession ||
+        !settings.deepSeekEnabled || !harnessActive) return;
     deepseek = update.state;
     for (auto &overlay : overlays)
         if (overlay->kind == WidgetKind::DeepSeek) {
@@ -129,26 +145,31 @@ void Application::applyDeepSeek(const DeepSeekUpdate &update) {
         }
 }
 void Application::runDeepSeekWorker() {
-    int seen = -1, failures = 0;
+    int seen = -1, session = -1, failures = 0;
     Settings cfg;
     DeepSeekState previous;
     ULONGLONG next = 0;
     auto emit = [&](const DeepSeekState &value) {
-        auto update = new DeepSeekUpdate{seen, value};
+        auto update = new DeepSeekUpdate{seen, value, session};
         if (!PostMessageW(controller, DeepSeekMessage, 0, reinterpret_cast<LPARAM>(update))) delete update;
     };
     while (!stopping) {
         bool force = false;
+        bool active = false;
+        std::shared_ptr<std::atomic<bool>> cancel;
         {
             std::lock_guard<std::mutex> lock(mutex);
-            if (seen != generation) {
-                cfg = settings; seen = generation; next = 0; failures = 0; previous = DeepSeekState{};
+            if (seen != generation || session != harnessSession) {
+                cfg = settings; seen = generation; session = harnessSession;
+                next = 0; failures = 0; previous = DeepSeekState{};
             }
+            active = harnessActive;
+            cancel = deepSeekSessionStop;
             force = deepSeekRefreshRequested;
             deepSeekRefreshRequested = false;
         }
         auto day = beijingDay(utcNow());
-        if (cfg.deepSeekEnabled && previous.day != day) {
+        if (active && cfg.deepSeekEnabled && previous.day != day) {
             previous.day = day;
             previous.costAt = previous.tokensAt = 0;
             previous.costs.clear(); previous.models.clear();
@@ -156,14 +177,15 @@ void Application::runDeepSeekWorker() {
             emit(previous);
             next = 0;
         }
-        if (cfg.deepSeekEnabled && (force || GetTickCount64() >= next)) {
+        if (active && cfg.deepSeekEnabled && !*cancel && (force || GetTickCount64() >= next)) {
             DeepSeekState current;
-            try { current = deepSeekProbe(stopping); }
+            try { current = deepSeekProbe(*cancel); }
             catch (...) {
                 current.day = day;
                 current.balanceError = current.costError = L"DeepSeek 读取失败，请检查网络与凭证";
             }
             if (stopping) break;
+            if (*cancel) continue;
             if (current.day == previous.day) {
                 if (!current.balanceAt) { current.balances = previous.balances; current.balanceAt = previous.balanceAt; }
                 if (!current.costAt && previous.costAt) {
@@ -186,7 +208,7 @@ void Application::runDeepSeekWorker() {
         }
         std::unique_lock<std::mutex> lock(mutex);
         wake.wait_for(lock, std::chrono::milliseconds(250), [&] {
-            return stopping || deepSeekRefreshRequested || seen != generation;
+            return stopping || deepSeekRefreshRequested || seen != generation || session != harnessSession;
         });
     }
 }

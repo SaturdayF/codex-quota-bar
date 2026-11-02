@@ -2,14 +2,14 @@
 
 # Codex Quota Bar
 
-Windows 任务栏额度与余额显示工具。支持 Codex 5 小时额度、周额度，以及 DeepSeek 余额和当日消费；鼠标悬浮查看详情，右键打开设置。
+Windows 任务栏额度与余额显示工具。支持 Codex 5 小时额度、周额度，以及 DeepSeekHarness 组件的账户余额和当日消费；鼠标悬浮查看详情，右键打开设置。
 
 支持 Windows 10/11 x64，无需额外安装 .NET 或 C++ 运行库。这是独立工具，与 OpenAI、DeepSeek 无隶属关系。
 
 | 版本 | 状态 | 内容 |
 | --- | --- | --- |
 | [0.2.2](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.2.2) | 已发布 | Codex 额度显示、外观设置、动画、多屏支持 |
-| 0.3.0 | 开发中，尚未发布 | 增加 DeepSeek 余额、当日消费和模型明细 |
+| 0.3.0 | 开发中，尚未发布 | 增加随 Harness 启停的 DeepSeekHarness 余额与消费组件 |
 
 [下载发布包](https://github.com/SaturdayF/codex-quota-bar/releases) · [版本记录](CHANGELOG.md) · [开发说明](docs/DEVELOPMENT.md)
 
@@ -48,7 +48,7 @@ Windows 任务栏额度与余额显示工具。支持 Codex 5 小时额度、周
 
 0.3.0 开发版新增“图标自动避让”，默认开启。组件避开可识别的任务栏按钮和通知区域，联合查找整条任务栏的空位；必要时移动另一组件，让两个组件分别放入合适的空位。总空间不足时暂时隐藏放不下的组件，空位恢复后显示。关闭后可手动摆放。
 
-按住鼠标左键拖动组件，拖到另一组件上松手可交换位置，不同宽度会自动保持间距。拖到其他空位则移动到该位置附近。布局在本次运行中的设置变更和任务栏重建后保留，重新启动恢复默认位置。
+按住鼠标左键拖动组件，可跨过任务栏图标移动到另一端，拖动预览可覆盖其他组件。松手时重叠面积达到较小组件面积的 50% 则交换位置，低于 50% 则回原位；没有重叠时在落点附近寻找空位。最终位置避开任务栏图标并保持组件间距。布局在本次运行中的设置变更和任务栏重建后保留，重新启动恢复默认位置。
 
 ![额度显示设置（Pro 默认示例）](docs/native-general-preview.png)
 
@@ -56,19 +56,21 @@ Windows 任务栏额度与余额显示工具。支持 Codex 5 小时额度、周
 
 <img src="docs/native-details-preview.png" width="372" alt="双额度详情（模拟数据）" /> <img src="docs/native-details-pro-preview.png" width="372" alt="Pro 系列周额度详情（模拟数据）" />
 
-## DeepSeek（0.3.0 开发版）
+## DeepSeekHarness（0.3.0 开发版）
 
 任务栏显示账户余额和当日消费。悬浮详情按模型展示费用、请求数、缓存命中输入、缓存未命中输入及输出 Token；模型较多时可滚轮翻阅。
 
-DeepSeek 组件独立于 Codex 的运行状态。默认每分钟刷新，可选 2 分钟或 5 分钟，支持手动刷新。
+组件默认待机：检测到 DeepSeek Harness 桌面应用运行后显示并开始查询，应用退出后隐藏、取消本轮查询并清空显示数据。是否运行 Codex 不影响该组件。设置中的“自动跟随 DeepSeekHarness”可关闭自动联动。检测依据桌面进程，最小化或留在托盘时仍视为运行；不识别仅在浏览器或命令行运行的 Harness。
+
+运行期间默认每分钟刷新，可选 2 分钟或 5 分钟，支持手动刷新；Harness 未运行时手动刷新也不发起查询。
 
 ### 凭证与配置
 
 DeepSeek 功能使用平台登录态 `userToken`，读取账户余额、当日消费和 Token 明细。程序不读取或保存 DeepSeek API Key，也不收集账号密码。`userToken` 属于登录凭证，保存在本机 Windows 凭据管理器。
 
-1. 打开“设置 → DeepSeek”，点击“打开 DeepSeek 平台”并在浏览器中登录。
+1. 打开“设置 → DeepSeekHarness”，点击“打开 DeepSeek 平台”并在浏览器中登录。
 2. 按 F12，在 **Application / 应用 → Local Storage / 本地存储 → `https://platform.deepseek.com`** 中找到 `userToken`。
-3. 将令牌或含 `value` 的 JSON 值填入“平台登录凭证”，启用“显示 DeepSeek 余额”，点击“保存更改”。设置中的“凭证填写说明”提供相同步骤。
+3. 将令牌或含 `value` 的 JSON 值填入“平台登录凭证”，保留“自动跟随 DeepSeekHarness”开启，点击“保存更改”。设置中的“凭证填写说明”提供相同步骤。
 
 凭证输入框留空表示保留已有值；“清除凭证”在保存后生效。余额与消费均来自登录态对应的平台账户。
 
@@ -80,9 +82,9 @@ DeepSeek 功能使用平台登录态 `userToken`，读取账户余额、当日�
 - 余额、费用和 Token 明细来自 [DeepSeek 平台](https://platform.deepseek.com/usage)的私有接口，接口变化、登录态失效或访问失败时显示错误状态。
 - 当前开发验证使用模拟数据，真实账户联调尚未完成。
 
-![DeepSeek 任务栏显示（模拟数据）](docs/deepseek-widget-preview.png)
+![DeepSeekHarness 任务栏显示（模拟数据）](docs/deepseek-widget-preview.png)
 
-<img src="docs/deepseek-settings-preview.png" width="720" alt="DeepSeek 设置，无真实凭证" /> <img src="docs/deepseek-details-preview.png" width="375" alt="DeepSeek 当日消费详情（模拟数据）" />
+<img src="docs/deepseek-settings-preview.png" width="720" alt="DeepSeekHarness 设置，无真实凭证" /> <img src="docs/deepseek-details-preview.png" width="375" alt="DeepSeekHarness 当日消费详情（模拟数据）" />
 
 ## 安装与使用
 

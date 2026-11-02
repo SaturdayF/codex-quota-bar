@@ -61,11 +61,15 @@ struct Application {
     std::atomic<bool> stopping{false};
     bool refreshRequested = false;
     bool deepSeekRefreshRequested = false;
+    bool harnessActive = false;
+    int harnessSession = 0;
+    std::shared_ptr<std::atomic<bool>> deepSeekSessionStop = std::make_shared<std::atomic<bool>>(true);
     int generation = 0;
     HANDLE quitEvent = nullptr;
     bool preview = false;
     bool testing = false;
     std::function<bool()> desktopProbe = desktopRunning;
+    std::function<bool()> harnessProbe = harnessRunning;
     std::function<HWND(HMONITOR)> taskbarProbe = taskbarWindow;
     bool fakeRpc = false; // Only enabled by in-process integration checks.
     std::function<DeepSeekState(std::atomic<bool> &)> deepSeekProbe = [](std::atomic<bool> &stop) {
@@ -76,6 +80,7 @@ struct Application {
     ~Application();
     void runWorker();
     void runDeepSeekWorker();
+    void checkHarness(bool force = false);
     void refreshDeepSeek();
     void applyDeepSeek(const DeepSeekUpdate &update);
     void apply(const State &value);

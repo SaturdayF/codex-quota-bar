@@ -115,7 +115,7 @@ void SettingsWindow::createControls() {
     button(L"外观", NavAppearance, -1);
     button(L"常规", NavGeneral, -1);
     button(L"高级", NavAdvanced, -1);
-    button(L"DeepSeek", NavDeepSeek, -1);
+    button(L"DeepSeekHarness", NavDeepSeek, -1);
     button(L"保存更改", Save, -1);
     button(L"取消", Cancel, -1);
     auto control = [&](const wchar_t *cls, const wchar_t *text, int id, int p, DWORD style) {
@@ -160,7 +160,7 @@ void SettingsWindow::createControls() {
     button(L"显示周额度", ShowWeek, 1);
     button(L"恢复套餐默认", ResetQuotas, 1);
     button(L"图标自动避让", AvoidIcons, 1);
-    button(L"显示 DeepSeek 余额", DeepSeekEnabled, 3);
+    button(L"自动跟随 DeepSeekHarness", DeepSeekEnabled, 3);
     deepSeekToken = control(L"EDIT", L"", DeepSeekToken, 3, ES_PASSWORD | ES_AUTOHSCROLL);
     SendMessageW(deepSeekToken, EM_SETLIMITTEXT, 2560, 0);
     bool hasToken = !app->testing && !deepSeekCredential().empty();
@@ -334,11 +334,11 @@ void SettingsWindow::draw(HDC dc, bool inner) {
             g.DrawLine(&line, 218.f, rect.bottom / d - 78, rect.right / d - 28, rect.bottom / d - 78);
         } else {
             g.TranslateTransform(0, float(-scroll));
-            const wchar_t *headings[] = {L"外观", L"常规", L"高级", L"DeepSeek"};
+            const wchar_t *headings[] = {L"外观", L"常规", L"高级", L"DeepSeekHarness"};
             const wchar_t *subtitles[] = {L"调整任务栏组件的显示方式。",
                                           L"管理显示屏幕，以及应用的启动与退出。",
                                           L"配置额度读取来源，或手动刷新额度。",
-                                          L"余额与当日平台账单，不发送聊天请求。"};
+                                          L"默认待机，随 Harness 启动显示、退出关闭。"};
             drawUiText(g, headings[page], RectF(0, 0, float(contentWidth), 40), 25, ink, true);
             drawUiText(g, subtitles[page], RectF(0, 43, float(contentWidth), 26), 14, muted);
             auto row = [&](float y, const wchar_t *title, const wchar_t *description, float reserve = 240) {
@@ -383,7 +383,7 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 row(280, L"显示周额度", L"默认显示；可与 5 小时额度独立选择。", 110);
                 row(346, L"按套餐自动选择", L"恢复 Plus 两项、Pro 系列仅周额度。", 170);
                 row(412, L"图标自动避让", L"避开任务栏按钮与其他组件；空间不足时暂时隐藏。", 110);
-                row(478, L"跟随应用运行", L"两款桌面应用均退出后停止读取和显示。", 80);
+                row(478, L"跟随应用运行", L"各组件随对应应用启动显示、退出关闭。", 80);
                 drawUiText(g, L"自动", RectF(contentWidth - 80.f, 478, 65, 30), 13, muted, false, true);
                 drawUiText(g, L"两项关闭时隐藏组件，可从开始菜单打开设置。",
                          RectF(0, 557, float(contentWidth), 32), 14, muted);
@@ -400,11 +400,11 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 drawUiText(g, L"通过本机 Codex 读取，不保存登录信息。", RectF(0, 483, float(contentWidth), 32),
                          14, muted);
             } else {
-                row(82, L"显示 DeepSeek 余额", L"启用后独立显示，不依赖 Codex 是否运行。", 110);
+                row(82, L"自动跟随 DeepSeekHarness", L"Harness 未运行时不显示、不查询余额与账单。", 110);
                 drawUiText(g, L"平台登录凭证 userToken", RectF(0, 148, contentWidth - 210.f, 26), 16, ink);
                 drawUiText(g, L"同一平台账户的余额、费用和 Token 明细。", RectF(0, 174, contentWidth - 175.f, 26), 14, muted);
                 row(256, L"自动刷新间隔", L"失败时保留旧数据并退避重试。", 190);
-                row(322, L"读取最新数据", L"先保存凭证；仅读取已保存账户。", 150);
+                row(322, L"读取最新数据", L"先保存凭证；Harness 运行时才读取。", 150);
                 row(388, L"本机登录态", clearDeepSeekCredentials ? L"保存后将清除原凭证，可填写新凭证替换。" : L"留空保留原凭证，清除在保存后生效。", 150);
                 drawUiText(g, L"北京时间 UTC+8 · 平台账单可能延迟更新。", RectF(0, 464, float(contentWidth), 26), 13, muted);
                 drawUiText(g, L"平台登录态保存在本机 Windows 凭据管理器。", RectF(0, 497, float(contentWidth), 26), 12, muted);

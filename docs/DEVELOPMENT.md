@@ -6,9 +6,11 @@
 
 `AvoidTaskbarIcons` 默认 true，可在常规页关闭。`taskbar.cpp` 在单独的 COM MTA worker 中每约 1.5 秒读取所选任务栏的可见按钮边界，UIA 批量缓存属性并设置连接 / 事务超时；经典任务栏的开始按钮和通知区域 HWND 作为补充。仅读取控件类型、进程、可见性、可聚焦性和矩形，不读取窗口文本。带配置代次、宿主句柄和坐标范围的快照由消息传回 UI 线程，避免套用旧任务栏布局。布局使用这些占用区域安排各组件，位置安全时保持不动，识别范围取决于系统任务栏的可访问性信息。
 
-`arrangeTaskbarWidgets` 联合搜索各组件的区间端点与最近可用点，优先最大化可显示组件数量，再最小化移动距离。测量与窗口提交分开，已安全的布局不重复定位。拖动中保持其他组件位置不动，松手落在另一组件上时交换期望位置并按实际宽度重新安排；捕获丢失时恢复原位置。按屏幕及组件类型保存会话内的位置，重建窗口时复用；不写入设置文件，进程重启后恢复默认位置。
+`arrangeTaskbarWidgets` 联合搜索各组件的区间端点与最近可用点，优先最大化可显示组件数量，再最小化移动距离。测量与窗口提交分开，已安全的布局不重复定位。拖动时仅约束任务栏边界，允许跨越系统图标、覆盖其他组件；开始拖动时只提升一次层级。松手以窗口矩形交集面积判断，达到较小组件面积的 50% 则交换，较少重叠则回位，无重叠则普通落位，最后统一恢复系统图标避让。捕获丢失时恢复原位置。按屏幕及组件类型保存会话内的位置，重建窗口时复用；不写入设置文件，进程重启后恢复默认位置。
 
-## DeepSeek 实现
+## DeepSeekHarness 实现
+
+组件平时待机，500 ms 维护检查 Harness 桌面进程。官方桌面产品名参考 [Harness 打包配置](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/desktop/scripts/electron-builder-config.mjs)，识别 `DeepSeek Harness.exe`、`DeepSeekHarness.exe`、`deepseek-harness.exe`，不将普通 Node、安装器、余额监控工具视为 Harness；不检测浏览器和 CLI 会话。`DeepSeekHarnessEnabled` 表示是否自动跟随，默认 true；旧的常驻 `DeepSeekEnabled` 不再决定运行状态，序列化时删除旧键。未运行时不显示组件，也不启动平台查询。每次应用启停或设置更改更新会话代次并替换共享取消标记，退出时立即隐藏，后续请求检查取消，响应必须同时匹配配置代次和应用会话代次才可应用；重新启动不会沿用旧数据。
 
 `deepseek.cpp` 负责 Windows 凭据管理器、固定 HTTPS 端点的 WinHTTP 只读请求、账单解析与 UTC+8 日期；`deepseek_ui.cpp` 负责独立 worker、任务栏文字与悬浮明细。启用状态和刷新间隔保存在 JSON；userToken 只存入本机 Windows 凭据管理器，不写入配置、命令行或日志。余额与账单均由平台登录态读取。程序不提供 API Key 输入、读取或保存接口，不访问 `api.deepseek.com/user/balance`，也不读取 API Key 环境变量。会话导入支持原始令牌、Bearer 文本及浏览器本地存储的 `{"value":"…"}` 结构。识别为 `sk-` 前缀的 API Key 在网络请求和持久化之前拒绝。
 

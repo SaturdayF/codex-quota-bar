@@ -555,6 +555,8 @@ int uiTests(const fs::path &dir) {
         fixture.settings = Settings{};
         fixture.settings.displayMode = "primary";
         fixture.settings.deepSeekEnabled = true;
+        fixture.harnessActive = true;
+        fixture.harnessProbe = [] { return true; };
         auto monitor = selectedMonitors(fixture.settings).front();
         RECT bar = taskbar(monitor.handle).value_or(
             RECT{monitor.bounds.left, monitor.work.bottom - 48, monitor.bounds.right, monitor.work.bottom});
@@ -682,6 +684,48 @@ int uiTests(const fs::path &dir) {
         codexWidget.dragTo({bar.right - 16, codexWidget.y});
         codexWidget.finishDrag({}, true);
         check(codexWidget.x == beforeCancel && !codexWidget.dragging, "lost capture cancels a drag without swapping");
+        codexWidget.x = startX;
+        deepseekWidget.x = startX + codexWidget.layout.width + gap;
+        fixture.checkTaskbars();
+        int targetBefore = deepseekWidget.x;
+        int sourceBefore = codexWidget.x;
+        grab = {codexWidget.x + codexWidget.layout.width / 2, codexWidget.y + codexWidget.layout.height / 2};
+        int shallowLeft = deepseekWidget.x - codexWidget.layout.width + codexWidget.layout.width / 4;
+        drop = {grab.x + shallowLeft - codexWidget.x, grab.y};
+        codexWidget.beginDrag(grab);
+        codexWidget.dragTo(drop);
+        RECT movingBounds{}, targetBounds{};
+        GetWindowRect(codexWidget.window, &movingBounds);
+        GetWindowRect(deepseekWidget.window, &targetBounds);
+        check(IntersectRect(&overlap, &movingBounds, &targetBounds) && GetWindow(host, GW_CHILD) == codexWidget.window,
+              "drag preview can overlap another widget and appears above it");
+        codexWidget.finishDrag(drop);
+        check(codexWidget.x == sourceBefore && deepseekWidget.x == targetBefore,
+              "overlap below half of the smaller widget returns to the original position");
+        int halfLeft = deepseekWidget.x - codexWidget.layout.width + (codexWidget.layout.width + 1) / 2;
+        drop = {grab.x + halfLeft - codexWidget.x, grab.y};
+        codexWidget.beginDrag(grab);
+        codexWidget.dragTo(drop);
+        codexWidget.finishDrag(drop);
+        check(deepseekWidget.x + deepseekWidget.layout.width + gap <= codexWidget.x,
+              "overlap reaching half of the smaller widget commits the swap");
+        RECT nativeIcons{bar.left + (bar.right - bar.left) / 3, bar.top,
+                         bar.left + 2 * (bar.right - bar.left) / 3, bar.bottom};
+        space.occupied = {nativeIcons};
+        fixture.taskbarSpaces = {space};
+        fixture.checkTaskbars();
+        grab = {codexWidget.x + codexWidget.layout.width / 2, codexWidget.y + codexWidget.layout.height / 2};
+        codexWidget.beginDrag(grab);
+        codexWidget.dragTo({(nativeIcons.left + nativeIcons.right) / 2, grab.y});
+        GetWindowRect(codexWidget.window, &movingBounds);
+        check(!codexWidget.blocked && IntersectRect(&overlap, &movingBounds, &nativeIcons),
+              "captured drag crosses native taskbar icons without being stopped or snapped away");
+        drop = {bar.right - gap - codexWidget.layout.width / 2, grab.y};
+        codexWidget.dragTo(drop);
+        codexWidget.finishDrag(drop);
+        check(!codexWidget.blocked && codexWidget.x >= nativeIcons.right + gap &&
+                  codexWidget.x + codexWidget.layout.width <= bar.right - gap,
+              "drag can cross native icons and commit a free position at the other end");
         // Make the gap under the small widget the only place the wide widget
         // can fit. A different gap remains large enough for the small widget.
         int smallWidth = codexWidget.layout.width, largeWidth = deepseekWidget.layout.width;

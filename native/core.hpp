@@ -75,7 +75,7 @@ struct Settings {
     std::vector<std::string> displays;
     std::wstring codexPath;
     bool letters = true;
-    bool deepSeekEnabled = false;
+    bool deepSeekEnabled = true; // Automatic follow mode; idle until Harness runs.
     bool avoidIcons = true;
     int deepSeekInterval = 60;
     std::optional<bool> showHour, showWeek; // Unset follows the account's default.
@@ -142,6 +142,8 @@ HWND taskbarWindow(HMONITOR monitor);
 std::optional<RECT> taskbar(HMONITOR monitor);
 bool desktopBinary(std::wstring name, std::wstring path);
 bool desktopRunning();
+bool harnessBinary(std::wstring name);
+bool harnessRunning();
 fs::path findCodex(const std::wstring &configured);
 class Rpc {
     HANDLE process = nullptr, job = nullptr, input = nullptr, output = nullptr;

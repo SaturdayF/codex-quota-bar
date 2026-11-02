@@ -60,7 +60,7 @@ int deepSeekTests(std::ostream &log) {
           "detail amounts retain exact precision without redundant trailing zeros");
     check(validDeepSeekCredential("fixture-only") && !validDeepSeekCredential("Bearer fixture") &&
               !validDeepSeekCredential("key\r\nInjected: value"), "DeepSeek credentials reject header injection");
-    auto config = Settings::fromJson({{"DeepSeekEnabled", true}, {"DeepSeekRefreshSeconds", 120}});
+    auto config = Settings::fromJson({{"DeepSeekHarnessEnabled", true}, {"DeepSeekRefreshSeconds", 120}});
     check(normalizeDeepSeekCredential("  fixture-session\r\n") == "fixture-session" &&
               normalizeDeepSeekCredential(R"({"value":"fixture-session"})") == "fixture-session",
           "platform session import accepts raw token and browser storage JSON");
@@ -69,8 +69,15 @@ int deepSeekTests(std::ostream &log) {
           "formatted API key cannot bypass session-only credential validation");
     auto roundTrip = Settings::fromJson(config.toJson());
     check(roundTrip.deepSeekEnabled && roundTrip.deepSeekInterval == 120, "DeepSeek opt-in settings round trip");
-    check(!Settings{}.deepSeekEnabled && Settings::fromJson({{"DeepSeekRefreshSeconds", 3}}).deepSeekInterval == 60,
-          "DeepSeek disabled by default and refresh interval normalized");
+    check(Settings{}.deepSeekEnabled && Settings::fromJson({{"DeepSeekRefreshSeconds", 3}}).deepSeekInterval == 60,
+          "Harness automatic follow defaults on while refresh interval is normalized");
+    check(!Settings::fromJson({{"DeepSeekHarnessEnabled", false}}).deepSeekEnabled &&
+              !Settings::fromJson({{"DeepSeekHarnessEnabled", false}}).toJson().contains("DeepSeekEnabled"),
+          "Harness follow opt-out round trips without legacy always-on configuration");
+    check(harnessBinary(L"DeepSeek Harness.exe") && harnessBinary(L"DeepSeekHarness.exe") &&
+              harnessBinary(L"DEEPSEEK-HARNESS.EXE") && !harnessBinary(L"node.exe") &&
+              !harnessBinary(L"DeepSeekMonitor.exe") && !harnessBinary(L"DeepSeek Harness Setup.exe"),
+          "Harness process detection accepts desktop executable names only");
     check(config.toJson().dump().find("fixture-only") == std::string::npos, "DeepSeek credentials are not serialized in settings");
     int64_t now = 1704067200, day = beijingDay(now);
     DeepSeekState data;
@@ -167,8 +174,13 @@ int deepSeekUiTests(const fs::path &dir) {
         return ready();
     };
     Application app(false, true);
+    check(!app.harnessActive && app.overlays.empty(), "DeepSeekHarness starts idle without a running application");
     app.settings = Settings{};
     app.settings.deepSeekEnabled = true;
+    std::atomic<bool> harness{true};
+    app.harnessProbe = [&] { return harness.load(); };
+    app.harnessActive = true;
+    app.deepSeekSessionStop = std::make_shared<std::atomic<bool>>(false);
     app.state.active = true;
     app.state.error.clear(); app.state.updated = utcNow();
     app.state.q.plan = "prolite"; app.state.q.week = WindowQuota{27, utcNow() + 3600};
@@ -227,13 +239,47 @@ int deepSeekUiTests(const fs::path &dir) {
     auto before = app.deepseek.balanceAt;
     app.applyDeepSeek({app.generation - 1, DeepSeekState{}});
     check(app.deepseek.balanceAt == before, "superseded credential-generation response is ignored");
+    std::atomic<int> requests{0};
+    std::atomic<bool> blockRefresh{false}, entered{false}, cancelled{false};
+    auto lateResult = app.deepseek;
     app.deepSeekProbe = [&](std::atomic<bool> &cancel) {
+        ++requests;
+        if (blockRefresh) {
+            entered = true;
+            auto deadline = GetTickCount64() + 3000;
+            while (!cancel && !app.stopping && GetTickCount64() < deadline) Sleep(1);
+            cancelled = cancel.load();
+            return lateResult;
+        }
         return readDeepSeek("fixture-only", cancel, fixtureTransport(beijingDay(utcNow())));
     };
-    app.deepseek = DeepSeekState{};
+    harness = false;
+    app.checkHarness();
+    check(app.overlays.empty() && !app.deepseek.balanceAt && !app.harnessActive,
+          "Harness exit hides its widget and clears account data");
     app.deepSeekWorker = std::thread(&Application::runDeepSeekWorker, &app);
     app.refreshDeepSeek();
+    auto idleUntil = GetTickCount64() + 350;
+    pump([&] { return GetTickCount64() >= idleUntil; });
+    check(requests == 0 && app.overlays.empty(), "idle Harness and manual refresh never query platform credentials");
+    harness = true;
+    app.checkHarness();
     check(pump([&] { return app.deepseek.costAt > 0 && app.deepseek.costError.empty(); }), "DeepSeek independent worker publishes successful result");
+    check(app.harnessActive && app.overlays.size() == selected.size(), "Harness launch automatically creates its widget");
+    auto live = app.deepseek;
+    app.applyDeepSeek({app.generation, DeepSeekState{}, app.harnessSession - 1});
+    check(app.deepseek.costAt == live.costAt, "previous Harness session cannot replace current account data");
+    blockRefresh = true;
+    app.refreshDeepSeek();
+    check(pump([&] { return entered.load(); }), "Harness fixture starts an in-flight refresh");
+    harness = false;
+    app.checkHarness();
+    check(pump([&] { return cancelled.load(); }) && app.overlays.empty() && !app.deepseek.balanceAt,
+          "Harness exit cancels an in-flight request and prevents late resurrection");
+    blockRefresh = false;
+    harness = true;
+    app.checkHarness();
+    check(pump([&] { return app.deepseek.costAt > 0; }), "Harness restart creates a fresh query session");
     auto disabled = app.settings; disabled.deepSeekEnabled = false;
     app.saved(disabled);
     check(app.overlays.empty(), "disabling DeepSeek removes independent widget");

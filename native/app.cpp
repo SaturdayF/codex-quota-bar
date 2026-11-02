@@ -24,19 +24,19 @@ Overlay::Overlay(Application *a, const Monitor &m, const Settings &s, const Stat
     host = app->taskbarProbe(m.handle);
     window = CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW |
                                  (host ? 0 : WS_EX_TOPMOST),
-                             L"CodexQuotaBar.Native.Widget", L"Codex Quota Bar", host ? WS_CHILD : WS_POPUP,
+                             L"CodexQuotaBar.Native.Widget", kind == WidgetKind::DeepSeek ? L"DeepSeekHarness" : L"Codex Quota Bar", host ? WS_CHILD : WS_POPUP,
                              0, 0, 1, 1, host ? host : app->controller, nullptr,
                              GetModuleHandleW(nullptr), this);
     if (!window && host) {
         host = nullptr;
         window = CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-                                 L"CodexQuotaBar.Native.Widget", L"Codex Quota Bar", WS_POPUP,
+                                 L"CodexQuotaBar.Native.Widget", kind == WidgetKind::DeepSeek ? L"DeepSeekHarness" : L"Codex Quota Bar", WS_POPUP,
                                  0, 0, 1, 1, app->controller, nullptr, GetModuleHandleW(nullptr), this);
     }
     if (!window)
         throw std::runtime_error("Cannot create quota widget");
     details = CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-                              L"CodexQuotaBar.Native.Details", L"额度详情", WS_POPUP, 0, 0, 1, 1, app->controller,
+                              L"CodexQuotaBar.Native.Details", kind == WidgetKind::DeepSeek ? L"DeepSeekHarness 详情" : L"额度详情", WS_POPUP, 0, 0, 1, 1, app->controller,
                               nullptr, GetModuleHandleW(nullptr), this);
     update(initial);
     position(true);
@@ -102,6 +102,8 @@ void Overlay::beginDrag(POINT pointer) {
     dragStart = pointer;
     origin = {x, y};
     hideDetails();
+    SetWindowPos(window, host ? HWND_TOP : HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 void Overlay::dragTo(POINT pointer) {
     if (!dragging) return;
@@ -109,24 +111,39 @@ void Overlay::dragTo(POINT pointer) {
     app->layoutWidgets(this);
 }
 void Overlay::finishDrag(POINT pointer, bool cancel) {
+    (void)pointer; // Drop decisions use widget geometry, not the pointer hotspot.
     if (!dragging) return;
     dragging = false;
     if (!cancel) {
+        RECT dragged{x, y, x + layout.width, y + layout.height};
+        Overlay *target = nullptr;
+        int64_t largestOverlap = 0;
         for (auto &other : app->overlays) {
             if (other.get() == this || other->monitor.handle != monitor.handle || other->blocked) continue;
             RECT bounds{other->x, other->y, other->x + other->layout.width, other->y + other->layout.height};
-            if (!inside(bounds, pointer)) continue;
-            int gap = std::max(1, 8 * monitor.dpi / 96);
-            if (origin.x < other->x) {
-                x = std::max<int>(other->x, origin.x + other->layout.width + gap);
-                other->x = origin.x;
-            } else {
-                int left = other->x;
-                other->x = std::max<int>(origin.x, left + layout.width + gap);
-                x = left;
+            RECT overlap{};
+            if (IntersectRect(&overlap, &dragged, &bounds)) {
+                int64_t area = int64_t(overlap.right - overlap.left) * (overlap.bottom - overlap.top);
+                if (area > largestOverlap) { largestOverlap = area; target = other.get(); }
             }
-            other->hideDetails();
-            break;
+        }
+        if (target) {
+            auto other = target;
+            int64_t smaller = std::min(int64_t(layout.width) * layout.height,
+                                       int64_t(other->layout.width) * other->layout.height);
+            if (largestOverlap * 2 < smaller) x = origin.x;
+            else {
+                int gap = std::max(1, 8 * monitor.dpi / 96);
+                if (origin.x < other->x) {
+                    x = std::max<int>(other->x, origin.x + other->layout.width + gap);
+                    other->x = origin.x;
+                } else {
+                    int left = other->x;
+                    other->x = std::max<int>(origin.x, left + layout.width + gap);
+                    x = left;
+                }
+                other->hideDetails();
+            }
         }
     } else x = origin.x;
     hover = false;
@@ -408,6 +425,7 @@ Application::Application(bool previewMode, bool test) : preview(previewMode), te
 }
 Application::~Application() {
     stopping = true;
+    *deepSeekSessionStop = true;
     wake.notify_all();
     if (worker.joinable())
         worker.join();
@@ -432,6 +450,7 @@ Application::~Application() {
 }
 void Application::stop() {
     stopping = true;
+    *deepSeekSessionStop = true;
     wake.notify_all();
     PostQuitMessage(0);
 }
@@ -447,6 +466,7 @@ void Application::saved(const Settings &value) {
     {
         std::lock_guard<std::mutex> guard(mutex);
         settings = value;
+        *deepSeekSessionStop = true;
         generation++;
         refreshRequested = true;
         deepSeekRefreshRequested = true;
@@ -460,7 +480,7 @@ void Application::saved(const Settings &value) {
         auto stamp = fs::last_write_time(dataDirectory() / L"settings.json", ec);
         if (!ec) settingsWrite = stamp;
     }
-    rebuild();
+    checkHarness(true);
 }
 void Application::checkSettingsFile() {
     if (testing)
@@ -485,7 +505,7 @@ void Application::rebuild() {
     for (auto &m : selectedMonitors(settings)) {
         if (state.active && settings.visibility(state.q).count())
             overlays.push_back(std::make_unique<Overlay>(this, m, settings, state));
-        if (settings.deepSeekEnabled)
+        if (settings.deepSeekEnabled && harnessActive)
             overlays.push_back(std::make_unique<Overlay>(this, m, settings, state, WidgetKind::DeepSeek));
     }
     for (auto &overlay : overlays)
@@ -525,11 +545,9 @@ void Application::layoutWidgets(Overlay *moving) {
                 occupied = space.occupied; ready = true; break;
             }
         if (moving && moving->monitor.handle == monitor.handle) {
-            // Keep the drop target still while dragging. A drop over it commits
-            // the swap; ordinary drags continue to avoid its existing bounds.
-            for (auto o : group) if (o != moving && !o->blocked)
-                occupied.push_back({o->x, lane.top, o->x + o->layout.width, lane.bottom});
-            auto x = freeTaskbarX(lane, moving->layout.width, moving->x, occupied, gap);
+            // A captured drag can cross shell icons and our other providers.
+            // Only the committed drop layout must avoid occupied shell regions.
+            auto x = freeTaskbarX(lane, moving->layout.width, moving->x, {}, 0);
             moving->place(x.value_or(moving->x), !ready || !x);
         } else {
             std::vector<int> widths, desired;
@@ -722,6 +740,7 @@ LRESULT CALLBACK Application::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) 
             return 0;
         }
         self->checkSettingsFile();
+        self->checkHarness();
         self->checkTaskbars();
         return 0;
     case WM_DISPLAYCHANGE:

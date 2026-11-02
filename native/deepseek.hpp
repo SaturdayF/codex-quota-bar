@@ -25,6 +25,7 @@ struct DeepSeekState {
 struct DeepSeekUpdate {
     int generation;
     DeepSeekState state;
+    int session = 0;
 };
 int64_t beijingDay(int64_t now);
 std::wstring beijingDate(int64_t now);

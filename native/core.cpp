@@ -115,7 +115,7 @@ Settings Settings::fromJson(const json &j) {
                 s.displays.push_back(d.get<std::string>());
     s.codexPath = wide(string("CodexPath", ""));
     s.letters = boolean(j, "ShowDialLetters", true);
-    s.deepSeekEnabled = boolean(j, "DeepSeekEnabled", false);
+    s.deepSeekEnabled = boolean(j, "DeepSeekHarnessEnabled", true);
     s.avoidIcons = boolean(j, "AvoidTaskbarIcons", true);
     if (j.contains("DeepSeekRefreshSeconds") && j["DeepSeekRefreshSeconds"].is_number_integer()) {
         auto interval = j["DeepSeekRefreshSeconds"].get<int64_t>();
@@ -160,7 +160,8 @@ json Settings::toJson() const {
     j["Displays"] = displays;
     j["CodexPath"] = codexPath.empty() ? json(nullptr) : json(utf8(codexPath));
     j["ShowDialLetters"] = letters;
-    j["DeepSeekEnabled"] = deepSeekEnabled;
+    j.erase("DeepSeekEnabled");
+    j["DeepSeekHarnessEnabled"] = deepSeekEnabled;
     j["AvoidTaskbarIcons"] = avoidIcons;
     j["DeepSeekRefreshSeconds"] = deepSeekInterval;
     j["ShowHourQuota"] = showHour ? json(*showHour) : json(nullptr);
@@ -467,6 +468,21 @@ bool desktopRunning() {
                     break;
             }
         } while (Process32NextW(snap, &entry));
+    CloseHandle(snap);
+    return found;
+}
+bool harnessBinary(std::wstring name) {
+    name = lower(name);
+    return name == L"deepseek harness.exe" || name == L"deepseekharness.exe" || name == L"deepseek-harness.exe";
+}
+bool harnessRunning() {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W entry{}; entry.dwSize = sizeof(entry);
+    bool found = false;
+    if (Process32FirstW(snap, &entry))
+        do { if (harnessBinary(entry.szExeFile)) { found = true; break; } }
+        while (Process32NextW(snap, &entry));
     CloseHandle(snap);
     return found;
 }
