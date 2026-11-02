@@ -1,11 +1,14 @@
 """Package the native Windows app; no .NET/VC redistributable is shipped or required."""
 import hashlib
+import json
 from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = "0.2.2"
+VERSION = "0.3.0"
 payload = ROOT / "artifacts/native-win-x64"
+if json.loads((payload / "version.json").read_text(encoding="utf-8-sig")).get("version") != VERSION:
+    raise RuntimeError("Native runtime version does not match package version")
 release = ROOT / "artifacts/releases" / f"v{VERSION}"
 release.mkdir(parents=True, exist_ok=True)
 archive = release / f"CodexQuotaBar-v{VERSION}-Portable-win-x64.zip"

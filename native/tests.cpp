@@ -242,6 +242,7 @@ int selfTests(const fs::path &output) {
     fs::remove(marker);
     fs::remove(fixture / L"unins000.exe");
     fs::remove(fixture);
+    checks += deepSeekTests(log);
     log << checks << " native checks passed.\n";
     return 0;
 }
@@ -585,6 +586,7 @@ int uiTests(const fs::path &dir) {
     app.stopping = true;
     app.wake.notify_all();
     app.worker.join();
+    count += deepSeekUiTests(dir / L"deepseek");
     log << count << " native UI checks passed.\n";
     return 0;
 }

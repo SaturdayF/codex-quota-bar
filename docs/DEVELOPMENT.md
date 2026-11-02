@@ -1,5 +1,17 @@
 # 原生版开发与验证
 
+0.3.0 正在开发；`v0.2.2` 固定在 `92f6a0bae931ddd16ab89876d27c81aa72113496`，不移动标签或覆盖既有下载。
+
+## DeepSeek 实现
+
+`deepseek.cpp` 负责 Windows 凭据管理器、固定 HTTPS 端点的 WinHTTP 只读请求、账单解析与 UTC+8 日期；`deepseek_ui.cpp` 负责独立 worker、任务栏文字与悬浮明细。启用状态和刷新间隔保存在 JSON，API Key / userToken 从不写入配置、命令行或日志。平台凭证优先于 API Key：平台余额与账单必须由同一凭证读取，避免混合账户。仅有 API Key 时只读 `/user/balance`，费用显示不可用。
+
+平台请求为 `/api/v0/users/get_user_summary` 及 `/api/v0/usage/by_api_key/{cost,amount}?start=<北京时间零点 Unix 秒>&end=<翌日零点>&tz=28800`。按 `series[].model` 聚合全部 API Key 的当天 bucket；费用按货币分别累计，Token 的 `REQUEST` 不计入 Token 总量。金额以 10^-8 货币单位的定点数累计，异常数值或结构失败不能退化成零。参考公开实现的协议结构：[平台接口记录](https://github.com/MCwasd/deepseek-platform-widget/blob/main/deepseek-api-reference.md)、[CodexBar 数据源说明](https://github.com/steipete/CodexBar/blob/main/docs/deepseek.md)；这是平台私有接口，不是官方稳定 API 合约。公开余额合约见 [DeepSeek 文档](https://api-docs.deepseek.com/zh-cn/api/get-user-balance/)。本机未使用真实账户凭证，实账户联调需用户在设置内完成。
+
+网络请求禁用跨站重定向，保持 TLS 默认验证，设置连接与读取超时，错误不包含原始响应或凭证。worker 在配置代次变化后丢弃过期响应，跨日先清除费用再取当天账单；暂时失败时仅保留同代次、同日的旧结果和时间戳。关闭开关后不查询，独立显示不受 Codex 进程退出影响。
+
+`deepseek_tests.cpp` 使用脱敏的合成协议响应，覆盖币种、精度、跨日、聚合、无权限/格式错误、取消请求、独立显示、设置入口和晚到响应。测试不访问真实凭证、不发推理请求。新增的 WinHTTP 与凭据 API 均属于 Windows 系统组件。
+
 0.2.0 使用 C++17、Win32 和 Windows 自带 GDI+，无需 .NET。C++ 标准库和线程运行库静态链接。历史 C# 源码已从当前工作树清理；完整旧构建流程可从 `v0.1.0-installer.1` 标签查阅。
 
 ## 构建
@@ -64,7 +76,7 @@ enterprise, edu, edu_plus, edu_pro, sci, sci_plus, unknown
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/NativeInstaller.Tests.ps1
 ```
 
-生成 `artifacts/releases/v0.2.2` 中的 Setup EXE、Portable ZIP 和 SHA256SUMS.txt。测试真实安装到带中文和空格的独立目录，再执行原生卸载，检查保留无关文件；`/ISOLATEDTEST=1` 禁止修改用户启动项、快捷方式、卸载注册项、设置和既有监听器。绝不对用户真实安装运行卸载测试。
+生成 `artifacts/releases/v0.3.0` 中的开发版 Setup EXE、Portable ZIP 和 SHA256SUMS.txt。测试真实安装到带中文和空格的独立目录，再执行原生卸载，检查保留无关文件；`/ISOLATEDTEST=1` 禁止修改用户启动项、快捷方式、卸载注册项、设置和既有监听器。绝不对用户真实安装运行卸载测试。
 
 0.2.0 默认使用自己的版本目录，不把旧 .NET 目录混入新负载。旧安装目录保留，设置继续使用 `%LOCALAPPDATA%/CodexQuotaBar/settings.json`。安装版设置中的卸载按钮只认同目录、相同产品与版本的 Inno 卸载器，启动前再次确认。卸载旧安装前退出程序；旧卸载器可能清理共用的启动项，可在新版本中重新启用。
 

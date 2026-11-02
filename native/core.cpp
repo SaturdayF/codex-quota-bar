@@ -115,6 +115,11 @@ Settings Settings::fromJson(const json &j) {
                 s.displays.push_back(d.get<std::string>());
     s.codexPath = wide(string("CodexPath", ""));
     s.letters = boolean(j, "ShowDialLetters", true);
+    s.deepSeekEnabled = boolean(j, "DeepSeekEnabled", false);
+    if (j.contains("DeepSeekRefreshSeconds") && j["DeepSeekRefreshSeconds"].is_number_integer()) {
+        auto interval = j["DeepSeekRefreshSeconds"].get<int64_t>();
+        if (interval == 60 || interval == 120 || interval == 300) s.deepSeekInterval = int(interval);
+    }
     if (j.contains("ShowHourQuota") && j["ShowHourQuota"].is_boolean())
         s.showHour = j["ShowHourQuota"].get<bool>();
     if (j.contains("ShowWeekQuota") && j["ShowWeekQuota"].is_boolean())
@@ -154,6 +159,8 @@ json Settings::toJson() const {
     j["Displays"] = displays;
     j["CodexPath"] = codexPath.empty() ? json(nullptr) : json(utf8(codexPath));
     j["ShowDialLetters"] = letters;
+    j["DeepSeekEnabled"] = deepSeekEnabled;
+    j["DeepSeekRefreshSeconds"] = deepSeekInterval;
     j["ShowHourQuota"] = showHour ? json(*showHour) : json(nullptr);
     j["ShowWeekQuota"] = showWeek ? json(*showWeek) : json(nullptr);
     j["WidgetScale"] = scale;

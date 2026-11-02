@@ -1,6 +1,10 @@
 #pragma once
 #include "drawing.hpp"
+#include "deepseek.hpp"
 namespace quota {
+enum class WidgetKind { Codex, DeepSeek };
+Layout deepSeekLayout(const Settings &settings, int dpi, int available);
+void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &settings, bool hover);
 struct Application;
 struct Overlay {
     Application *app;
@@ -10,18 +14,22 @@ struct Overlay {
     Animation animation;
     State state;
     Settings settings;
+    WidgetKind kind = WidgetKind::Codex;
+    int detailPage = 0;
     bool hover = false, dragging = false;
     POINT dragStart{}, origin{};
     int64_t hoverStart = 0, lastInside = 0;
     int x = 0, y = 0;
     bool placed = false;
-    Overlay(Application *a, const Monitor &m, const Settings &s, const State &initial);
+    Overlay(Application *a, const Monitor &m, const Settings &s, const State &initial,
+            WidgetKind type = WidgetKind::Codex);
     ~Overlay();
     void update(const State &s);
     void position(bool reset = false);
     void render();
     void tick(const POINT *simulatedPointer = nullptr);
     void showDetails(const fs::path &capture = {});
+    void showDeepSeekDetails(const fs::path &capture = {});
     void hideDetails();
     static LRESULT CALLBACK procedure(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK detailProcedure(HWND, UINT, WPARAM, LPARAM);
@@ -31,13 +39,16 @@ struct Application {
     HWND controller = nullptr;
     Settings settings = Settings::load();
     State state;
+    DeepSeekState deepseek;
     std::vector<std::unique_ptr<Overlay>> overlays;
     std::unique_ptr<SettingsWindow> settingsWindow;
     std::thread worker;
+    std::thread deepSeekWorker;
     std::mutex mutex;
     std::condition_variable wake;
     std::atomic<bool> stopping{false};
     bool refreshRequested = false;
+    bool deepSeekRefreshRequested = false;
     int generation = 0;
     HANDLE quitEvent = nullptr;
     bool preview = false;
@@ -45,10 +56,16 @@ struct Application {
     std::function<bool()> desktopProbe = desktopRunning;
     std::function<HWND(HMONITOR)> taskbarProbe = taskbarWindow;
     bool fakeRpc = false; // Only enabled by in-process integration checks.
+    std::function<DeepSeekState(std::atomic<bool> &)> deepSeekProbe = [](std::atomic<bool> &stop) {
+        return readDeepSeek(deepSeekCredential(false), deepSeekCredential(true), stop);
+    };
     fs::file_time_type settingsWrite{};
     Application(bool previewMode = false, bool test = false);
     ~Application();
     void runWorker();
+    void runDeepSeekWorker();
+    void refreshDeepSeek();
+    void applyDeepSeek(const DeepSeekUpdate &update);
     void apply(const State &value);
     void rebuild();
     void checkTaskbars();
@@ -67,12 +84,14 @@ struct SettingsWindow {
     int dpi = 96, page = 0, scroll = 0, oldStyle = 0;
     bool startup = false, closing = false;
     bool loading = false;
+    bool clearDeepSeekCredentials = false;
     int64_t previewStart = -1;
     int contentWidth = 700, contentHeight = 600;
     HFONT font = nullptr;
     HBRUSH background = nullptr, sidebar = nullptr;
     std::vector<HWND> controls;
     HWND styles = nullptr, scale = nullptr, display = nullptr, path = nullptr, interval = nullptr;
+    HWND deepSeekKey = nullptr, deepSeekToken = nullptr, deepSeekInterval = nullptr;
     Color selectedColor;
     bool colorHour = true;
     SettingsWindow(Application *owner, HMONITOR requested);

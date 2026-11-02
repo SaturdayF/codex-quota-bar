@@ -6,6 +6,7 @@ enum {
     NavAppearance = 100,
     NavGeneral,
     NavAdvanced,
+    NavDeepSeek,
     Save = 110,
     Cancel,
     Style = 200,
@@ -28,7 +29,15 @@ enum {
     Interval,
     Refresh,
     Exit,
-    Uninstall
+    Uninstall,
+    DeepSeekEnabled = 260,
+    DeepSeekKey,
+    DeepSeekToken,
+    DeepSeekInterval,
+    DeepSeekRefresh,
+    DeepSeekClear,
+    DeepSeekPlatform,
+    DeepSeekHelp
 };
 static std::wstring controlText(HWND w) {
     int n = GetWindowTextLengthW(w);
@@ -49,7 +58,7 @@ static void registerSettingsClass(const wchar_t *name, WNDPROC proc) {
 }
 static bool isToggle(int id) {
     return id == Letters || id == Remaining || id == Percent || id == Animate || id == Startup ||
-           id == ShowHour || id == ShowWeek;
+           id == ShowHour || id == ShowWeek || id == DeepSeekEnabled;
 }
 SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
     : app(a), draft(a->settings), startup(startupEnabled()) {
@@ -106,6 +115,7 @@ void SettingsWindow::createControls() {
     button(L"外观", NavAppearance, -1);
     button(L"常规", NavGeneral, -1);
     button(L"高级", NavAdvanced, -1);
+    button(L"DeepSeek", NavDeepSeek, -1);
     button(L"保存更改", Save, -1);
     button(L"取消", Cancel, -1);
     auto control = [&](const wchar_t *cls, const wchar_t *text, int id, int p, DWORD style) {
@@ -149,6 +159,22 @@ void SettingsWindow::createControls() {
     button(L"显示 5 小时额度", ShowHour, 1);
     button(L"显示周额度", ShowWeek, 1);
     button(L"恢复套餐默认", ResetQuotas, 1);
+    button(L"显示 DeepSeek 余额", DeepSeekEnabled, 3);
+    deepSeekToken = control(L"EDIT", L"", DeepSeekToken, 3, ES_PASSWORD | ES_AUTOHSCROLL);
+    deepSeekKey = control(L"EDIT", L"", DeepSeekKey, 3, ES_PASSWORD | ES_AUTOHSCROLL);
+    for (auto edit : {deepSeekToken, deepSeekKey}) SendMessageW(edit, EM_SETLIMITTEXT, 2560, 0);
+    bool hasToken = !app->testing && !deepSeekCredential(true).empty();
+    bool hasKey = !app->testing && !deepSeekCredential(false).empty();
+    SendMessageW(deepSeekToken, EM_SETCUEBANNER, 0, reinterpret_cast<LPARAM>(hasToken ? L"已保存；留空保持不变" : L"粘贴平台 userToken；输入将被隐藏"));
+    SendMessageW(deepSeekKey, EM_SETCUEBANNER, 0, reinterpret_cast<LPARAM>(hasKey ? L"已保存；留空保持不变" : L"可选：sk-…，仅 API Key 模式不含账单"));
+    deepSeekInterval = control(L"COMBOBOX", L"", DeepSeekInterval, 3, CBS_DROPDOWNLIST);
+    const wchar_t *deepIntervals[] = {L"1 分钟", L"2 分钟", L"5 分钟"};
+    for (auto label : deepIntervals) SendMessageW(deepSeekInterval, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
+    SendMessageW(deepSeekInterval, CB_SETCURSEL, draft.deepSeekInterval == 120 ? 1 : draft.deepSeekInterval == 300 ? 2 : 0, 0);
+    button(L"立即刷新", DeepSeekRefresh, 3);
+    button(L"清除凭证", DeepSeekClear, 3);
+    button(L"打开 DeepSeek 平台", DeepSeekPlatform, 3);
+    button(L"凭证填写说明", DeepSeekHelp, 3);
     path = control(L"EDIT", draft.codexPath.c_str(), Path, 2, ES_AUTOHSCROLL);
     SendMessageW(path, EM_SETCUEBANNER, 0, reinterpret_cast<LPARAM>(L"自动查找 Codex CLI"));
     button(L"浏览…", Browse, 2);
@@ -194,7 +220,7 @@ void SettingsWindow::layout() {
     GetClientRect(content, &c);
     contentWidth = int(c.right * 96. / dpi);
     contentHeight = int(c.bottom * 96. / dpi);
-    int needed = page == 0 ? 704 : page == 1 ? 554 : 540;
+    int needed = page == 0 ? 704 : page == 1 ? 554 : page == 3 ? 652 : 540;
     scroll = std::clamp(scroll, 0, std::max(0, needed - contentHeight));
     SCROLLINFO si{sizeof(si), SIF_RANGE | SIF_PAGE | SIF_POS,   0,
                   needed - 1, UINT(std::max(1, contentHeight)), scroll,
@@ -206,7 +232,7 @@ void SettingsWindow::layout() {
                      SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
     };
     int right = contentWidth - 224;
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 4; ++i)
         MoveWindow(GetDlgItem(window, NavAppearance + i), px(15), px(82 + i * 43), px(166), px(38), TRUE);
     MoveWindow(GetDlgItem(window, Save), w - px(148), h - px(58), px(120), px(36), TRUE);
     MoveWindow(GetDlgItem(window, Cancel), w - px(256), h - px(58), px(96), px(36), TRUE);
@@ -231,6 +257,14 @@ void SettingsWindow::layout() {
     place(Refresh, contentWidth - 124, 273, 110, 34);
     place(Exit, contentWidth - 146, 339, 132, 34);
     place(Uninstall, contentWidth - 124, 405, 110, 34);
+    place(DeepSeekEnabled, contentWidth - 60, 89, 44, 26);
+    place(DeepSeekToken, 0, 205, contentWidth - 14, 30);
+    place(DeepSeekKey, 0, 315, contentWidth - 14, 30);
+    place(DeepSeekInterval, contentWidth - 164, 373, 150, 220);
+    place(DeepSeekRefresh, contentWidth - 124, 439, 110, 34);
+    place(DeepSeekClear, contentWidth - 124, 505, 110, 34);
+    place(DeepSeekPlatform, contentWidth - 194, 143, 180, 28);
+    place(DeepSeekHelp, contentWidth - 164, 175, 150, 26);
     SendMessageW(content, WM_SETREDRAW, TRUE, 0);
     RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
@@ -302,10 +336,11 @@ void SettingsWindow::draw(HDC dc, bool inner) {
             g.DrawLine(&line, 218.f, rect.bottom / d - 78, rect.right / d - 28, rect.bottom / d - 78);
         } else {
             g.TranslateTransform(0, float(-scroll));
-            const wchar_t *headings[] = {L"外观", L"常规", L"高级"};
+            const wchar_t *headings[] = {L"外观", L"常规", L"高级", L"DeepSeek"};
             const wchar_t *subtitles[] = {L"调整任务栏组件的显示方式。",
                                           L"管理显示屏幕，以及应用的启动与退出。",
-                                          L"配置额度读取来源，或手动刷新额度。"};
+                                          L"配置额度读取来源，或手动刷新额度。",
+                                          L"余额与当日平台账单，不发送聊天请求。"};
             drawUiText(g, headings[page], RectF(0, 0, float(contentWidth), 40), 25, ink, true);
             drawUiText(g, subtitles[page], RectF(0, 43, float(contentWidth), 26), 14, muted);
             auto row = [&](float y, const wchar_t *title, const wchar_t *description, float reserve = 240) {
@@ -353,7 +388,7 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 drawUiText(g, L"自动", RectF(contentWidth - 80.f, 412, 65, 30), 13, muted, false, true);
                 drawUiText(g, L"两项关闭时隐藏组件，可从开始菜单打开设置。",
                          RectF(0, 491, float(contentWidth), 32), 14, muted);
-            } else {
+            } else if (page == 2) {
                 drawUiText(g, L"Codex CLI 路径", RectF(0, 82, float(contentWidth), 26), 16, ink);
                 drawUiText(g, L"留空时自动查找已安装的 Codex。", RectF(0, 108, float(contentWidth), 26), 14,
                          muted);
@@ -365,6 +400,17 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                                                                 : L"便携版退出后删除解压目录即可。");
                 drawUiText(g, L"通过本机 Codex 读取，不保存登录信息。", RectF(0, 483, float(contentWidth), 32),
                          14, muted);
+            } else {
+                row(82, L"显示 DeepSeek 余额", L"启用后独立显示，不依赖 Codex 是否运行。", 110);
+                drawUiText(g, L"平台登录凭证（账单模式）", RectF(0, 148, contentWidth - 210.f, 26), 16, ink);
+                drawUiText(g, L"同一平台账户的余额、费用和 Token 明细。", RectF(0, 174, contentWidth - 175.f, 26), 14, muted);
+                drawUiText(g, L"API Key（可选）", RectF(0, 258, float(contentWidth), 26), 16, ink);
+                drawUiText(g, L"未配置平台凭证时仅查询余额，不读取消费明细。", RectF(0, 284, float(contentWidth), 26), 14, muted);
+                row(366, L"自动刷新间隔", L"失败时保留旧数据并退避重试。", 190);
+                row(432, L"读取最新数据", L"先保存凭证；仅读取已保存账户。", 150);
+                row(498, L"本机凭证", clearDeepSeekCredentials ? L"保存后将清除原凭证，可填写新凭证替换。" : L"留空保留原凭证，清除在保存后生效。", 150);
+                drawUiText(g, L"北京时间 UTC+8 · 平台账单可能延迟更新。", RectF(0, 574, float(contentWidth), 26), 13, muted);
+                drawUiText(g, L"平台账单接口可能变化；凭证保存在 Windows 凭据管理器。", RectF(0, 607, float(contentWidth), 26), 12, muted);
             }
         }
     }
@@ -381,7 +427,7 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
         Color base = light ? Color(255, 255, 255, 255) : Color(255, 32, 32, 32),
               ink = light ? Color(255, 30, 30, 30) : Color(255, 240, 240, 240),
               side = light ? Color(255, 247, 247, 247) : Color(255, 26, 26, 26);
-        if (id >= NavAppearance && id <= NavAdvanced)
+        if (id >= NavAppearance && id <= NavDeepSeek)
             base = side;
         g.Clear(base);
         float d = dpi / 96.f;
@@ -394,6 +440,7 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
                            : id == Animate   ? draft.pref().animate
                            : id == ShowHour  ? visible.hour
                            : id == ShowWeek  ? visible.week
+                           : id == DeepSeekEnabled ? draft.deepSeekEnabled
                                              : startup;
             Color track = enabled ? (light ? Color(255, 35, 35, 35) : Color(255, 225, 225, 225))
                                   : (light ? Color(255, 180, 180, 180) : Color(255, 85, 85, 85));
@@ -406,7 +453,7 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
             g.FillEllipse(&b, RectF(left, area.Y + 3 * d, r, r));
         } else {
             Color fill = base, text = ink;
-            bool nav = id >= NavAppearance && id <= NavAdvanced;
+            bool nav = id >= NavAppearance && id <= NavDeepSeek;
             if (nav && id - NavAppearance == page)
                 fill = light ? Color(255, 230, 230, 230) : Color(255, 54, 54, 54);
             if (id == Save) {
@@ -452,11 +499,36 @@ void SettingsWindow::command(int id, int notice) {
         return;
     if (id != Style && notice != BN_CLICKED)
         return;
-    if (id >= NavAppearance && id <= NavAdvanced) {
+    if (id >= NavAppearance && id <= NavDeepSeek) {
         selectPage(id - NavAppearance);
         return;
     }
     switch (id) {
+    case DeepSeekEnabled:
+        draft.deepSeekEnabled = !draft.deepSeekEnabled;
+        break;
+    case DeepSeekRefresh:
+        app->refreshDeepSeek();
+        break;
+    case DeepSeekClear:
+        clearDeepSeekCredentials = true;
+        SetWindowTextW(deepSeekKey, L"");
+        SetWindowTextW(deepSeekToken, L"");
+        SendMessageW(deepSeekKey, EM_SETCUEBANNER, 0, reinterpret_cast<LPARAM>(L"保存后清除；或输入新 API Key"));
+        SendMessageW(deepSeekToken, EM_SETCUEBANNER, 0, reinterpret_cast<LPARAM>(L"保存后清除；或输入新平台凭证"));
+        break;
+    case DeepSeekPlatform:
+        ShellExecuteW(window, L"open", L"https://platform.deepseek.com/usage", nullptr, nullptr, SW_SHOWNORMAL);
+        break;
+    case DeepSeekHelp:
+        MessageBoxW(window,
+                    L"1. 点击“打开 DeepSeek 平台”，在浏览器中自行登录。\n"
+                    L"2. 按 F12，在 Application / 应用 → Local Storage / 本地存储中选择 https://platform.deepseek.com。\n"
+                    L"3. 找到 userToken，将原始令牌填入“平台登录凭证”，点击“保存更改”。\n\n"
+                    L"无需填写账号密码。平台凭证同时用于同一账户的余额与账单。\n"
+                    L"只有 API Key 时只能显示余额，不能读取当日消费。",
+                    L"DeepSeek 凭证填写说明", MB_OK | MB_ICONINFORMATION);
+        break;
     case Cancel:
         SendMessageW(window, WM_CLOSE, 0, 0);
         break;
@@ -558,6 +630,13 @@ void SettingsWindow::command(int id, int notice) {
     InvalidateRect(content, nullptr, FALSE);
 }
 bool SettingsWindow::save() {
+    auto newKey = utf8(controlText(deepSeekKey)), newToken = utf8(controlText(deepSeekToken));
+    if (!validDeepSeekCredential(newKey) || !validDeepSeekCredential(newToken)) {
+        MessageBoxW(window, L"请填写原始密钥或 userToken，不包含 Bearer 前缀、空格或换行。", L"无法保存 DeepSeek 凭证", MB_OK | MB_ICONERROR);
+        return false;
+    }
+    int deepInterval = int(SendMessageW(deepSeekInterval, CB_GETCURSEL, 0, 0));
+    draft.deepSeekInterval = deepInterval == 1 ? 120 : deepInterval == 2 ? 300 : 60;
     draft.codexPath = controlText(path);
     while (!draft.codexPath.empty() && iswspace(draft.codexPath.back()))
         draft.codexPath.pop_back();
@@ -586,13 +665,24 @@ bool SettingsWindow::save() {
             draft.displays.push_back(utf8(all[n - 2].name));
         }
     }
+    auto oldKey = deepSeekCredential(false), oldToken = deepSeekCredential(true);
+    bool credentialsTouched = false;
     try {
         if (!setStartup(startup))
             throw std::runtime_error("Cannot save startup");
+        if (clearDeepSeekCredentials || !newKey.empty()) {
+            saveDeepSeekCredential(false, newKey); credentialsTouched = true;
+        }
+        if (clearDeepSeekCredentials || !newToken.empty()) {
+            saveDeepSeekCredential(true, newToken); credentialsTouched = true;
+        }
         draft.save();
         app->saved(draft);
         return true;
     } catch (...) {
+        if (credentialsTouched) {
+            try { saveDeepSeekCredential(false, oldKey); saveDeepSeekCredential(true, oldToken); } catch (...) {}
+        }
         MessageBoxW(window, L"无法保存设置或启动项，请检查当前用户权限。", L"Codex Quota Bar",
                     MB_OK | MB_ICONERROR);
         return false;

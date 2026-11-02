@@ -15,8 +15,8 @@ static void registerClass(const wchar_t *name, WNDPROC proc, UINT style = 0) {
 static bool inside(RECT r, POINT p) {
     return PtInRect(&r, p) != FALSE;
 }
-Overlay::Overlay(Application *a, const Monitor &m, const Settings &s, const State &initial)
-    : app(a), monitor(m), settings(s) {
+Overlay::Overlay(Application *a, const Monitor &m, const Settings &s, const State &initial, WidgetKind type)
+    : app(a), monitor(m), settings(s), kind(type) {
     registerClass(L"CodexQuotaBar.Native.Widget", procedure);
     registerClass(L"CodexQuotaBar.Native.Details", detailProcedure);
     // A desktop TOPMOST popup can still be covered when the shell raises its
@@ -57,9 +57,15 @@ void Overlay::position(bool reset) {
     if (host && GetWindowRect(host, &bounds))
         bar = bounds;
     int available = bar ? bar->bottom - bar->top : int(40 * monitor.dpi / 96.);
-    layout = widgetLayout(settings, settings.visibility(state.q), monitor.dpi, available);
-    if (reset || !placed)
+    layout = kind == WidgetKind::DeepSeek ? deepSeekLayout(settings, monitor.dpi, available)
+                                         : widgetLayout(settings, settings.visibility(state.q), monitor.dpi, available);
+    if (reset || !placed) {
         x = monitor.bounds.left + 16 * monitor.dpi / 96;
+        if (kind == WidgetKind::DeepSeek)
+            for (auto &other : app->overlays)
+                if (other->kind == WidgetKind::Codex && other->monitor.handle == monitor.handle)
+                    x = other->x + other->layout.width + 12 * monitor.dpi / 96;
+    }
     x = std::clamp(x, int(monitor.bounds.left),
                    std::max(int(monitor.bounds.left), int(monitor.bounds.right) - layout.width));
     y = bar ? bar->top + (available - layout.height) / 2 : monitor.work.bottom - layout.height - 4;
@@ -75,8 +81,11 @@ void Overlay::render() {
         return;
     Surface image(layout.width, layout.height);
     auto now = GetTickCount64();
-    paintWidget(image, layout, state, settings, hover, animation.progress(true, now),
-                animation.progress(false, now));
+    if (kind == WidgetKind::DeepSeek)
+        paintDeepSeek(image, app->deepseek, settings, hover);
+    else
+        paintWidget(image, layout, state, settings, hover, animation.progress(true, now),
+                    animation.progress(false, now));
     // Child placement is already handled in parent coordinates by position().
     // Updating only the pixels avoids a second coordinate conversion by USER32.
     image.present(window, x, y, !host);
@@ -98,6 +107,10 @@ void Overlay::hideDetails() {
         ShowWindow(details, SW_HIDE);
 }
 void Overlay::showDetails(const fs::path &capture) {
+    if (kind == WidgetKind::DeepSeek) {
+        showDeepSeekDetails(capture);
+        return;
+    }
     float d = monitor.dpi / 96.f;
     auto visible = settings.visibility(state.q);
     int width = int(372 * d), height = int((170 + 100 * visible.count()) * d);
@@ -256,7 +269,7 @@ LRESULT CALLBACK Overlay::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
         self->hover = false;
         self->render();
         PostMessageW(self->app->controller, SettingsMessage, reinterpret_cast<WPARAM>(self->monitor.handle),
-                     0);
+                     self->kind == WidgetKind::DeepSeek ? 3 : 0);
         return 0;
     case WM_DPICHANGED:
         self->monitor.dpi = HIWORD(wp);
@@ -272,6 +285,14 @@ LRESULT CALLBACK Overlay::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(w, msg, wp, lp);
 }
 LRESULT CALLBACK Overlay::detailProcedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_NCCREATE)
+        SetWindowLongPtrW(w, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams));
+    auto self = reinterpret_cast<Overlay *>(GetWindowLongPtrW(w, GWLP_USERDATA));
+    if (msg == WM_MOUSEWHEEL && self && self->kind == WidgetKind::DeepSeek) {
+        self->detailPage = std::max(0, self->detailPage + (GET_WHEEL_DELTA_WPARAM(wp) < 0 ? 1 : -1));
+        self->showDeepSeekDetails();
+        return 0;
+    }
     if (msg == WM_MOUSEACTIVATE)
         return MA_NOACTIVATE;
     return DefWindowProcW(w, msg, wp, lp);
@@ -296,14 +317,18 @@ Application::Application(bool previewMode, bool test) : preview(previewMode), te
         state.q.week = WindowQuota{27, utcNow() + 86400};
         state.q.plan = "plus";
         rebuild();
-    } else if (!testing)
+    } else if (!testing) {
         worker = std::thread(&Application::runWorker, this);
+        deepSeekWorker = std::thread(&Application::runDeepSeekWorker, this);
+    }
 }
 Application::~Application() {
     stopping = true;
     wake.notify_all();
     if (worker.joinable())
         worker.join();
+    if (deepSeekWorker.joinable())
+        deepSeekWorker.join();
     settingsWindow.reset();
     overlays.clear();
     if (quitEvent)
@@ -312,6 +337,8 @@ Application::~Application() {
         MSG msg;
         while (PeekMessageW(&msg, controller, StateMessage, StateMessage, PM_REMOVE))
             delete reinterpret_cast<State *>(msg.lParam);
+        while (PeekMessageW(&msg, controller, DeepSeekMessage, DeepSeekMessage, PM_REMOVE))
+            delete reinterpret_cast<DeepSeekUpdate *>(msg.lParam);
         DestroyWindow(controller);
     }
 }
@@ -324,6 +351,7 @@ void Application::refresh() {
     {
         std::lock_guard<std::mutex> guard(mutex);
         refreshRequested = true;
+        deepSeekRefreshRequested = true;
     }
     wake.notify_all();
 }
@@ -333,9 +361,16 @@ void Application::saved(const Settings &value) {
         settings = value;
         generation++;
         refreshRequested = true;
+        deepSeekRefreshRequested = true;
     }
     wake.notify_all();
     state.interval = value.interval;
+    deepseek = DeepSeekState{};
+    if (!testing) {
+        std::error_code ec;
+        auto stamp = fs::last_write_time(dataDirectory() / L"settings.json", ec);
+        if (!ec) settingsWrite = stamp;
+    }
     rebuild();
 }
 void Application::checkSettingsFile() {
@@ -350,10 +385,12 @@ void Application::checkSettingsFile() {
 }
 void Application::rebuild() {
     overlays.clear();
-    if (!state.active || !settings.visibility(state.q).count())
-        return;
-    for (auto &m : selectedMonitors(settings))
-        overlays.push_back(std::make_unique<Overlay>(this, m, settings, state));
+    for (auto &m : selectedMonitors(settings)) {
+        if (state.active && settings.visibility(state.q).count())
+            overlays.push_back(std::make_unique<Overlay>(this, m, settings, state));
+        if (settings.deepSeekEnabled)
+            overlays.push_back(std::make_unique<Overlay>(this, m, settings, state, WidgetKind::DeepSeek));
+    }
 }
 void Application::checkTaskbars() {
     for (auto &o : overlays)
@@ -485,6 +522,11 @@ LRESULT CALLBACK Application::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) 
     if (!self)
         return DefWindowProcW(w, msg, wp, lp);
     switch (msg) {
+    case DeepSeekMessage: {
+        std::unique_ptr<DeepSeekUpdate> update(reinterpret_cast<DeepSeekUpdate *>(lp));
+        if (!self->stopping) self->applyDeepSeek(*update);
+        return 0;
+    }
     case WM_APP + 10:
         if (self->settingsWindow && self->settingsWindow->closing)
             self->settingsWindow.reset();
@@ -497,6 +539,7 @@ LRESULT CALLBACK Application::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) 
     }
     case SettingsMessage:
         self->showSettings(reinterpret_cast<HMONITOR>(wp));
+        if (lp == 3 && self->settingsWindow) self->settingsWindow->selectPage(3);
         return 0;
     case RebuildMessage:
         self->rebuild();

@@ -6,6 +6,26 @@
 
 **当前版本：v0.2.2 · C++ 原生版，无需 .NET** · [下载发布包](https://github.com/SaturdayF/codex-quota-bar/releases) · [版本记录](CHANGELOG.md) · [开发说明](docs/DEVELOPMENT.md)
 
+**开发中：0.3.0**，新增 DeepSeek 余额、当日消费及悬浮明细。0.2.2 已封存，现有稳定版下载不变；0.3.0 尚未发布。
+
+### DeepSeek（0.3.0 开发版）
+
+在“设置 → DeepSeek”启用显示，并填写平台登录凭证 `userToken`。账单模式使用同一个平台账户查询余额和当日费用，不需要额外填写 API Key；仅填写 API Key 时只能显示余额，当日费用为 `--`。
+
+- 点击“打开 DeepSeek 平台”后自行登录；按 F12，在 Application / 应用 → Local Storage / 本地存储 → `https://platform.deepseek.com` 中找到 `userToken`，将原始令牌填入设置后保存。无需填写账户密码。
+- 任务栏显示余额、今日消费；鼠标停留后查看各模型费用、请求数、缓存命中/未命中输入和输出 Token。模型较多时可在详情卡上滚轮翻阅。
+- “今日”按北京时间 UTC+8 零点切分，统计整个平台账户的全部 API Key，使用平台账单金额，不按价格表或余额差额估算。不同币种分别显示，不相加或自动换汇。
+- 平台凭证同时用于平台余额和账单，API Key 不与另一账户的平台账单混用。凭证保存在 Windows 凭据管理器；设置 JSON 不保存密钥，输入留空表示保留，清除在保存后生效。
+- 默认每分钟刷新，可选两分钟或五分钟；支持手动刷新。DeepSeek 显示独立于 Codex 的运行状态，关闭开关后停止查询并隐藏。
+
+余额公开接口见 [DeepSeek 官方文档](https://api-docs.deepseek.com/zh-cn/api/get-user-balance/)。费用与 Token 使用平台的私有账单接口，可能变化或拒绝访问；读取失败显示明确状态，不将失败当作零消费。开发验证使用模拟数据；需在本机填写有效凭证完成实际账户联调。
+
+以下预览均为模拟数据：
+
+![DeepSeek 任务栏模拟预览](docs/deepseek-widget-preview.png)
+
+<img src="docs/deepseek-settings-preview.png" width="720" alt="DeepSeek 设置（模拟预览，无真实凭证）" /> <img src="docs/deepseek-details-preview.png" width="375" alt="DeepSeek 当日消费详情（模拟数据）" />
+
 支持 Windows 10/11 x64。这是独立的 Windows 伴随工具，与 OpenAI 无隶属关系。下文插图由本工具的界面或渲染代码生成；设置与详情图来自 0.2.2，七样式图来自 0.2.0，动画和色板图保留自 0.1.0，**额度和重置时间为模拟数据**。
 
 ## 已实现的功能

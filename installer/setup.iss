@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.2.2"
+  #define AppVersion "0.3.0"
 #endif
 #ifndef PayloadDir
   #define PayloadDir "..\artifacts\native-payload"
@@ -69,6 +69,8 @@ function SetEvent(Handle: THandle): Boolean;
   external 'SetEvent@kernel32.dll stdcall';
 function CloseHandle(Handle: THandle): Boolean;
   external 'CloseHandle@kernel32.dll stdcall';
+function CredDelete(TargetName: String; CredentialType, Flags: LongWord): Boolean;
+  external 'CredDeleteW@advapi32.dll stdcall';
 
 function HasSwitch(Name: String): Boolean;
 var I: Integer;
@@ -141,4 +143,12 @@ begin
     RemoveSettings := MsgBox('是否同时删除本工具的设置？不会影响 ChatGPT 或 Codex 的登录数据。', mbConfirmation, MB_YESNO) = IDYES;
   StopListener;
   Result := True;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if (CurUninstallStep = usUninstall) and ShouldRemoveSettings then begin
+    CredDelete('CodexQuotaBar.DeepSeek.ApiKey', 1, 0);
+    CredDelete('CodexQuotaBar.DeepSeek.PlatformToken', 1, 0);
+  end;
 end;
