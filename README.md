@@ -1,138 +1,137 @@
-<p align="center"><img src="assets/app.png" width="100" alt="相扣的额度圆环" /></p>
+<p align="center"><img src="assets/app.png" width="100" alt="Codex Quota Bar 图标" /></p>
 
 # Codex Quota Bar
 
-把 Codex 的 **5 小时额度、周额度**放到 Windows 任务栏上。打开 ChatGPT 或 Codex 桌面应用时自动出现，鼠标悬停查看详情，右键调整外观和行为。
+Windows 任务栏额度与余额显示工具。支持 Codex 5 小时额度、周额度，以及 DeepSeek 余额和当日消费；鼠标悬浮查看详情，右键打开设置。
 
-**当前版本：v0.2.2 · C++ 原生版，无需 .NET** · [下载发布包](https://github.com/SaturdayF/codex-quota-bar/releases) · [版本记录](CHANGELOG.md) · [开发说明](docs/DEVELOPMENT.md)
+支持 Windows 10/11 x64，无需额外安装 .NET 或 C++ 运行库。这是独立工具，与 OpenAI、DeepSeek 无隶属关系。
 
-**开发中：0.3.0**，新增 DeepSeek 余额、当日消费及悬浮明细。0.2.2 已封存，现有稳定版下载不变；0.3.0 尚未发布。
+| 版本 | 状态 | 内容 |
+| --- | --- | --- |
+| [0.2.2](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.2.2) | 已发布 | Codex 额度显示、外观设置、动画、多屏支持 |
+| 0.3.0 | 开发中，尚未发布 | 增加 DeepSeek 余额、当日消费和模型明细 |
 
-### DeepSeek（0.3.0 开发版）
+[下载发布包](https://github.com/SaturdayF/codex-quota-bar/releases) · [版本记录](CHANGELOG.md) · [开发说明](docs/DEVELOPMENT.md)
 
-在“设置 → DeepSeek”启用显示，并填写平台登录凭证 `userToken`。账单模式使用同一个平台账户查询余额和当日费用，不需要额外填写 API Key；仅填写 API Key 时只能显示余额，当日费用为 `--`。
+本文界面图中的金额、额度、Token 数量与重置时间均为模拟数据。
 
-- 点击“打开 DeepSeek 平台”后自行登录；按 F12，在 Application / 应用 → Local Storage / 本地存储 → `https://platform.deepseek.com` 中找到 `userToken`，将原始令牌填入设置后保存。无需填写账户密码。
-- 任务栏显示余额、今日消费；鼠标停留后查看各模型费用、请求数、缓存命中/未命中输入和输出 Token。模型较多时可在详情卡上滚轮翻阅。
-- “今日”按北京时间 UTC+8 零点切分，统计整个平台账户的全部 API Key，使用平台账单金额，不按价格表或余额差额估算。不同币种分别显示，不相加或自动换汇。
-- 平台凭证同时用于平台余额和账单，API Key 不与另一账户的平台账单混用。凭证保存在 Windows 凭据管理器；设置 JSON 不保存密钥，输入留空表示保留，清除在保存后生效。
-- 默认每分钟刷新，可选两分钟或五分钟；支持手动刷新。DeepSeek 显示独立于 Codex 的运行状态，关闭开关后停止查询并隐藏。
+## Codex 额度
 
-余额公开接口见 [DeepSeek 官方文档](https://api-docs.deepseek.com/zh-cn/api/get-user-balance/)。费用与 Token 使用平台的私有账单接口，可能变化或拒绝访问；读取失败显示明确状态，不将失败当作零消费。开发验证使用模拟数据；需在本机填写有效凭证完成实际账户联调。
+| 功能 | 说明 |
+| --- | --- |
+| 自动显示 | 任一 ChatGPT / Codex 桌面应用运行时显示；两者均退出后停止读取并隐藏 Codex 组件 |
+| 额度选择 | 5 小时和周额度可分别开关；默认 Plus 显示两项，Pro 系列显示周额度 |
+| 七种样式 | 双仪表、底线数字、双徽标、双刻度、纯数字、圆框数字、侧边数字 |
+| 外观设置 | 颜色、60%–140% 缩放、余量图形、百分号、H/W 标记和动画 |
+| 多屏显示 | 支持主屏、指定显示器或全部屏幕；支持横向拖动 |
+| 悬浮详情 | 显示套餐类型、精确额度、重置时间、更新时间和读取状态 |
+| 刷新间隔 | 15 秒、30 秒、1 分钟、2 分钟或 5 分钟，默认 30 秒；支持手动刷新 |
+| 状态提示 | 缺失数据显示 `--`；读取失败保留最后成功值并标记状态，自动退避重试 |
 
-以下预览均为模拟数据：
+### 外观与动画
 
-![DeepSeek 任务栏模拟预览](docs/deepseek-widget-preview.png)
+图形支持按余量比例显示或完整填充，百分号和动画选项按样式保存。首次读取与额度重置时播放约 1.2 秒的动画；设置预览在切换样式或余量开关时重播。预览动画遵循样式与 Windows 动画设置。
 
-<img src="docs/deepseek-settings-preview.png" width="720" alt="DeepSeek 设置（模拟预览，无真实凭证）" /> <img src="docs/deepseek-details-preview.png" width="375" alt="DeepSeek 当日消费详情（模拟数据）" />
+![七种任务栏样式与百分号选项](docs/native-styles.png)
 
-支持 Windows 10/11 x64。这是独立的 Windows 伴随工具，与 OpenAI 无隶属关系。下文插图由本工具的界面或渲染代码生成；设置与详情图来自 0.2.2，七样式图来自 0.2.0，动画和色板图保留自 0.1.0，**额度和重置时间为模拟数据**。
+![样式动画演示（模拟数据）](docs/animation-preview.gif)
 
-## 已实现的功能
-
-| 功能       | 当前行为                                                                                                        |
-| ---------- | --------------------------------------------------------------------------------------------------------------- |
-| 自动跟随   | 任一 ChatGPT / Codex 桌面进程运行时显示，两者都完全退出后收起并停止读取；后台轻量监听器继续等待下次启动。       |
-| 多屏显示   | 可选主屏、指定显示器或全部屏幕；透明组件贴在各屏任务栏上，按实际高度居中，支持横向拖动。                        |
-| 七种样式   | 双仪表、底线数字、双徽标、双刻度、纯数字、圆框数字、侧边数字，设置页即时预览。                                  |
-| 独立颜色   | 分别修改两种额度的颜色；提供主题色、深浅色阶、标准色、自定义颜色和恢复默认。                                    |
-| 显示大小   | 整体缩放 60%–140%；过大时按任务栏高度等比例适配。                                                              |
-| 余量与文字 | 各样式独立设置百分号、动画；除纯数字外可选择图形是否展示余量；双仪表可开关 H/W。                                |
-| 填充动画   | 首次成功读取、确认额度重置时播放；切换样式时重新演示。纯数字由 0 递增到真实值，其他样式填充圆环、边框或进度线。 |
-| 悬浮详情   | 进入组件即显示半透明圆角底色，停留后显示精确额度、重置时间、更新时间和读取状态。                                |
-| 可调刷新   | 15 秒、30 秒、1 分钟、2 分钟、5 分钟，默认 30 秒；支持立即刷新，保存新间隔无需重启。                            |
-| 状态提示   | 缺失额度显示 `--`；读取失败保留最后成功值并标记过期，自动退避重试。                                           |
-| 额度显示   | 可独立开关 5h 与周额度；默认 Plus 显示两项，Pro 系列只显示周额度，可恢复套餐默认。                          |
-| 设置与维护 | 右键打开设置、随系统深浅主题、登录启动开关、退出工具，以及安装版的一键卸载。                                    |
-
-### 七种外观
-
-提供可修改安装路径的 EXE 安装器和解压即用的 Portable ZIP。两种包均无需 .NET 或额外安装 C++ 运行库。
-
-图形可以按真实剩余比例显示，也可以保持完整纯色；百分号与动画按样式分别保存。
-
-![七种原生样式与百分号选项](docs/native-styles.png)
-
-### 余量动画
-
-动画时长约 1.2 秒。普通轮询不会反复播放；系统关闭客户端动画时不会自动播放。下图为循环演示，真实程序只在触发条件成立时播放一次。
-
-外观页切换“在图标上展示余量”时，也会重播当前样式的预览动画。
-
-![七种样式的填充动画](docs/animation-preview.gif)
-
-### 外观设置与颜色
-
-选择样式、大小和颜色后先看预览，点击“保存更改”应用；取消会放弃未保存的更改。
+在“外观”页修改样式、大小和颜色后，点击“保存更改”应用；取消会放弃未保存的更改。
 
 ![外观设置](docs/native-settings-preview.png)
 
-<img src="docs/color-palette-preview.png" width="294" alt="自动、主题颜色、标准色和其他颜色菜单" />
+<img src="docs/color-palette-preview.png" width="294" alt="颜色选择菜单" />
 
-### 额度显示
+### 额度显示与详情
 
-在“常规”页分别开关 5 小时和周额度。默认 Plus 显示两项，Pro 系列仅显示周额度；“恢复套餐默认”会清除手动覆盖。选择同步影响任务栏、悬浮详情和预览。
+在“常规”页分别开关 5 小时和周额度。“恢复套餐默认”恢复自动显示规则，设置同步影响任务栏、悬浮详情和预览。两项均关闭时隐藏 Codex 组件，设置快捷方式仍可使用。
 
 ![额度显示设置（Pro 默认示例）](docs/native-general-preview.png)
 
-### 悬浮详情
+悬浮详情显示当前套餐及所选额度。手动开启但账户未返回的额度显示 `--`。
 
-常态保持透明；悬浮时出现 Windows 任务栏按钮式底色，并展开详细额度卡。标题右侧显示当前套餐，鼠标可移入卡片继续查看。设置与详情采用 Segoe UI / 微软雅黑 UI 字体，正文与辅助文字分别为 16 / 14 逻辑像素，随屏幕 DPI 缩放。
+<img src="docs/native-details-preview.png" width="372" alt="双额度详情（模拟数据）" /> <img src="docs/native-details-pro-preview.png" width="372" alt="Pro 系列周额度详情（模拟数据）" />
 
-<img src="docs/native-details-preview.png" width="372" alt="两种额度的详情卡（模拟数据）" /> <img src="docs/native-details-pro-preview.png" width="372" alt="Pro 周额度详情卡（模拟数据）" />
+## DeepSeek（0.3.0 开发版）
+
+任务栏显示账户余额和当日消费。悬浮详情按模型展示费用、请求数、缓存命中输入、缓存未命中输入及输出 Token；模型较多时可滚轮翻阅。
+
+DeepSeek 组件独立于 Codex 的运行状态。默认每分钟刷新，可选 2 分钟或 5 分钟，支持手动刷新。
+
+### 凭证与配置
+
+| 凭证 | 余额 | 当日消费与 Token 明细 |
+| --- | --- | --- |
+| 平台登录凭证 `userToken` | 支持 | 支持 |
+| DeepSeek API Key | 支持 | 不支持，消费显示 `--` |
+
+1. 打开“设置 → DeepSeek”，点击“打开 DeepSeek 平台”并在浏览器中登录。
+2. 按 F12，在 **Application / 应用 → Local Storage / 本地存储 → `https://platform.deepseek.com`** 中找到 `userToken`。
+3. 将原始令牌填入“平台登录凭证”，启用“显示 DeepSeek 余额”，点击“保存更改”。设置中的“凭证填写说明”提供相同步骤。
+
+凭证输入框留空表示保留已有值；“清除凭证”在保存后生效。平台凭证已配置时，余额与消费均来自该平台账户。
+
+### 统计范围与数据状态
+
+- “当日”按北京时间 UTC+8 零点切分，覆盖平台账户的全部 API Key。
+- 消费金额来自平台账单，按模型聚合；不同币种分别显示。
+- 详情显示余额和账单的更新时间，读取失败时显示状态提示；平台数据可能存在更新延迟。
+- 公开余额接口见 [DeepSeek 官方文档](https://api-docs.deepseek.com/zh-cn/api/get-user-balance/)。费用和 Token 明细使用平台私有账单接口，接口变化或访问失败时显示错误状态。
+- 当前开发验证使用模拟数据，真实账户联调尚未完成。
+
+![DeepSeek 任务栏显示（模拟数据）](docs/deepseek-widget-preview.png)
+
+<img src="docs/deepseek-settings-preview.png" width="720" alt="DeepSeek 设置，无真实凭证" /> <img src="docs/deepseek-details-preview.png" width="375" alt="DeepSeek 当日消费详情（模拟数据）" />
 
 ## 安装与使用
 
-1. 下载 [CodexQuotaBar-v0.2.2-Setup.exe](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.2.2/CodexQuotaBar-v0.2.2-Setup.exe)，双击运行。
-2. 在“选择目标位置”页输入路径或点击“浏览”，选择本工具专用文件夹；可选择登录启动和安装完成后启动。
-3. 打开 ChatGPT 或 Codex 桌面应用，组件会自动显示。右键组件打开设置；也可从开始菜单打开 **Codex Quota Bar Settings**。
+当前发布包为 **0.2.2**，包含 Codex 功能。DeepSeek 功能位于 0.3.0 开发代码中。
 
-默认安装到当前用户的 `%LOCALAPPDATA%\Programs\CodexQuotaBar\0.2.2`，也可选择其他磁盘上的目录；目录需当前用户可写。0.2.2 使用 C++、Win32 和系统自带 GDI+，不包含 .NET，也不依赖全局 .NET 或另装 C++ 运行库。
+- [EXE 安装包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.2.2/CodexQuotaBar-v0.2.2-Setup.exe)：安装时可选择路径和登录启动。
+- [Portable ZIP](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.2.2/CodexQuotaBar-v0.2.2-Portable-win-x64.zip)：解压后运行 `CodexQuotaBar.exe`。
 
-也可下载 [Portable ZIP](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.2.2/CodexQuotaBar-v0.2.2-Portable-win-x64.zip)，解压后直接运行 `CodexQuotaBar.exe`。不需要安装额外运行时；便携版在设置中提供登录启动开关。
+安装版默认目录为 `%LOCALAPPDATA%\Programs\CodexQuotaBar\0.2.2`，也可选择其他当前用户可写的专用目录。
 
-0.1.0 安装和原始源码仍保留在历史 Release / 标签中。升级时退出旧监听器再启动新版本；0.2.2 继续读取原有设置，不删除旧安装目录。
+Codex 额度读取需要本机 Codex CLI 已通过 ChatGPT 账户登录。自动识别失败时，可在“高级”页指定 `codex.exe`。显示的数据属于 **CLI 当前登录账户**，可能与桌面应用登录的账户不同。
 
-需要本机 **Codex CLI 已通过 ChatGPT 账户登录**；也可使用桌面应用附带的 CLI。自动识别失败时，在“高级”页指定 `codex.exe`。数据来自 **Codex CLI 的登录账户**：如果 ChatGPT 与 Codex 登录不同账户，看到的额度可能不同。
-
-关闭窗口、最小化或关闭到托盘均不等于退出应用进程。日常使用无需额外点击本工具的图标。
+右键组件打开设置，也可从开始菜单打开 **Codex Quota Bar Settings**，或运行 `CodexQuotaBar.exe --settings`。左键横向拖动组件；悬浮查看详情。关闭或最小化 ChatGPT / Codex 窗口不等于退出其进程。
 
 ## 退出与卸载
 
-“高级 → 退出额度工具”只结束运行。安装版可点击 **“高级 → 卸载程序”**，确认后退出并移除本版本的程序、登录启动项、设置快捷方式和本工具设置。不会卸载 ChatGPT / Codex，也不会删除它们的登录数据。
+- “高级 → 退出额度工具”结束程序及后台监听。
+- 安装版可通过“高级 → 卸载程序”或 Windows 应用列表卸载。卸载器按安装记录删除程序文件，保留目录中的无关文件。
+- 便携版退出后可删除解压目录。
+- 0.3.0 安装版在卸载时选择删除设置，会同时删除 DeepSeek 凭证；便携版可在删除目录前通过设置清除凭证。
 
-EXE 安装版还可从 Windows“已安装的应用”卸载。卸载器按安装记录删除自定义目录中的程序文件，不递归删除用户额外放入的无关文件。
+本工具的卸载操作不影响 ChatGPT / Codex 的安装和登录数据。
 
-便携版的一键卸载按钮不可用：退出后删除解压目录即可。历史 0.1.0 的安装和卸载脚本请从对应 Git 标签查阅。
+## 数据与隐私
 
-## 读取方式与隐私
+Codex 数据通过本地 `codex app-server` 读取，认证由 CLI 处理。DeepSeek 数据通过 HTTPS 从其余额或平台账单接口读取。
 
-通过本地 `codex app-server` 的 JSON-RPC 调用 `account/read` 与 `account/rateLimits/read`，识别通用 Codex 额度及 300 / 10080 分钟窗口。按所选间隔读取，收到更新事件时立即展示；服务端和其他客户端的额度变化仍可能存在延迟，不保证秒级同步。
+设置文件位于 `%LOCALAPPDATA%\CodexQuotaBar`。DeepSeek 凭证保存在当前 Windows 用户的凭据管理器，不写入设置 JSON、命令行或日志。程序不保存账户密码，不创建聊天或发起模型推理，无额外遥测后端。
 
-本工具不解析或保存 `auth.json`，不抓取 Cookie，不创建聊天、不发起模型推理，无额外遥测后端。Codex CLI 自行完成认证及服务端通信。设置文件只保存外观、显示器、刷新间隔和可选 CLI 路径等本工具配置，位于 `%LOCALAPPDATA%\CodexQuotaBar`。
+## 限制
 
-## 边界与限制
+- 主要适配标准水平任务栏；自动隐藏、竖直任务栏、替代任务栏及全屏场景尚未完成专项验证。
+- 窗口验证覆盖本机已连接屏幕，其他设备、DPI 和 Windows 版本可能存在差异。
+- 拖动位置不跨重启保存；显示器断开时回退主屏。
+- Pro 系列默认仅显示周额度属于本工具的显示行为，不代表服务端一定不提供 5 小时窗口。
+- Codex API-key-only 账户不支持此处的订阅额度读取。
+- 上游协议、平台账单接口或凭证有效期变化可能影响读取结果。
+- 程序尚未代码签名，未提供自动更新。
 
-- 任务栏组件是透明自绘窗口，并非 Windows 原生托盘图标；当前主要适配标准水平任务栏。自动隐藏、竖直任务栏、替代任务栏及全屏场景未完成专项验证。
-- 窗口与色板已在本机两块不同 DPI 的屏幕上验证；其他设备和 Windows 版本仍可能存在差异。
-- 拖动位置不跨重启保存。屏幕断开时回退主屏，重接后按原选择恢复；显示器以 Windows `DeviceName` 标识。
-- Pro 系列默认仅显示周额度是本工具的显示规则，不代表服务端一定不提供 5 小时窗口。可在“常规”页独立选择 5h / 周额度并恢复默认；手动开启但未返回的额度显示 `--`。两项均关闭会隐藏任务栏组件，可通过设置快捷方式重新打开设置。不支持 API-key-only 账户的订阅额度。
-- 依赖当前 Codex app-server 协议与桌面进程识别方式；上游变更可能需要适配。
-- 程序尚未代码签名，无自动下载或执行更新的机制。
-
-## 版本与项目结构
-
-0.2.0 将运行程序迁移到 C++ 原生实现；0.2.1 修复设置控件重绘与文字可读性；0.2.2 修复任务栏遮挡和 Pro 系列识别，加入独立额度显示与余量预览动画。历史源码可通过 Git 标签恢复。原始 `v0.1.0`、安装器补充 `v0.1.0-installer.1` 和已有下载不变；后续修改使用新版本。
+## 项目结构
 
 ```text
-native/          C++ 运行代码、原生设置、绘图与检查
-native/vendor/   固定版本 JSON 头文件及原作者许可
-tests/           安装与卸载验证脚本
-assets/          应用图标及可编辑的矢量源文件
-docs/            实现插图、开发说明和发布记录
-scripts/         原生构建、打包、发布与图标生成
-installer/       可选目录的原生 EXE 安装器配置
-artifacts/       本地发布包（不提交）
+native/          C++ 程序、设置、绘图、数据读取与检查
+native/vendor/   JSON 头文件及许可证
+tests/           安装与卸载检查
+assets/          应用图标
+docs/            界面预览、开发说明与版本记录
+scripts/         构建、打包和发布脚本
+installer/       EXE 安装器配置
+artifacts/       本地构建产物，不提交到仓库
 ```
 
-构建、验证和发布步骤见 [开发说明](docs/DEVELOPMENT.md)。代码使用 [MIT License](LICENSE)。
+构建与验证步骤见 [开发说明](docs/DEVELOPMENT.md)。许可证：[MIT](LICENSE)。
