@@ -227,6 +227,17 @@ bool Quotas::weekOnly() const {
     std::transform(p.begin(), p.end(), p.begin(), [](unsigned char c) { return char(std::tolower(c)); });
     return p == "pro";
 }
+std::wstring Quotas::planLabel() const {
+    std::string p = plan;
+    std::transform(p.begin(), p.end(), p.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    for (auto name : {"Free", "Go", "Plus", "Pro", "Team", "Business", "Enterprise", "Education"}) {
+        std::string key = name;
+        std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        if (p == key)
+            return wide(name);
+    }
+    return plan.empty() ? L"套餐未知" : wide(plan);
+}
 Quotas Quotas::parse(const json &j) {
     Quotas q;
     if (!j.is_object())
@@ -354,15 +365,22 @@ std::vector<Monitor> selectedMonitors(const Settings &s) {
                 selected.push_back(m);
     return selected;
 }
-std::optional<RECT> taskbar(HMONITOR m) {
+HWND taskbarWindow(HMONITOR m) {
     HWND w = FindWindowW(L"Shell_TrayWnd", nullptr);
     RECT r{};
     if (w && MonitorFromWindow(w, MONITOR_DEFAULTTONEAREST) == m && GetWindowRect(w, &r))
-        return r;
+        return w;
     w = nullptr;
     while ((w = FindWindowExW(nullptr, w, L"Shell_SecondaryTrayWnd", nullptr)))
         if (MonitorFromWindow(w, MONITOR_DEFAULTTONEAREST) == m && GetWindowRect(w, &r))
-            return r;
+            return w;
+    return nullptr;
+}
+std::optional<RECT> taskbar(HMONITOR m) {
+    RECT r{};
+    auto w = taskbarWindow(m);
+    if (w && GetWindowRect(w, &r))
+        return r;
     return {};
 }
 static std::wstring lower(std::wstring v) {

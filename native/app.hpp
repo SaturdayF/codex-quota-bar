@@ -5,7 +5,7 @@ struct Application;
 struct Overlay {
     Application *app;
     Monitor monitor;
-    HWND window = nullptr, details = nullptr;
+    HWND window = nullptr, details = nullptr, host = nullptr;
     Layout layout;
     Animation animation;
     State state;
@@ -43,6 +43,7 @@ struct Application {
     bool preview = false;
     bool testing = false;
     std::function<bool()> desktopProbe = desktopRunning;
+    std::function<HWND(HMONITOR)> taskbarProbe = taskbarWindow;
     bool fakeRpc = false; // Only enabled by in-process integration checks.
     fs::file_time_type settingsWrite{};
     Application(bool previewMode = false, bool test = false);
@@ -50,6 +51,7 @@ struct Application {
     void runWorker();
     void apply(const State &value);
     void rebuild();
+    void checkTaskbars();
     void refresh();
     void saved(const Settings &value);
     void showSettings(HMONITOR monitor = nullptr);

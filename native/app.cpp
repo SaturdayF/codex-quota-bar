@@ -19,15 +19,29 @@ Overlay::Overlay(Application *a, const Monitor &m, const Settings &s, const Stat
     : app(a), monitor(m), settings(s) {
     registerClass(L"CodexQuotaBar.Native.Widget", procedure);
     registerClass(L"CodexQuotaBar.Native.Details", detailProcedure);
-    window = CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-                             L"CodexQuotaBar.Native.Widget", L"Codex Quota Bar", WS_POPUP, m.bounds.left + 16,
-                             m.bounds.top, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), this);
+    // A desktop TOPMOST popup can still be covered when the shell raises its
+    // taskbar for Quick Settings. A child follows the taskbar's shell band.
+    host = app->taskbarProbe(m.handle);
+    window = CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW |
+                                 (host ? 0 : WS_EX_TOPMOST),
+                             L"CodexQuotaBar.Native.Widget", L"Codex Quota Bar", host ? WS_CHILD : WS_POPUP,
+                             0, 0, 1, 1, host ? host : app->controller, nullptr,
+                             GetModuleHandleW(nullptr), this);
+    if (!window && host) {
+        host = nullptr;
+        window = CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+                                 L"CodexQuotaBar.Native.Widget", L"Codex Quota Bar", WS_POPUP,
+                                 0, 0, 1, 1, app->controller, nullptr, GetModuleHandleW(nullptr), this);
+    }
+    if (!window)
+        throw std::runtime_error("Cannot create quota widget");
     details = CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-                              L"CodexQuotaBar.Native.Details", L"额度详情", WS_POPUP, 0, 0, 1, 1, window,
+                              L"CodexQuotaBar.Native.Details", L"额度详情", WS_POPUP, 0, 0, 1, 1, app->controller,
                               nullptr, GetModuleHandleW(nullptr), this);
     update(initial);
     position(true);
-    SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    SetWindowPos(window, host ? HWND_TOP : HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     render();
     SetTimer(window, 1, 50, nullptr);
 }
@@ -38,7 +52,10 @@ Overlay::~Overlay() {
         DestroyWindow(window);
 }
 void Overlay::position(bool reset) {
-    auto bar = taskbar(monitor.handle);
+    RECT bounds{};
+    std::optional<RECT> bar;
+    if (host && GetWindowRect(host, &bounds))
+        bar = bounds;
     int available = bar ? bar->bottom - bar->top : int(40 * monitor.dpi / 96.);
     layout = widgetLayout(settings, state.q.weekOnly(), monitor.dpi, available);
     if (reset || !placed)
@@ -47,7 +64,11 @@ void Overlay::position(bool reset) {
                    std::max(int(monitor.bounds.left), int(monitor.bounds.right) - layout.width));
     y = bar ? bar->top + (available - layout.height) / 2 : monitor.work.bottom - layout.height - 4;
     placed = true;
-    SetWindowPos(window, HWND_TOPMOST, x, y, layout.width, layout.height, SWP_NOACTIVATE);
+    POINT local{x, y};
+    if (host)
+        ScreenToClient(host, &local);
+    SetWindowPos(window, host ? HWND_TOP : HWND_TOPMOST, local.x, local.y, layout.width, layout.height,
+                 SWP_NOACTIVATE);
 }
 void Overlay::render() {
     if (!window || !placed)
@@ -56,7 +77,9 @@ void Overlay::render() {
     auto now = GetTickCount64();
     paintWidget(image, layout, state, settings, hover, animation.progress(true, now),
                 animation.progress(false, now));
-    image.present(window, x, y);
+    // Child placement is already handled in parent coordinates by position().
+    // Updating only the pixels avoids a second coordinate conversion by USER32.
+    image.present(window, x, y, !host);
 }
 void Overlay::update(const State &value) {
     bool changed = state.q.weekOnly() != value.q.weekOnly();
@@ -95,8 +118,10 @@ void Overlay::showDetails(const fs::path &capture) {
         roundPath(border, RectF(1, 1, width - 2.f, height - 2.f), 8 * d);
         Pen pen(light ? Color(255, 218, 218, 218) : Color(255, 75, 75, 75), 1);
         g.DrawPath(&pen, &border);
-        drawUiText(g, L"Codex 额度", RectF(20 * d, 12 * d, width - 40 * d, 32 * d), 20 * d, ink, true);
-        drawUiText(g, state.q.weekOnly() ? L"Pro · 每周额度" : L"5 小时与每周额度",
+        drawUiText(g, L"Codex 额度", RectF(20 * d, 12 * d, 124 * d, 32 * d), 20 * d, ink, true);
+        drawUiText(g, state.q.planLabel(), RectF(154 * d, 12 * d, width - 174 * d, 32 * d),
+                   14 * d, muted);
+        drawUiText(g, state.q.weekOnly() ? L"每周额度" : L"5 小时与每周额度",
                  RectF(20 * d, 44 * d, width - 40 * d, 26 * d), 14 * d, muted);
         int row = 0;
         for (bool hour : {true, false}) {
@@ -174,7 +199,8 @@ void Overlay::tick(const POINT *simulatedPointer) {
     }
     if (dragging)
         hideDetails();
-    SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    SetWindowPos(window, host ? HWND_TOP : HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 LRESULT CALLBACK Overlay::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
     auto self = reinterpret_cast<Overlay *>(GetWindowLongPtrW(w, GWLP_USERDATA));
@@ -185,6 +211,10 @@ LRESULT CALLBACK Overlay::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
     if (!self)
         return DefWindowProcW(w, msg, wp, lp);
     switch (msg) {
+    case WM_NCDESTROY:
+        self->window = nullptr;
+        SetWindowLongPtrW(w, GWLP_USERDATA, 0);
+        break;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
     case WM_ERASEBKGND:
@@ -324,6 +354,21 @@ void Application::rebuild() {
     for (auto &m : selectedMonitors(settings))
         overlays.push_back(std::make_unique<Overlay>(this, m, settings, state));
 }
+void Application::checkTaskbars() {
+    for (auto &o : overlays)
+        if (!IsWindow(o->window) || o->host != taskbarProbe(o->monitor.handle)) {
+            // Explorer can destroy the child windows or replace the taskbar.
+            rebuild();
+            return;
+        }
+    for (auto &o : overlays) {
+        auto oldX = o->x, oldY = o->y;
+        auto oldWidth = o->layout.width, oldHeight = o->layout.height;
+        o->position();
+        if (oldX != o->x || oldY != o->y || oldWidth != o->layout.width || oldHeight != o->layout.height)
+            o->render();
+    }
+}
 void Application::apply(const State &value) {
     bool layoutChanged = value.active != state.active || value.q.weekOnly() != state.q.weekOnly();
     state = value;
@@ -456,6 +501,7 @@ LRESULT CALLBACK Application::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) 
             return 0;
         }
         self->checkSettingsFile();
+        self->checkTaskbars();
         return 0;
     case WM_DISPLAYCHANGE:
     case WM_SETTINGCHANGE:

@@ -85,6 +85,7 @@ struct Quotas {
     std::optional<WindowQuota> hour, week;
     std::string plan;
     bool weekOnly() const;
+    std::wstring planLabel() const;
     static Quotas parse(const json &j);
 };
 struct State {
@@ -117,6 +118,7 @@ struct Monitor {
 };
 std::vector<Monitor> monitors();
 std::vector<Monitor> selectedMonitors(const Settings &s);
+HWND taskbarWindow(HMONITOR monitor);
 std::optional<RECT> taskbar(HMONITOR monitor);
 bool desktopBinary(std::wstring name, std::wstring path);
 bool desktopRunning();

@@ -26,11 +26,12 @@ Surface::~Surface() {
     if (dc)
         DeleteDC(dc);
 }
-void Surface::present(HWND window, int x, int y) {
+void Surface::present(HWND window, int x, int y, bool move) {
     POINT destination{x, y}, source{};
     SIZE size{width, height};
     BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-    UpdateLayeredWindow(window, nullptr, &destination, &size, dc, &source, 0, &blend, ULW_ALPHA);
+    UpdateLayeredWindow(window, nullptr, move ? &destination : nullptr, &size, dc, &source, 0, &blend,
+                        ULW_ALPHA);
 }
 void Surface::save(const fs::path &file) {
     CLSID png{0x557cf406, 0x1a04, 0x11d3, {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}};

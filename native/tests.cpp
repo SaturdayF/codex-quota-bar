@@ -30,6 +30,15 @@ int selfTests(const fs::path &output) {
           {{"primary", quota(-20, 300)}, {"secondary", quota(120, 10080)}, {"planType", "Pro"}}}});
     check(q.hour->remaining == 100 && q.week->remaining == 0 && q.weekOnly(),
           "clamp and case insensitive Pro");
+    check(q.planLabel() == L"Pro", "plan title canonical casing");
+    q.plan = "plus";
+    check(q.planLabel() == L"Plus", "Plus plan title");
+    q.plan = "enterprise";
+    check(q.planLabel() == L"Enterprise", "Enterprise plan title");
+    q.plan = "future_plan";
+    check(q.planLabel() == L"future_plan", "unrecognized plan preserved");
+    q.plan.clear();
+    check(q.planLabel() == L"套餐未知", "missing plan never inferred from quota windows");
     check(
         !Quotas::parse({{"rateLimits", {{"primary", {{"usedPercent", "32"}, {"windowDurationMins", 300}}}}}})
              .hour,
@@ -185,6 +194,7 @@ int uiTests(const fs::path &dir) {
     app.state.updated = utcNow();
     app.state.q.hour = WindowQuota{68, utcNow() + 1800};
     app.state.q.week = WindowQuota{27, utcNow() + 3600};
+    app.state.q.plan = "plus";
     app.settings = Settings{};
     app.rebuild();
     for (size_t i = 0; i < app.overlays.size(); ++i) {
@@ -192,8 +202,34 @@ int uiTests(const fs::path &dir) {
         auto bar = taskbar(overlay.monitor.handle);
         RECT r;
         GetWindowRect(overlay.window, &r);
+        log << "INFO monitor " << i << " widget " << r.left << ',' << r.top << ',' << r.right << ','
+            << r.bottom << " intended " << overlay.x << ',' << overlay.y << " host " << overlay.host
+            << " parent " << GetParent(overlay.window) << " style "
+            << GetWindowLongPtrW(overlay.window, GWL_STYLE) << std::endl;
+        if (bar)
+            log << "INFO taskbar " << bar->left << ',' << bar->top << ',' << bar->right << ',' << bar->bottom
+                << std::endl;
         check(!bar || std::abs((r.top + r.bottom) - (bar->top + bar->bottom)) <= 1,
               "taskbar vertical center monitor " + std::to_string(i));
+        check(!bar || (GetParent(overlay.window) == taskbarWindow(overlay.monitor.handle) &&
+                      (GetWindowLongPtrW(overlay.window, GWL_STYLE) & WS_CHILD)),
+              "widget embedded in monitor taskbar " + std::to_string(i));
+        check(GetAncestor(overlay.details, GA_ROOT) == overlay.details &&
+                  GetWindow(overlay.details, GW_OWNER) == app.controller,
+              "details remain independent of taskbar clipping " + std::to_string(i));
+        auto foreground = GetForegroundWindow();
+        auto oldX = overlay.x;
+        overlay.x += 23;
+        overlay.position();
+        overlay.render();
+        RECT moved{};
+        GetWindowRect(overlay.window, &moved);
+        check(moved.left == overlay.x && moved.top == overlay.y,
+              "layered child uses screen coordinates after drag monitor " + std::to_string(i));
+        check(GetForegroundWindow() == foreground, "widget placement preserves focus");
+        overlay.x = oldX;
+        overlay.position();
+        overlay.render();
         POINT point{r.left + 2, r.top + 2};
         overlay.tick(&point);
         overlay.hoverStart = GetTickCount64() - 300;
@@ -310,6 +346,46 @@ int uiTests(const fs::path &dir) {
     settings.reveal(nullptr);
     check(IsWindowVisible(settings.window), "hidden settings recover");
     app.settingsWindow.reset();
+    // Exercise shell elevation and host loss without changing the real taskbar
+    // or restarting the user's Explorer process.
+    {
+        Application fixture(false, true);
+        fixture.settings.displayMode = "primary";
+        auto monitor = selectedMonitors(fixture.settings).front();
+        RECT bar = taskbar(monitor.handle).value_or(
+            RECT{monitor.bounds.left, monitor.work.bottom - 48, monitor.bounds.right, monitor.work.bottom});
+        auto makeHost = [&] {
+            return CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC", L"Quota test taskbar",
+                                   WS_POPUP | WS_VISIBLE, bar.left, bar.top, bar.right - bar.left,
+                                   bar.bottom - bar.top, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        };
+        HWND host = makeHost();
+        check(host != nullptr, "isolated taskbar fixture created");
+        fixture.taskbarProbe = [&](HMONITOR) { return host; };
+        fixture.state = app.state;
+        fixture.rebuild();
+        auto &widget = *fixture.overlays.front();
+        auto foreground = GetForegroundWindow();
+        SetWindowPos(host, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        RECT r{};
+        GetWindowRect(widget.window, &r);
+        POINT p{r.left + (r.right - r.left) / 2, r.top + (r.bottom - r.top) / 2};
+        widget.tick(&p);
+        check(IsWindowVisible(widget.window) && WindowFromPoint(p) == widget.window,
+              "elevated taskbar still exposes widget hit surface");
+        check(GetForegroundWindow() == foreground, "taskbar maintenance does not steal focus");
+        DestroyWindow(host);
+        host = nullptr;
+        fixture.checkTaskbars();
+        check(IsWindow(fixture.overlays.front()->window) && !fixture.overlays.front()->host,
+              "destroyed taskbar recovers as temporary popup");
+        host = makeHost();
+        fixture.checkTaskbars();
+        check(GetParent(fixture.overlays.front()->window) == host,
+              "replacement taskbar reattaches widget");
+        fixture.overlays.clear();
+        DestroyWindow(host);
+    }
     app.state = State{};
     app.rebuild();
     std::atomic<bool> desktop{false};

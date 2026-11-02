@@ -11,7 +11,7 @@ struct Surface {
     Surface(int w, int h);
     ~Surface();
     Surface(const Surface &) = delete;
-    void present(HWND window, int x, int y);
+    void present(HWND window, int x, int y, bool move = true);
     void save(const fs::path &file);
 };
 void roundPath(GraphicsPath &path, RectF area, float radius);
