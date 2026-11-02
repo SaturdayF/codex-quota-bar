@@ -1,7 +1,7 @@
-param([string]$Compiler = 'g++', [string]$Windres = 'windres', [switch]$DebugBuild)
+param([string]$Compiler = 'g++', [string]$Windres = 'windres', [switch]$DebugBuild, [string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-$output = Join-Path $root 'artifacts/native-win-x64'
+$output = if ($OutputDirectory) { $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory) } else { Join-Path $root 'artifacts/native-win-x64' }
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 Push-Location (Join-Path $root 'native')
 try {

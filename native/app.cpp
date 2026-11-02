@@ -57,7 +57,7 @@ void Overlay::position(bool reset) {
     if (host && GetWindowRect(host, &bounds))
         bar = bounds;
     int available = bar ? bar->bottom - bar->top : int(40 * monitor.dpi / 96.);
-    layout = widgetLayout(settings, state.q.weekOnly(), monitor.dpi, available);
+    layout = widgetLayout(settings, settings.visibility(state.q), monitor.dpi, available);
     if (reset || !placed)
         x = monitor.bounds.left + 16 * monitor.dpi / 96;
     x = std::clamp(x, int(monitor.bounds.left),
@@ -82,7 +82,7 @@ void Overlay::render() {
     image.present(window, x, y, !host);
 }
 void Overlay::update(const State &value) {
-    bool changed = state.q.weekOnly() != value.q.weekOnly();
+    bool changed = settings.visibility(state.q) != settings.visibility(value.q);
     state = value;
     animation.update(state, settings.pref().animate && motionEnabled(), GetTickCount64(), utcNow());
     if (animation.running(GetTickCount64()))
@@ -99,7 +99,8 @@ void Overlay::hideDetails() {
 }
 void Overlay::showDetails(const fs::path &capture) {
     float d = monitor.dpi / 96.f;
-    int width = int(372 * d), height = int((state.q.weekOnly() ? 270 : 370) * d);
+    auto visible = settings.visibility(state.q);
+    int width = int(372 * d), height = int((170 + 100 * visible.count()) * d);
     width = std::min(width, int(monitor.work.right - monitor.work.left));
     int left =
         std::clamp<LONG>(x, monitor.work.left, std::max(monitor.work.left, monitor.work.right - width));
@@ -121,11 +122,11 @@ void Overlay::showDetails(const fs::path &capture) {
         drawUiText(g, L"Codex 额度", RectF(20 * d, 12 * d, 124 * d, 32 * d), 20 * d, ink, true);
         drawUiText(g, state.q.planLabel(), RectF(154 * d, 12 * d, width - 174 * d, 32 * d),
                    14 * d, muted);
-        drawUiText(g, state.q.weekOnly() ? L"每周额度" : L"5 小时与每周额度",
+        drawUiText(g, visible.count() == 2 ? L"5 小时与每周额度" : visible.hour ? L"5 小时额度" : L"每周额度",
                  RectF(20 * d, 44 * d, width - 40 * d, 26 * d), 14 * d, muted);
         int row = 0;
         for (bool hour : {true, false}) {
-            if (hour && state.q.weekOnly())
+            if (hour ? !visible.hour : !visible.week)
                 continue;
             auto q = hour ? state.q.hour : state.q.week;
             float yy = (86 + row * 100) * d;
@@ -349,7 +350,7 @@ void Application::checkSettingsFile() {
 }
 void Application::rebuild() {
     overlays.clear();
-    if (!state.active)
+    if (!state.active || !settings.visibility(state.q).count())
         return;
     for (auto &m : selectedMonitors(settings))
         overlays.push_back(std::make_unique<Overlay>(this, m, settings, state));
@@ -370,13 +371,18 @@ void Application::checkTaskbars() {
     }
 }
 void Application::apply(const State &value) {
-    bool layoutChanged = value.active != state.active || value.q.weekOnly() != state.q.weekOnly();
+    bool layoutChanged = value.active != state.active ||
+                         settings.visibility(value.q) != settings.visibility(state.q);
+    bool previewChanged = settingsWindow &&
+                          settingsWindow->draft.visibility(value.q) != settingsWindow->draft.visibility(state.q);
     state = value;
     if (layoutChanged)
         rebuild();
     else
         for (auto &o : overlays)
             o->update(state);
+    if (previewChanged)
+        settingsWindow->styleChanged();
 }
 void Application::showSettings(HMONITOR m) {
     if (settingsWindow && settingsWindow->closing)

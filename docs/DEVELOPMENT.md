@@ -12,6 +12,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-native.ps1
 
 输出 `artifacts/native-win-x64/CodexQuotaBar.exe`。脚本增量编译，将目标文件放在忽略的 artifacts 中；清理该目录后可完整重建。源码风格使用根目录 `.clang-format`。JSON 解析使用固定版本 nlohmann/json 3.11.3，MIT 许可随程序打包。
 
+运行中的 EXE 无法被链接器覆盖。可传 `-OutputDirectory codex_tmp/native-candidate` 在独立目录构建和验证，完成后再正常退出当前额度监听器、替换 EXE 并恢复运行。
+
 ## 检查
 
 ```powershell
@@ -47,7 +49,11 @@ business, ent26, enterprise_cbp_automation, enterprise_cbp_usage_based,
 enterprise, edu, edu_plus, edu_pro, sci, sci_plus, unknown
 ```
 
-`pro` / `prolite` / `promax` 统一遵循本工具的 Pro 单周展示偏好，这不是对官方套餐限额的承诺。其余套餐若响应有周窗口而无 300 分钟窗口，也使用单周布局。缺失额度不用于推断套餐名称；未知值原样展示。模拟 UI 回归覆盖从 Plus 切换到三个 Pro 值、未知单周套餐，再切回 Plus 的任务栏和详情布局；真实账户只读查询输出保存在忽略目录，不提交个人额度数据。
+`pro` / `prolite` / `promax` 默认只展示周额度，Plus 默认展示两项，这不是对官方套餐限额的承诺。其余套餐若响应有周窗口而无 300 分钟窗口，也默认使用单周布局。缺失额度不用于推断套餐名称；未知值原样展示。
+
+`ShowHourQuota` / `ShowWeekQuota` 是全局的可空布尔设置：缺失、null 或非布尔值跟随默认，true / false 是用户的独立覆盖。手动开启优先于套餐默认，未返回的额度仍显示 `--`。两项均关闭时不创建覆盖窗口，后台监听和独立设置入口仍保留。恢复默认清除两个覆盖值，后续账户变更继续自动适配；旧配置无需迁移操作。`Settings::visibility` 统一决定绘图、尺寸、详情行与预览的选择，单独展示 5h 时仍使用小时数据和颜色。
+
+余量开关沿用当前样式的动画参数与系统动画偏好，开关两个方向都重置预览计时；预览数据始终为模拟数据，但采用实际账户对应的显示选择。回归覆盖所有样式、三个 DPI、四种显示组合、配置往返、Pro 手动开启 5h、两项关闭、恢复默认、切换账户，以及预览区域在动画不同时间的实际像素。真实账户只读查询输出保存在忽略目录，不提交个人额度数据。
 
 ## 安装与打包
 

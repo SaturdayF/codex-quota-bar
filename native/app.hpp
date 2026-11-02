@@ -87,6 +87,7 @@ struct SettingsWindow {
     void selectPage(int index);
     void command(int id, int notification);
     void styleChanged();
+    Settings previewSettings() const;
     void draw(HDC dc, bool inner);
     void drawButton(const DRAWITEMSTRUCT &item);
     void openPalette(bool hour);

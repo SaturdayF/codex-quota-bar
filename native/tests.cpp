@@ -86,6 +86,36 @@ int selfTests(const fs::path &output) {
     check(Settings::fromJson({{"StyleOptions", nullptr}, {"Displays", nullptr}, {"CodexPath", nullptr}})
               .displays.empty(),
           "nullable old configuration");
+    Settings visibility;
+    Quotas account;
+    account.plan = "plus";
+    account.week = WindowQuota{27, 1000};
+    check(visibility.visibility(account) == QuotaVisibility{true, true},
+          "Plus defaults to both quotas even before hour data arrives");
+    for (auto plan : {"pro", "prolite", "promax"}) {
+        account.plan = plan;
+        check(visibility.visibility(account) == QuotaVisibility{false, true},
+              std::string("default weekly selection ") + plan);
+        visibility.showHour = true;
+        visibility.showWeek = false;
+        check(visibility.visibility(account) == QuotaVisibility{true, false},
+              std::string("manual hour-only selection overrides ") + plan);
+        visibility.showHour.reset();
+        visibility.showWeek.reset();
+    }
+    for (int mask = 0; mask < 4; ++mask) {
+        visibility.showHour = bool(mask & 1);
+        visibility.showWeek = bool(mask & 2);
+        auto restored = Settings::fromJson(visibility.toJson());
+        check(restored.showHour == visibility.showHour && restored.showWeek == visibility.showWeek,
+              "quota visibility round trip " + std::to_string(mask));
+    }
+    auto automatic = Settings::fromJson({{"ShowHourQuota", nullptr}, {"ShowWeekQuota", "invalid"}});
+    check(!automatic.showHour.has_value() && !automatic.showWeek.has_value(),
+          "missing null and malformed visibility settings follow account defaults");
+    visibility.showHour.reset();
+    check(!Settings::fromJson(visibility.toJson()).showHour.has_value(),
+          "automatic hour choice survives settings round trip");
     for (int i = 0; i < 7; ++i) {
         s.style = StyleIds[i];
         s.preferences[i] = {i % 2 == 0, i % 2 != 0, i % 2 == 0};
@@ -139,7 +169,7 @@ int selfTests(const fs::path &output) {
             for (int dpi : {96, 144, 192}) {
                 draw.style = style;
                 actual.q.plan = plan;
-                auto l = widgetLayout(draw, actual.q.weekOnly(), dpi, int(40 * dpi / 96.));
+                auto l = widgetLayout(draw, draw.visibility(actual.q), dpi, int(40 * dpi / 96.));
                 check(l.width > 0 && l.height <= 40 * dpi / 96,
                       "taskbar layout " + style + " " + plan + " " + std::to_string(dpi));
                 Surface start(l.width, l.height), finish(l.width, l.height);
@@ -149,8 +179,34 @@ int selfTests(const fs::path &output) {
                       "animated pixel frames " + style + " " + plan + " " + std::to_string(dpi));
             }
     draw = Settings{};
+    for (auto &style : StyleIds) {
+        draw.style = style;
+        actual.q.plan = "prolite";
+        for (int dpi : {96, 144, 192}) {
+            std::vector<BYTE> hourPixels;
+            for (int mask = 0; mask < 4; ++mask) {
+                draw.showHour = bool(mask & 1);
+                draw.showWeek = bool(mask & 2);
+                auto visible = draw.visibility(actual.q);
+                auto selected = widgetLayout(draw, visible, dpi, 40 * dpi / 96);
+                Surface image(selected.width, selected.height);
+                paintWidget(image, selected, actual, draw, false);
+                bool hasInk = false;
+                for (int pixel = 0; pixel < image.width * image.height; ++pixel)
+                    hasInk = hasInk || image.pixels[pixel * 4 + 3] > 1;
+                check(hasInk == (mask != 0),
+                      "selected quota pixels " + style + " " + std::to_string(mask) + " " + std::to_string(dpi));
+                std::vector<BYTE> pixels(image.pixels, image.pixels + image.width * image.height * 4);
+                if (mask == 1)
+                    hourPixels = pixels;
+                if (mask == 2)
+                    check(hourPixels != pixels, "hour-only and week-only render distinct data " + style);
+            }
+        }
+    }
+    draw = Settings{};
     draw.style = "outlined";
-    auto l = widgetLayout(draw, false, 144, 60);
+    auto l = widgetLayout(draw, draw.visibility(actual.q), 144, 60);
     Surface transparent(l.width, l.height);
     paintWidget(transparent, l, actual, draw, false);
     check(transparent.pixels[3] == 1, "transparent gaps preserve right-click hit surface");
@@ -299,7 +355,7 @@ int uiTests(const fs::path &dir) {
         for (size_t i = 0; i < app.overlays.size(); ++i) {
             auto &overlay = *app.overlays[i];
             auto bar = taskbar(overlay.monitor.handle);
-            auto expected = widgetLayout(app.settings, true, overlay.monitor.dpi,
+            auto expected = widgetLayout(app.settings, app.settings.visibility(weekly.q), overlay.monitor.dpi,
                                         bar ? bar->bottom - bar->top : int(40 * overlay.monitor.dpi / 96.));
             check(overlay.state.q.weekOnly() && overlay.layout.width == expected.width,
                   std::string("weekly-only widget after account update ") + plan);
@@ -315,7 +371,77 @@ int uiTests(const fs::path &dir) {
     }
     app.showSettings();
     auto &settings = *app.settingsWindow;
+    auto proState = regularState;
+    proState.q.plan = "prolite";
+    proState.q.hour.reset();
+    settings.previewStart = -1;
+    app.apply(proState);
+    check(!motionEnabled() || settings.previewStart >= 0,
+          "account-default change refreshes open settings preview");
+    settings.selectPage(1);
+    check(settings.previewSettings().visibility(proState.q) == QuotaVisibility{false, true},
+          "preview follows Pro defaults before manual selection");
+    settings.capture(dir / L"settings-general-pro-default.png");
+    settings.command(222, BN_CLICKED);
+    check(settings.previewSettings().visibility(proState.q) == QuotaVisibility{true, true},
+          "Pro can enable 5h in settings and preview");
+    app.saved(settings.draft);
+    check(app.overlays.front()->settings.visibility(proState.q).count() == 2,
+          "saved Pro 5h override reaches taskbar");
+    settings.command(223, BN_CLICKED);
+    app.saved(settings.draft);
+    auto &hourOnly = *app.overlays.front();
+    check(hourOnly.settings.visibility(proState.q) == QuotaVisibility{true, false},
+          "week can be disabled independently for hour-only taskbar");
+    hourOnly.showDetails(dir / L"details-manual-hour-only.png");
+    RECT hourCard{};
+    GetWindowRect(hourOnly.details, &hourCard);
+    check(hourCard.bottom - hourCard.top == int(270 * hourOnly.monitor.dpi / 96.f),
+          "hour-only details have one row even for a Pro account");
+    hourOnly.hideDetails();
+    settings.command(222, BN_CLICKED);
+    app.saved(settings.draft);
+    check(app.overlays.empty() && IsWindowVisible(settings.window),
+          "disabling both hides widgets while settings remain accessible");
     settings.selectPage(0);
+    settings.capture(dir / L"settings-all-hidden.png");
+    settings.command(224, BN_CLICKED);
+    app.saved(settings.draft);
+    check(!settings.draft.showHour.has_value() && !settings.draft.showWeek.has_value() &&
+              app.overlays.front()->settings.visibility(proState.q) == QuotaVisibility{false, true},
+          "reset restores automatic Pro defaults");
+    app.apply(regularState);
+    check(app.settings.visibility(regularState.q) == QuotaVisibility{true, true},
+          "automatic selection follows next Plus account");
+    settings.selectPage(0);
+    auto previewPixels = [&](int elapsed) {
+        settings.previewStart = elapsed < 0 ? -1 : int64_t(GetTickCount64()) - elapsed;
+        RECT r{};
+        GetClientRect(settings.content, &r);
+        Surface image(r.right, r.bottom);
+        settings.draw(image.dc, true);
+        GdiFlush();
+        std::vector<BYTE> pixels;
+        for (int y = settings.px(286); y < settings.px(348); ++y)
+            pixels.insert(pixels.end(), image.pixels + y * image.width * 4,
+                          image.pixels + (y + 1) * image.width * 4);
+        return pixels;
+    };
+    for (bool enabled : {false, true}) {
+        settings.previewStart = -1;
+        settings.command(206, BN_CLICKED);
+        check(settings.draft.pref().remaining == enabled, "remaining toggle updates draft");
+        check(!motionEnabled() || settings.previewStart >= 0, "remaining toggle restarts preview animation");
+        if (motionEnabled()) {
+            auto start = previewPixels(0), middle = previewPixels(400), end = previewPixels(-1);
+            check(start != middle && middle != end, "remaining toggle changes actual preview pixels over time");
+        }
+    }
+    settings.command(208, BN_CLICKED);
+    settings.command(206, BN_CLICKED);
+    check(settings.previewStart < 0, "remaining preview respects disabled animation");
+    settings.command(206, BN_CLICKED);
+    settings.command(208, BN_CLICKED);
     for (int i = 0; i < 7; ++i) {
         SendMessageW(settings.styles, CB_SETCURSEL, i, 0);
         settings.command(200, CBN_SELCHANGE);

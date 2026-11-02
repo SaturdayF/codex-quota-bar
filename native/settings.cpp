@@ -20,6 +20,9 @@ enum {
     Demo,
     Display = 220,
     Startup,
+    ShowHour,
+    ShowWeek,
+    ResetQuotas,
     Path = 240,
     Browse,
     Interval,
@@ -45,7 +48,8 @@ static void registerSettingsClass(const wchar_t *name, WNDPROC proc) {
     RegisterClassExW(&c);
 }
 static bool isToggle(int id) {
-    return id == Letters || id == Remaining || id == Percent || id == Animate || id == Startup;
+    return id == Letters || id == Remaining || id == Percent || id == Animate || id == Startup ||
+           id == ShowHour || id == ShowWeek;
 }
 SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
     : app(a), draft(a->settings), startup(startupEnabled()) {
@@ -142,6 +146,9 @@ void SettingsWindow::createControls() {
     }
     SendMessageW(display, CB_SETCURSEL, index, 0);
     button(L"随 Windows 登录启动", Startup, 1);
+    button(L"显示 5 小时额度", ShowHour, 1);
+    button(L"显示周额度", ShowWeek, 1);
+    button(L"恢复套餐默认", ResetQuotas, 1);
     path = control(L"EDIT", draft.codexPath.c_str(), Path, 2, ES_AUTOHSCROLL);
     SendMessageW(path, EM_SETCUEBANNER, 0, reinterpret_cast<LPARAM>(L"自动查找 Codex CLI"));
     button(L"浏览…", Browse, 2);
@@ -165,8 +172,15 @@ void SettingsWindow::styleChanged() {
     EnableWindow(GetDlgItem(content, Demo), draft.pref().animate);
     previewStart = draft.pref().animate && motionEnabled() ? int64_t(GetTickCount64()) : -1;
     InvalidateRect(content, nullptr, FALSE);
-    for (int id : {Letters, Remaining, Percent, Animate})
+    for (int id : {Letters, Remaining, Percent, Animate, ShowHour, ShowWeek})
         InvalidateRect(GetDlgItem(content, id), nullptr, TRUE);
+}
+Settings SettingsWindow::previewSettings() const {
+    auto preview = draft;
+    auto visible = draft.visibility(app->state.q);
+    preview.showHour = visible.hour;
+    preview.showWeek = visible.week;
+    return preview;
 }
 void SettingsWindow::layout() {
     // Moving overlapping child HWNDs with MoveWindow(TRUE) copies stale pixels.
@@ -180,7 +194,7 @@ void SettingsWindow::layout() {
     GetClientRect(content, &c);
     contentWidth = int(c.right * 96. / dpi);
     contentHeight = int(c.bottom * 96. / dpi);
-    int needed = page == 0 ? 704 : page == 1 ? 420 : 540;
+    int needed = page == 0 ? 704 : page == 1 ? 554 : 540;
     scroll = std::clamp(scroll, 0, std::max(0, needed - contentHeight));
     SCROLLINFO si{sizeof(si), SIF_RANGE | SIF_PAGE | SIF_POS,   0,
                   needed - 1, UINT(std::max(1, contentHeight)), scroll,
@@ -208,6 +222,9 @@ void SettingsWindow::layout() {
     place(Demo, 0, 650, 122, 34);
     place(Display, right - 20, 89, 230, 300);
     place(Startup, contentWidth - 60, 155, 44, 26);
+    place(ShowHour, contentWidth - 60, 221, 44, 26);
+    place(ShowWeek, contentWidth - 60, 287, 44, 26);
+    place(ResetQuotas, contentWidth - 154, 353, 140, 34);
     place(Path, 0, 140, contentWidth - 112, 30);
     place(Browse, contentWidth - 100, 139, 86, 32);
     place(Interval, right + 60, 207, 150, 230);
@@ -307,14 +324,20 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 Quotas q;
                 q.hour = WindowQuota{68, 0};
                 q.week = WindowQuota{27, 0};
-                auto layout = widgetLayout(draft, false, 96, 54);
+                auto preview = previewSettings();
+                auto visible = preview.visibility(q);
+                auto layout = widgetLayout(preview, visible, 96, 54);
                 double t =
                     previewStart < 0 ? 1 : std::clamp((GetTickCount64() - previewStart) / 1200., 0., 1.);
                 double progress = 1 - std::pow(1 - t, 3);
-                drawWidget(g,
-                           RectF((contentWidth - 14 - layout.width) / 2.f, 286 + (62 - layout.height) / 2.f,
-                                 float(layout.width), float(layout.height)),
-                           q, draft, false, light, progress, progress);
+                if (!visible.count())
+                    drawUiText(g, L"已隐藏所有额度", RectF(0, 298, contentWidth - 14.f, 36),
+                               14, muted, false, true);
+                else
+                    drawWidget(g,
+                               RectF((contentWidth - 14 - layout.width) / 2.f, 286 + (62 - layout.height) / 2.f,
+                                     float(layout.width), float(layout.height)),
+                               q, preview, false, light, progress, progress);
                 drawUiText(g, L"预览使用模拟数据", RectF(0, 350, float(contentWidth), 24), 12, muted);
                 row(380, L"仪表中间显示 H 和 W", L"H 表示 5 小时额度，W 表示周额度。", 110);
                 row(446, L"在图标上展示余量", L"关闭后保持完整纯色图形；按样式分别保存。", 110);
@@ -323,12 +346,13 @@ void SettingsWindow::draw(HDC dc, bool inner) {
             } else if (page == 1) {
                 row(82, L"显示屏幕", L"选择任务栏组件出现的位置。");
                 row(148, L"随 Windows 登录启动", L"启动轻量监听器，自动跟随应用。", 110);
-                row(214, L"跟随应用运行", L"任一应用运行时显示，两者完全退出后停止读取。", 80);
-                drawUiText(g, L"自动", RectF(contentWidth - 80.f, 214, 65, 30), 13, muted, false, true);
-                row(280, L"Pro 账户", L"识别为 Pro 时，仅显示周额度。", 80);
-                drawUiText(g, L"自动", RectF(contentWidth - 80.f, 280, 65, 30), 13, muted, false, true);
-                drawUiText(g, L"悬浮查看详情 · 右键打开设置 · 左键横向拖动",
-                         RectF(0, 365, float(contentWidth), 32), 14, muted);
+                row(214, L"显示 5 小时额度", L"默认 Plus 显示，Pro 系列隐藏。", 110);
+                row(280, L"显示周额度", L"默认显示；可与 5 小时额度独立选择。", 110);
+                row(346, L"按套餐自动选择", L"恢复 Plus 两项、Pro 系列仅周额度。", 170);
+                row(412, L"跟随应用运行", L"两款桌面应用均退出后停止读取和显示。", 80);
+                drawUiText(g, L"自动", RectF(contentWidth - 80.f, 412, 65, 30), 13, muted, false, true);
+                drawUiText(g, L"两项关闭时隐藏组件，可从开始菜单打开设置。",
+                         RectF(0, 491, float(contentWidth), 32), 14, muted);
             } else {
                 drawUiText(g, L"Codex CLI 路径", RectF(0, 82, float(contentWidth), 26), 16, ink);
                 drawUiText(g, L"留空时自动查找已安装的 Codex。", RectF(0, 108, float(contentWidth), 26), 14,
@@ -363,10 +387,13 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
         float d = dpi / 96.f;
         RectF area(1, 1, image.width - 2.f, image.height - 2.f);
         if (isToggle(id)) {
+            auto visible = draft.visibility(app->state.q);
             bool enabled = id == Letters     ? draft.letters
                            : id == Remaining ? draft.pref().remaining
                            : id == Percent   ? draft.pref().percent
                            : id == Animate   ? draft.pref().animate
+                           : id == ShowHour  ? visible.hour
+                           : id == ShowWeek  ? visible.week
                                              : startup;
             Color track = enabled ? (light ? Color(255, 35, 35, 35) : Color(255, 225, 225, 225))
                                   : (light ? Color(255, 180, 180, 180) : Color(255, 85, 85, 85));
@@ -451,6 +478,7 @@ void SettingsWindow::command(int id, int notice) {
         break;
     case Remaining:
         draft.preferences[draft.styleIndex()].remaining = !draft.pref().remaining;
+        styleChanged();
         break;
     case Percent:
         draft.preferences[draft.styleIndex()].percent = !draft.pref().percent;
@@ -461,6 +489,21 @@ void SettingsWindow::command(int id, int notice) {
         break;
     case Startup:
         startup = !startup;
+        break;
+    case ShowHour:
+        draft.showHour = !draft.visibility(app->state.q).hour;
+        styleChanged();
+        break;
+    case ShowWeek:
+        draft.showWeek = !draft.visibility(app->state.q).week;
+        styleChanged();
+        break;
+    case ResetQuotas:
+        draft.showHour.reset();
+        draft.showWeek.reset();
+        styleChanged();
+        InvalidateRect(GetDlgItem(content, ShowHour), nullptr, TRUE);
+        InvalidateRect(GetDlgItem(content, ShowWeek), nullptr, TRUE);
         break;
     case Demo:
         if (motionEnabled())

@@ -55,16 +55,31 @@ const std::vector<std::string> StyleIds = {"gauges", "underline", "badges", "tic
 const std::vector<std::wstring> StyleNames = {L"双仪表", L"细线（底线数字）", L"双徽标",  L"双刻度",
                                               L"纯数字", L"圆框数字",         L"侧边数字"};
 constexpr int Intervals[] = {15, 30, 60, 120, 300};
+struct Quotas;
+struct QuotaVisibility {
+    bool hour = true, week = true;
+    int count() const {
+        return int(hour) + int(week);
+    }
+    bool operator==(const QuotaVisibility &other) const {
+        return hour == other.hour && week == other.week;
+    }
+    bool operator!=(const QuotaVisibility &other) const {
+        return !(*this == other);
+    }
+};
 struct Settings {
     std::string displayMode = "all", style = "gauges", hourColor = "#219E86", weekColor = "#648DE6";
     std::vector<std::string> displays;
     std::wstring codexPath;
     bool letters = true;
+    std::optional<bool> showHour, showWeek; // Unset follows the account's default.
     double scale = 1;
     int interval = 30;
     std::vector<Preference> preferences = std::vector<Preference>(7);
     json extra = json::object();
     int styleIndex() const;
+    QuotaVisibility visibility(const Quotas &q) const;
     Preference pref() const {
         return preferences[styleIndex()];
     }

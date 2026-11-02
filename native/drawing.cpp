@@ -145,13 +145,16 @@ void drawWidget(Graphics &g, RectF b, const Quotas &q, const Settings &s, bool s
                 double wp) {
     g.SetSmoothingMode(SmoothingModeAntiAlias);
     g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
-    int count = q.weekOnly() ? 1 : 2;
+    auto visible = s.visibility(q);
+    int count = visible.count();
+    if (!count)
+        return;
     float width = b.Width / count, scale = b.Height / 32;
     auto pref = s.pref();
     Color track = light ? Color(255, 190, 198, 208) : Color(255, 85, 96, 112);
     Color ink = light ? Color(255, 32, 32, 32) : Color(255, 245, 245, 245);
     for (int i = 0; i < count; ++i) {
-        bool hour = !q.weekOnly() && i == 0;
+        bool hour = visible.hour && i == 0;
         auto window = hour ? q.hour : q.week;
         Color accent = stale ? Color(255, 128, 128, 128)
                              : parseColor(hour ? s.hourColor : s.weekColor, Color(255, 33, 158, 134));
@@ -238,7 +241,9 @@ static RECT inkBounds(Surface &surface) {
     }
     return bounds;
 }
-Layout widgetLayout(const Settings &s, bool weekOnly, int dpi, int available) {
+Layout widgetLayout(const Settings &s, QuotaVisibility visible, int dpi, int available) {
+    if (!visible.count())
+        return {1, 1, RectF(0, 0, 1, 1)};
     int cell = s.style == "gauges"     ? 92
                : s.style == "badges"   ? 94
                : s.style == "outlined" ? 40
@@ -249,14 +254,15 @@ Layout widgetLayout(const Settings &s, bool weekOnly, int dpi, int available) {
     RECT ink{};
     available = std::max(8, available);
     Settings measured = s;
+    measured.showHour = visible.hour;
+    measured.showWeek = visible.week;
     measured.preferences[measured.styleIndex()].animate = false;
     for (int attempt = 0; attempt < 6; ++attempt) {
-        w = std::max(1, int(std::round(cell * (weekOnly ? 1 : 2) * scale)));
+        w = std::max(1, int(std::round(cell * visible.count() * scale)));
         h = std::max(1, int(std::round(32 * scale)));
         ink = {w, h, -1, -1};
         for (int value : {0, 68, 100, -1}) {
             Quotas q;
-            q.plan = weekOnly ? "pro" : "plus";
             if (value >= 0)
                 q.hour = q.week = WindowQuota{double(value), 0};
             Surface image(w, h);
@@ -308,7 +314,7 @@ void renderPreviews(const fs::path &dir) {
             Quotas q;
             q.hour = WindowQuota{68, 0};
             q.week = WindowQuota{27, 0};
-            auto l = widgetLayout(s, false, 144, 48);
+            auto l = widgetLayout(s, s.visibility(q), 144, 48);
             drawWidget(g, RectF(310, float(y + 3), float(l.width), float(l.height)), q, s, false, true);
             s.preferences[i].percent = false;
             drawWidget(g, RectF(700, float(y + 3), float(l.width), float(l.height)), q, s, false, true);

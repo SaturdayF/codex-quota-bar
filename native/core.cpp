@@ -90,6 +90,9 @@ int Settings::styleIndex() const {
     auto it = std::find(StyleIds.begin(), StyleIds.end(), style);
     return it == StyleIds.end() ? 0 : int(it - StyleIds.begin());
 }
+QuotaVisibility Settings::visibility(const Quotas &q) const {
+    return {showHour.value_or(!q.weekOnly()), showWeek.value_or(true)};
+}
 Settings Settings::fromJson(const json &j) {
     Settings s;
     if (!j.is_object())
@@ -112,6 +115,10 @@ Settings Settings::fromJson(const json &j) {
                 s.displays.push_back(d.get<std::string>());
     s.codexPath = wide(string("CodexPath", ""));
     s.letters = boolean(j, "ShowDialLetters", true);
+    if (j.contains("ShowHourQuota") && j["ShowHourQuota"].is_boolean())
+        s.showHour = j["ShowHourQuota"].get<bool>();
+    if (j.contains("ShowWeekQuota") && j["ShowWeekQuota"].is_boolean())
+        s.showWeek = j["ShowWeekQuota"].get<bool>();
     if (j.contains("WidgetScale") && j["WidgetScale"].is_number()) {
         double v = j["WidgetScale"];
         s.scale = std::isfinite(v) ? std::clamp(v, .6, 1.4) : 1;
@@ -147,6 +154,8 @@ json Settings::toJson() const {
     j["Displays"] = displays;
     j["CodexPath"] = codexPath.empty() ? json(nullptr) : json(utf8(codexPath));
     j["ShowDialLetters"] = letters;
+    j["ShowHourQuota"] = showHour ? json(*showHour) : json(nullptr);
+    j["ShowWeekQuota"] = showWeek ? json(*showWeek) : json(nullptr);
     j["WidgetScale"] = scale;
     j["HourColorHex"] = hourColor;
     j["WeekColorHex"] = weekColor;
@@ -232,7 +241,7 @@ bool Quotas::weekOnly() const {
     // Keep the app's weekly-only preference for every known consumer Pro tier.
     // A weekly-only payload must not invent an unavailable 5-hour window,
     // including for future plans that this version does not know by name.
-    return p == "pro" || p == "prolite" || p == "promax" || (week && !hour);
+    return p == "pro" || p == "prolite" || p == "promax" || (p != "plus" && week && !hour);
 }
 std::wstring Quotas::planLabel() const {
     auto p = planKey(plan);
