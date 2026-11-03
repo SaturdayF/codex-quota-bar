@@ -1,111 +1,67 @@
-# 原生版开发与验证
+# 开发说明
 
-0.3.0 的原发布已撤回，当前修订未发布；历史 `v0.3.0` 标签固定在 `2a8e2fa1b9f0fd73ac66ebab8f0362f93e7083f1`，不移动；`v0.2.2` 固定在 `92f6a0bae931ddd16ab89876d27c81aa72113496`，不移动标签或覆盖既有下载。
+## 结构
 
-任务栏组件的 50 ms 计时器只处理鼠标悬浮，不周期性提升窗口层级。500 ms 维护仅在实际屏幕坐标或尺寸变化时定位，并保留既有层级；如有相交的外部任务栏子窗口位于组件上方，才进行一次层级恢复，忽略同一程序的其他组件。UI 回归覆盖 Codex / DeepSeek 同时显示时的窗口消息计数、层级稳定、外部遮挡恢复及任务栏宿主替换。
-
-`AvoidTaskbarIcons` 默认 true，可在常规页关闭。`taskbar.cpp` 在单独的 COM MTA worker 中每约 1.5 秒读取所选任务栏的可见按钮边界，UIA 批量缓存属性并设置连接 / 事务超时；经典任务栏的开始按钮和通知区域 HWND 作为补充。仅读取控件类型、进程、可见性、可聚焦性和矩形，不读取窗口文本。带配置代次、宿主句柄和坐标范围的快照由消息传回 UI 线程，避免套用旧任务栏布局。布局使用这些占用区域安排各组件，位置安全时保持不动，识别范围取决于系统任务栏的可访问性信息。
-
-`arrangeTaskbarWidgets` 联合搜索各组件的区间端点与最近可用点，优先最大化可显示组件数量，再最小化移动距离。测量与窗口提交分开，已安全的布局不重复定位。拖动时仅约束任务栏边界，允许跨越系统图标、覆盖其他组件；开始拖动时只提升一次层级。松手以窗口矩形交集面积判断，达到较小组件面积的 50% 则交换，较少重叠则回位，无重叠则普通落位，最后统一恢复系统图标避让。捕获丢失时恢复原位置。按屏幕及组件类型保存会话内的位置，重建窗口时复用；不写入设置文件，进程重启后恢复默认位置。
-
-松手落位由独立 16 ms 窗口计时器驱动 240 ms 的 cubic ease-out。`x` 为布局保留的最终坐标，`visualX` 为当前显示坐标，绘图使用后者；普通布局检查遇到相同目标不会抢先落位或重启动画。每帧仅更新确有变化的位置并保留窗口层级，完成后停止计时器。重新按住时从实际窗口坐标停止同屏的落位动画；隐藏、尺寸变化或系统关闭动画时立即提交最终位置。回归覆盖中间帧、同时交换、计时器完成、重绘不跳帧、拖动打断及空闲无重复定位。
-
-## DeepSeekHarness 实现
-
-单日账单响应的 `bucket` 已实测为数值 `3600`，即 24 个小时分桶，不应限定为字符串 `1d`。解析同时接受正整数秒数和 `s/m/h/d` 文本粒度，要求粒度不大于一天且能整除一天，继续严格校验统计日期范围并过滤当日 bucket；费用和 Token 在当天范围内逐桶聚合。
-
-`--deepseek-probe --output codex_tmp/deepseek-probe.json` 使用本机 Windows 凭据管理器中的平台登录态进行一次只读查询，仅输出各接口成功状态、固定错误文案和模型数量，不输出凭证、账户标识、余额、用量或原始响应。2026-11-02 已使用该入口确认真实账户的余额、费用和 Token 三项均成功；该状态文件位于忽略目录，不提交账户数据。
-
-`DeepSeekShowWhenStopped` 为独立显示选项，默认 false。实际显示及 worker 查询条件统一为 `DeepSeekShowWhenStopped || (DeepSeekHarnessEnabled && harnessRunning)`；前者开启时应用启停不会重置查询会话。任意显示条件满足即可自动或手动刷新，两项均关闭时取消当前请求并清空显示。
-
-默认联动模式下组件平时待机，500 ms 维护检查 Harness 桌面进程。官方桌面产品名参考 [Harness 打包配置](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/desktop/scripts/electron-builder-config.mjs)，识别 `DeepSeek Harness.exe`、`DeepSeekHarness.exe`、`deepseek-harness.exe`，不将普通 Node、安装器、余额监控工具视为 Harness；不检测浏览器和 CLI 会话。`DeepSeekHarnessEnabled` 表示是否自动跟随，默认 true；旧的常驻 `DeepSeekEnabled` 不再决定运行状态，序列化时删除旧键。默认模式下，未运行时不显示组件，也不启动平台查询。显示条件或设置更改时更新会话代次并替换共享取消标记，停止显示时隐藏并取消后续请求，响应必须同时匹配配置代次和应用会话代次才可应用；重新显示不会沿用旧会话数据。
-
-`deepseek.cpp` 负责 Windows 凭据管理器、固定 HTTPS 端点的 WinHTTP 只读请求、账单解析与 UTC+8 日期；`deepseek_ui.cpp` 负责独立 worker、任务栏文字与悬浮明细。启用状态和刷新间隔保存在 JSON；userToken 只存入本机 Windows 凭据管理器，不写入配置、命令行或日志。余额与账单均由平台登录态读取。程序不提供 API Key 输入、读取或保存接口，不访问 `api.deepseek.com/user/balance`，也不读取 API Key 环境变量。会话导入支持原始令牌、Bearer 文本及浏览器本地存储的 `{"value":"…"}` 结构。识别为 `sk-` 前缀的 API Key 在网络请求和持久化之前拒绝。
-
-平台请求为 `/api/v0/users/get_user_summary` 及 `/api/v0/usage/by_api_key/{cost,amount}?start=<北京时间零点 Unix 秒>&end=<翌日零点>&tz=28800`。按 `series[].model` 聚合账户的当天 bucket，忽略 API Key 元数据；费用按货币分别累计，Token 的 `REQUEST` 不计入 Token 总量。金额以 10^-8 货币单位的定点数累计，异常数值或结构失败不能退化成零。参考公开实现的协议结构：[平台接口记录](https://github.com/MCwasd/deepseek-platform-widget/blob/main/deepseek-api-reference.md)、[CodexBar 数据源说明](https://github.com/steipete/CodexBar/blob/main/docs/deepseek.md)；这是平台私有接口，不是官方稳定 API 合约。平台入口见 [DeepSeek 用量页](https://platform.deepseek.com/usage)。协议兼容性同时通过合成回归及一次真实账户只读查询验证。
-
-网络请求禁用跨站重定向，保持 TLS 默认验证，设置连接与读取超时，错误不包含原始响应或凭证。worker 在配置代次变化后丢弃过期响应，跨日先清除费用再取当天账单；暂时失败时仅保留同代次、同日的旧结果和时间戳。关闭开关后不查询，独立显示不受 Codex 进程退出影响。
-
-`deepseek_tests.cpp` 使用脱敏的合成协议响应，覆盖币种、精度、跨日、聚合、无权限/格式错误、取消请求、独立显示、设置入口和晚到响应。测试不访问真实凭证、不发推理请求。新增的 WinHTTP 与凭据 API 均属于 Windows 系统组件。
-
-0.2.0 使用 C++17、Win32 和 Windows 自带 GDI+，无需 .NET。C++ 标准库和线程运行库静态链接。历史 C# 源码已从当前工作树清理；完整旧构建流程可从 `v0.1.0-installer.1` 标签查阅。
+| 目录 | 内容 |
+| --- | --- |
+| native/ | C++ 程序、配置、绘图、任务栏布局及数据读取 |
+| native/vendor/ | nlohmann/json 头文件和许可证 |
+| tests/ | 安装与便携卸载集成测试 |
+| scripts/ | 构建、打包和发布脚本 |
+| installer/ | Inno Setup 配置与翻译 |
+| assets/ | 应用图标 |
+| docs/ | 使用说明、界面图及版本记录 |
 
 ## 构建
 
-需要 Windows 和 x64 MinGW-w64（已用 GCC 11.2.0 验证），将 `g++`、`windres` 加入 PATH；Python 仅用于 ZIP 打包。运行程序不需要这些开发工具。
+需要 Windows、带完整 UI Automation 头文件的 x64 MinGW-w64，以及 Python。0.3.1 使用 w64devkit 2.11.0 / GCC 16.2.0 和 Inno Setup 6.7.4 构建。
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-native.ps1
+./scripts/build-native.ps1
+./scripts/build-native-installer.ps1 -SkipBuild -InnoCompiler C:/path/to/ISCC.exe
 ```
 
-输出 `artifacts/native-win-x64/CodexQuotaBar.exe`。脚本增量编译，将目标文件放在忽略的 artifacts 中；清理该目录后可完整重建。源码风格使用根目录 `.clang-format`。JSON 解析使用固定版本 nlohmann/json 3.11.3，MIT 许可随程序打包。
+可通过 `-Compiler`、`-Windres` 指定工具路径，或通过 `-OutputDirectory` 选择独立构建目录。运行中的 EXE 不能直接覆盖。
 
-运行中的 EXE 无法被链接器覆盖。可传 `-OutputDirectory codex_tmp/native-candidate` 在独立目录构建和验证，完成后再正常退出当前额度监听器、替换 EXE 并恢复运行。
+程序使用 C++17、Win32 和 GDI+，静态链接 C++ 运行库。输出位于 `artifacts/native-win-x64`，发布包位于 `artifacts/releases/v0.3.1`，包含 Setup EXE、Portable ZIP 和 SHA256SUMS.txt。
 
-## 检查
+## 数据读取
+
+Codex 通过本地 `codex app-server` 的 `account/read`、`account/rateLimits/read` 读取账户和额度。按所选刷新间隔轮询，并处理更新事件。
+
+DeepSeek 使用 WinHTTP 读取 `platform.deepseek.com` 的账户余额、费用和 Token 接口。账单按 UTC+8 的当日范围聚合；金额使用定点数，不同币种分别累计。请求设置超时、取消和失败退避，响应按配置代次与应用会话校验。凭证保存在 Windows 凭据管理器。
+
+## 窗口与渲染
+
+任务栏组件使用透明自绘窗口。UI Automation worker 获取可见控件边界，布局器联合安排两个组件的空位。任务栏宿主变化时重建组件；嵌入被拒绝时按任务栏矩形定位备用窗口，并记录宿主以避免重复重建。
+
+拖动落位采用约 240 毫秒的减速过渡，支持中途接管。设置页使用固定控件画布和裁剪视口，滚动只移动画布；栏目切换批量定位当前控件并重绘。显示比例跟随屏幕 DPI，动画遵循系统设置。
+
+## 验证
 
 ```powershell
 $app = (Resolve-Path artifacts/native-win-x64/CodexQuotaBar.exe).Path
-Start-Process $app -ArgumentList '--self-test --output codex_tmp/native-checks.txt' -Wait
-Start-Process $app -ArgumentList '--ui-test --output codex_tmp/native-ui' -Wait
-Start-Process $app -ArgumentList '--render-ui codex_tmp/native-previews' -Wait
+Start-Process $app -ArgumentList '--self-test --output codex_tmp/core.txt' -Wait
+Start-Process $app -ArgumentList '--ui-test --output codex_tmp/ui' -Wait
+Start-Process $app -ArgumentList '--render-ui codex_tmp/previews' -Wait
+./tests/NativeInstaller.Tests.ps1
+./tests/PortableUninstall.Tests.ps1
 ```
 
-核心检查涵盖额度窗口筛选、异常值、旧配置兼容、未知配置字段保留、动画重置、所有样式在多个 DPI / Pro 布局下的实际渲染像素、真实子进程 JSON-RPC 管道和原生卸载标记。
+0.3.1 通过 430 项核心检查与 243 项 UI 检查，其中包含 28 项 DeepSeek UI 检查。覆盖额度解析、配置、子进程通信、多 DPI 绘图、滚动重绘、悬浮与右键、布局避让、拖动交换和会话取消。集成测试覆盖自定义路径安装、安装版卸载、便携版卸载及无关文件保留。
 
-设置栏目切换不使用父窗口 `WM_SETREDRAW` 冻结来管理子控件。非当前栏目先隐藏且不参与定位，当前栏目通过同父窗口的批量定位一次显示；滚动条变化后重新读取可用宽度，最终统一重绘客户区、子控件及非客户区边框。布局有重入保护。切栏回归经实际命令路径切换四页，检查隐藏控件保持位置不动，并比较实际窗口像素与完整重绘后的结果，覆盖编辑框、下拉框和按钮残影。
+UI 与协议回归使用模拟数据。安装卸载测试使用独立目录，禁止对用户真实安装进行卸载测试。
 
-滚动使用固定的合成视口和整页画布，原生控件保持画布内坐标。滚轮与滚动条只更新画布偏移，不调用控件布局；视口负责祖先裁剪，避免控件在自身父窗口边缘反复改变可见区域。小于一个刻度的滚轮输入累积到完整刻度再处理，到达边界不重绘。回归使用真实 `WM_MOUSEWHEEL` 路径，覆盖四栏、部分裁剪的控件、往返滚动、小步输入和上下边界；同时计数确认滚动时没有逐个控件的定位请求。
+## 打包与发布
 
-UI 检查在已连接的显示屏创建真实窗口，以合成消息和注入坐标测试右键设置、首帧居中、悬浮恢复、样式切换、色板、缩放、隐藏与最小化恢复，不移动用户鼠标、不写用户设置、不改启动项。测试用额度为模拟数据。隐藏启动测试覆盖后台启动标志影响首次设置窗口显示的情况。0.2.1 新增缩短窗口后多位置滚动检查，对比移动后子窗口的实际像素与完整重绘结果，避免仅用 WM_PRINTCLIENT 掩盖残影。设置布局使用无像素复制的定位，并在完成后重绘所有子控件。
+安装版通过 `installer.ini` 识别对应产品和版本的 Inno 卸载器。便携包附带 `portable.json` 和 PowerShell 卸载脚本，校验产品和版本后按固定文件清单清理。
 
-设置与详情使用 Windows Codex 系统 UI 字体栈对应的 Segoe UI，中文使用 Microsoft YaHei UI，开启灰度文字抗锯齿。没有复制或分发 Codex 的私有字体资源。
+发布前核对版本、ZIP 内容、PE 系统依赖和 SHA-256。发布脚本校验远端标签指向及上传文件摘要。已发布标签和下载文件保持固定，后续功能修改使用新版本。
 
 ```powershell
-# 只读实际账户额度；输出属于私人数据，不提交到仓库
-Start-Process $app -ArgumentList '--probe --output codex_tmp/native-probe.json' -Wait
-# 模拟任务栏展示，七秒后退出
-Start-Process $app -ArgumentList '--preview --smoke-ui' -Wait
+python scripts/github-release.py v0.3.1 <commit> <setup> <zip> <sha256-file>
 ```
 
-`--probe` 只调用 initialize / account/read / account/rateLimits/read，不创建聊天。真实服务端的周期重置不人为触发，动画重置逻辑由模拟输入验证。
+## 验证范围
 
-## 套餐识别
-
-本机 CLI `0.164.0-alpha.11.1` 通过 `codex app-server generate-json-schema --out codex_tmp/codex-schema` 导出的 `GetAccountResponse.json` 定义以下 `PlanType` 值；该枚举随 CLI 版本变化，不将未识别的新值改写为已知套餐。
-
-```text
-free, go, plus, pro, prolite, promax, team,
-self_serve_business_prolite, self_serve_business_usage_based,
-business, ent26, enterprise_cbp_automation, enterprise_cbp_usage_based,
-enterprise, edu, edu_plus, edu_pro, sci, sci_plus, unknown
-```
-
-`pro` / `prolite` / `promax` 默认只展示周额度，Plus 默认展示两项，这不是对官方套餐限额的承诺。其余套餐若响应有周窗口而无 300 分钟窗口，也默认使用单周布局。缺失额度不用于推断套餐名称；未知值原样展示。
-
-`ShowHourQuota` / `ShowWeekQuota` 是全局的可空布尔设置：缺失、null 或非布尔值跟随默认，true / false 是用户的独立覆盖。手动开启优先于套餐默认，未返回的额度仍显示 `--`。两项均关闭时不创建覆盖窗口，后台监听和独立设置入口仍保留。恢复默认清除两个覆盖值，后续账户变更继续自动适配；旧配置无需迁移操作。`Settings::visibility` 统一决定绘图、尺寸、详情行与预览的选择，单独展示 5h 时仍使用小时数据和颜色。
-
-余量开关沿用当前样式的动画参数与系统动画偏好，开关两个方向都重置预览计时；预览数据始终为模拟数据，但采用实际账户对应的显示选择。回归覆盖所有样式、三个 DPI、四种显示组合、配置往返、Pro 手动开启 5h、两项关闭、恢复默认、切换账户，以及预览区域在动画不同时间的实际像素。真实账户只读查询输出保存在忽略目录，不提交个人额度数据。
-
-## 安装与打包
-
-使用官方 Inno Setup 6.7.4（当前已验证），或兼容版本。安装器同样不需要 .NET。运行负载只有 EXE、版本、说明和许可证，不含 .NET 文件夹或 DLL。
-
-```powershell
-./scripts/build-native-installer.ps1 -InnoCompiler C:/path/to/ISCC.exe
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/NativeInstaller.Tests.ps1
-```
-
-生成 `artifacts/releases/v0.3.0` 中的 Setup EXE、Portable ZIP 和 SHA256SUMS.txt。测试真实安装到带中文和空格的独立目录，再执行原生卸载，检查保留无关文件；`/ISOLATEDTEST=1` 禁止修改用户启动项、快捷方式、卸载注册项、设置和既有监听器。绝不对用户真实安装运行卸载测试。
-
-0.2.0 默认使用自己的版本目录，不把旧 .NET 目录混入新负载。旧安装目录保留，设置继续使用 `%LOCALAPPDATA%/CodexQuotaBar/settings.json`。安装版设置中的卸载按钮只认同目录、相同产品与版本的 Inno 卸载器，启动前再次确认。卸载旧安装前退出程序；旧卸载器可能清理共用的启动项，可在新版本中重新启用。
-
-旧 .NET 发布脚本、测试和未采用的图标方案已清理，历史版本通过 `v0.1.0-installer.1` 标签恢复。`scripts/design-icons.py` 只生成已选定的白底双环图标。
-
-## 发布与限制
-
-原始 `v0.1.0` 和 `v0.1.0-installer.1` 标签及 0.1.0 下载不变；原生版使用新标签。发布前检查 EXE PE 导入表只有系统 DLL、CLR 目录为零；核对上传资产 SHA-256。
-
-多屏验证仅覆盖本机已连接屏幕；自动隐藏、竖直或第三方任务栏、其他设备尚未专项验证。额度组件是任务栏的透明自绘子窗口，跟随系统任务栏层级，避免快速设置打开时被遮挡；无任务栏时回退到置顶弹窗。控制器检测任务栏窗口失效或更换并重新创建组件。详情使用独立顶层窗口，避免被任务栏边界裁剪，标题右侧展示实际读取的套餐类型。UI 检查还覆盖嵌入关系、拖动坐标、焦点保持，以及独立任务栏替身升层、销毁和重建，不重启真实 Explorer。快速设置真实面板仍需手动回归。
-
-程序尚未代码签名，依赖已登录的本机 Codex CLI 和上游 app-server 协议。
+主要适配标准水平任务栏。其他设备、自动隐藏或第三方任务栏未完成专项验证。备用窗口不保证覆盖所有系统浮层；企业策略可能阻止 PowerShell 便携卸载；上游平台接口变化可能影响读取。

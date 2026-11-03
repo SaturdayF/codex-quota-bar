@@ -33,12 +33,5 @@ try {
 } finally { Pop-Location }
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $output -Force
 Copy-Item -LiteralPath (Join-Path $root 'native/vendor/LICENSE-json.txt') -Destination (Join-Path $output 'LICENSE-json.txt') -Force
-'{"version":"0.3.0","runtime":"native-win32","architecture":"x64"}' | Set-Content -LiteralPath (Join-Path $output 'version.json') -Encoding UTF8
-Copy-Item -LiteralPath (Join-Path $root 'native/USER_GUIDE.md') -Destination (Join-Path $output 'README.md') -Force
-Copy-Item -LiteralPath (Join-Path $root 'CHANGELOG.md') -Destination $output -Force
-$manifestFiles = [ordered]@{}
-foreach ($name in @('CodexQuotaBar.exe','version.json','LICENSE','LICENSE-json.txt','README.md','CHANGELOG.md')) {
-    $manifestFiles[$name] = (Get-FileHash -LiteralPath (Join-Path $output $name) -Algorithm SHA256).Hash.ToLowerInvariant()
-}
-@{ product = 'CodexQuotaBar'; files = $manifestFiles } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'uninstall-manifest.json') -Encoding UTF8
+'{"version":"0.3.1","runtime":"native-win32","architecture":"x64"}' | Set-Content -LiteralPath (Join-Path $output 'version.json') -Encoding UTF8
 Get-Item -LiteralPath (Join-Path $output 'CodexQuotaBar.exe') | Select-Object FullName,Length

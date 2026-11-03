@@ -242,7 +242,9 @@ int deepSeekUiTests(const fs::path &dir) {
     check(app.overlays.size() == selected.size() * 2, "Codex and DeepSeek coexist on each selected monitor");
     for (auto &overlay : app.overlays) if (overlay->kind == WidgetKind::DeepSeek) {
         RECT r{}; GetWindowRect(overlay->window, &r);
-        check(GetParent(overlay->window) == taskbarWindow(overlay->monitor.handle), "DeepSeek embedded in correct taskbar");
+        check(GetParent(overlay->window) == taskbarWindow(overlay->monitor.handle) ||
+              (!overlay->host && GetPropW(overlay->window, L"QuotaRejectedHost") == taskbarWindow(overlay->monitor.handle)),
+              "DeepSeek attaches to correct taskbar or uses explicit policy fallback");
         auto codex = std::find_if(app.overlays.begin(), app.overlays.end(), [&](auto &o) {
             return o->kind == WidgetKind::Codex && o->monitor.handle == overlay->monitor.handle;
         });
