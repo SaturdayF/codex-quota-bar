@@ -16,7 +16,7 @@ Layout deepSeekLayout(const DeepSeekState &state, const Settings &settings, int 
     auto [balance, today] = deepSeekLabels(state);
     float text = std::max(uiTextWidth(graphics, balance, 12 * d, true),
                           uiTextWidth(graphics, today, 12 * d, false));
-    return {int(std::ceil(42 * d + text)), height, RectF()};
+    return {int(std::ceil((settings.deepSeekShowBadge ? 42 : 10) * d + text)), height, RectF()};
 }
 void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &settings, bool hover) {
     Graphics g(image.bitmap.get());
@@ -28,13 +28,16 @@ void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &s
     Color ink = darkInk ? vibrancy::deep : vibrancy::ink;
     Color muted = darkInk ? Color(255, 65, 65, 67) : vibrancy::secondary;
     drawWidgetBackground(g, RectF(0, 0, float(image.width), float(image.height)), settings, light, hover);
-    fillRound(g, RectF(5 * d, 5 * d, 24 * d, 22 * d), 5 * d, vibrancy::surface);
-    drawUiText(g, L"DSH", RectF(5 * d, 5 * d, 24 * d, 22 * d), 11 * d, Color(255, 255, 255, 255), true, true);
+    if (settings.deepSeekShowBadge) {
+        fillRound(g, RectF(5 * d, 5 * d, 24 * d, 22 * d), 5 * d, vibrancy::surface);
+        drawUiText(g, L"DSH", RectF(5 * d, 5 * d, 24 * d, 22 * d), 11 * d, Color(255, 255, 255, 255), true, true);
+    }
+    float left = (settings.deepSeekShowBadge ? 37 : 5) * d;
     auto [balance, today] = deepSeekLabels(state);
-    drawUiText(g, balance, RectF(37 * d, 0, image.width - 42 * d, 16 * d),
+    drawUiText(g, balance, RectF(left, 0, image.width - left - 5 * d, 16 * d),
                12 * d, state.balanceError.empty() ? ink : muted, true);
     drawUiText(g, today,
-               RectF(37 * d, 16 * d, image.width - 42 * d, 16 * d), 12 * d,
+               RectF(left, 16 * d, image.width - left - 5 * d, 16 * d), 12 * d,
                state.costError.empty() ? ink : muted);
 }
 void Overlay::showDeepSeekDetails(const fs::path &capture) {

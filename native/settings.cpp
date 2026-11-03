@@ -43,7 +43,8 @@ enum {
     DeepSeekClear,
     DeepSeekPlatform,
     DeepSeekHelp,
-    DeepSeekAlwaysShow
+    DeepSeekAlwaysShow,
+    DeepSeekBadge
 };
 static std::wstring controlText(HWND w) {
     int n = GetWindowTextLengthW(w);
@@ -85,36 +86,6 @@ static void paintControl(HWND w, HDC dc, ControlSkin skin) {
     float d = GetDpiForWindow(w) / 96.f;
     bool focused = GetFocus() == w;
     const auto &colors = controlColors(w);
-    if (skin == ControlSkin::Edit) {
-        wchar_t cue[256]{};
-        if (!focused && !GetWindowTextLengthW(w) &&
-            SendMessageW(w, EM_GETCUEBANNER, reinterpret_cast<WPARAM>(cue), std::size(cue))) {
-            HBRUSH fill = CreateSolidBrush(colors.inputBrush());
-            FillRect(dc, &rect, fill);
-            DeleteObject(fill);
-            int saved = SaveDC(dc);
-            SetBkMode(dc, TRANSPARENT);
-            SetTextColor(dc, RGB(colors.muted.GetR(), colors.muted.GetG(), colors.muted.GetB()));
-            if (auto font = SendMessageW(w, WM_GETFONT, 0, 0))
-                SelectObject(dc, reinterpret_cast<HFONT>(font));
-            RECT label = rect;
-            InflateRect(&label, -int(8 * d), 0);
-            DrawTextW(dc, cue, -1, &label, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
-            RestoreDC(dc, saved);
-        }
-        HBRUSH edge = CreateSolidBrush(focused ? RGB(colors.focus.GetR(), colors.focus.GetG(), colors.focus.GetB()) :
-                                       (colors.ink.GetR() > 128 ? RGB(70, 70, 73) : RGB(213, 216, 222)));
-        FrameRect(dc, &rect, edge);
-        DeleteObject(edge);
-        // Native GDI edits erase alpha. Keep their opaque input surfaces and
-        // text intact when the parent is extended into the DWM glass frame.
-        Surface edit(rect.right, rect.bottom);
-        BitBlt(edit.dc, 0, 0, rect.right, rect.bottom, dc, 0, 0, SRCCOPY);
-        GdiFlush();
-        for (int i = 0; i < edit.width * edit.height; ++i) edit.pixels[i * 4 + 3] = 255;
-        BitBlt(dc, 0, 0, rect.right, rect.bottom, edit.dc, 0, 0, SRCCOPY);
-        return;
-    }
     Surface surface(rect.right, rect.bottom);
     {
         Graphics g(surface.bitmap.get());
@@ -122,7 +93,56 @@ static void paintControl(HWND w, HDC dc, ControlSkin skin) {
         if (auto owner = controlOwner(w)) owner->paintGlass(g, w, surface.width, surface.height);
         else g.Clear(colors.mid);
         RectF bounds(.5f, .5f, rect.right - 1.f, rect.bottom - 1.f);
-        if (skin == ControlSkin::Combo) {
+        if (skin == ControlSkin::Edit) {
+            glassControl(g, bounds, d, colors, focused);
+            // Native EDIT owns layout, selection, scrolling, IME and password masking.
+            // Remove only its flat background from the offscreen text layer.
+            Surface text(rect.right, rect.bottom);
+            HBRUSH brush = CreateSolidBrush(colors.inputBrush());
+            FillRect(text.dc, &rect, brush); DeleteObject(brush);
+            DefSubclassProc(w, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(text.dc), PRF_CLIENT);
+            wchar_t cue[256]{};
+            bool placeholder = !GetWindowTextLengthW(w) &&
+                SendMessageW(w, EM_GETCUEBANNER, reinterpret_cast<WPARAM>(cue), std::size(cue));
+            if (placeholder) {
+                HBRUSH bg = CreateSolidBrush(colors.inputBrush());
+                FillRect(text.dc, &rect, bg); DeleteObject(bg);
+            }
+            if (auto font = SendMessageW(w, WM_GETFONT, 0, 0)) SelectObject(text.dc, reinterpret_cast<HFONT>(font));
+            TEXTMETRICW metrics{}; GetTextMetricsW(text.dc, &metrics);
+            RECT nativeText{}; SendMessageW(w, EM_GETRECT, 0, reinterpret_cast<LPARAM>(&nativeText));
+            int inset = std::max(0L, (rect.bottom - metrics.tmHeight) / 2) - nativeText.top;
+            if (focused) {
+                POINT caret{};
+                if (GetCaretPos(&caret)) SetCaretPos(caret.x, nativeText.top + inset);
+            }
+            GdiFlush();
+            int bg[] = {colors.deep.GetB(), colors.deep.GetG(), colors.deep.GetR()};
+            int ink[] = {colors.ink.GetB(), colors.ink.GetG(), colors.ink.GetR()};
+            for (int i = 0; i < text.width * text.height; ++i) {
+                BYTE *pixel = text.pixels + i * 4;
+                double coverage = 0;
+                for (int c = 0; c < 3; ++c)
+                    coverage = std::max(coverage, std::abs(int(pixel[c]) - bg[c]) / double(std::max(1, std::abs(ink[c] - bg[c]))));
+                coverage = std::clamp(coverage, 0., 1.);
+                bool colored = false;
+                for (int c = 0; c < 3; ++c)
+                    colored |= std::abs(pixel[c] - (bg[c] + coverage * (ink[c] - bg[c]))) > 12;
+                if (colored) coverage = 1; // Keep native selection colors.
+                int alpha = int(std::ceil(coverage * 255));
+                for (int c = 0; c < 3; ++c)
+                    pixel[c] = BYTE(std::clamp(int(pixel[c]) - (bg[c] * (255 - alpha) + 127) / 255, 0, alpha));
+                pixel[3] = BYTE(alpha);
+            }
+            GraphicsPath clip;
+            roundPath(clip, bounds, 9 * d);
+            auto saved = g.Save();
+            g.SetClip(&clip);
+            g.DrawImage(text.bitmap.get(), 0, inset);
+            if (placeholder)
+                drawUiText(g, cue, RectF(10 * d, 0, rect.right - 20 * d, float(rect.bottom)), 15 * d, colors.muted);
+            g.Restore(saved);
+        } else if (skin == ControlSkin::Combo) {
             glassControl(g, bounds, d, colors, GetPropW(w, L"VibrancyHover") != nullptr,
                          SendMessageW(w, CB_GETDROPPEDSTATE, 0, 0) != 0, false, !IsWindowEnabled(w));
             drawUiText(g, controlText(w), RectF(8 * d, 0, rect.right - 32 * d, float(rect.bottom)),
@@ -154,7 +174,7 @@ static void paintControl(HWND w, HDC dc, ControlSkin skin) {
         }
         if (focused && skin != ControlSkin::Slider && !(SendMessageW(w, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS)) {
             GraphicsPath path;
-            roundPath(path, bounds, 6 * d);
+            roundPath(path, bounds, 9 * d);
             Pen edge(colors.focus, 1);
             g.DrawPath(&edge, &path);
         }
@@ -176,49 +196,117 @@ static LRESULT CALLBACK controlSkin(HWND w, UINT msg, WPARAM wp, LPARAM lp, UINT
     } else if (msg == WM_MOUSELEAVE && (skin == ControlSkin::Button || skin == ControlSkin::Combo)) {
         RemovePropW(w, L"VibrancyHover");
         InvalidateRect(w, nullptr, FALSE);
-    } else if (msg == WM_PAINT && (skin == ControlSkin::Combo || skin == ControlSkin::Slider)) {
+    } else if (msg == WM_ERASEBKGND && skin != ControlSkin::Button) {
+        return 1;
+    } else if (msg == WM_PAINT && skin != ControlSkin::Button) {
+        if (skin == ControlSkin::Edit) HideCaret(w);
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(w, &ps);
         paintControl(w, dc, skin);
         EndPaint(w, &ps);
+        if (skin == ControlSkin::Edit) ShowCaret(w);
         return 0;
     } else if (msg == WM_PRINTCLIENT && skin != ControlSkin::Button) {
-        if (skin == ControlSkin::Edit) DefSubclassProc(w, msg, wp, lp);
         paintControl(w, reinterpret_cast<HDC>(wp), skin);
         return 0;
-    } else if (msg == WM_PAINT && skin == ControlSkin::Edit) {
-        auto result = DefSubclassProc(w, msg, wp, lp);
-        HDC dc = GetDC(w);
-        if (dc) {
-            paintControl(w, dc, skin);
-            ReleaseDC(w, dc);
-        }
-        return result;
     }
     auto result = DefSubclassProc(w, msg, wp, lp);
-    if (msg == WM_SETFOCUS || msg == WM_KILLFOCUS) InvalidateRect(w, nullptr, FALSE);
+    if (msg == WM_SETFOCUS || msg == WM_KILLFOCUS ||
+        (skin == ControlSkin::Edit && (msg == WM_CHAR || msg == WM_KEYDOWN || msg == WM_SETTEXT ||
+         msg == EM_SETSEL || msg == EM_REPLACESEL || msg == WM_CUT || msg == WM_PASTE ||
+         msg == WM_CLEAR || msg == WM_UNDO || msg == EM_UNDO || msg == EM_SCROLLCARET ||
+         msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP || msg == WM_MOUSEMOVE ||
+         msg == WM_IME_STARTCOMPOSITION || msg == WM_IME_COMPOSITION || msg == WM_IME_ENDCOMPOSITION)))
+        RedrawWindow(w, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
     return result;
 }
 
-static void drawComboOption(const DRAWITEMSTRUCT &item) {
-    const auto &colors = controlColors(item.hwndItem);
-    Graphics g(item.hDC);
-    RectF bounds(float(item.rcItem.left), float(item.rcItem.top),
-                 float(item.rcItem.right - item.rcItem.left), float(item.rcItem.bottom - item.rcItem.top));
-    SolidBrush bg(colors.deep);
-    g.FillRectangle(&bg, bounds);
-    if (item.itemState & ODS_SELECTED) { SolidBrush selected(colors.active); g.FillRectangle(&selected, bounds); }
-    if (item.itemID == UINT(-1)) return;
-    auto index = item.itemID;
-    auto length = SendMessageW(item.hwndItem, CB_GETLBTEXTLEN, index, 0);
+static void comboRow(Graphics &g, HWND combo, RectF bounds, int index, bool selected) {
+    if (index < 0) return;
+    const auto &colors = controlColors(combo);
+    float d = GetDpiForWindow(combo) / 96.f;
+    if (selected)
+        fillRound(g, RectF(bounds.X + 4 * d, bounds.Y + 2 * d, bounds.Width - 8 * d, bounds.Height - 4 * d),
+                  7 * d, colors.ink.GetR() > 128 ? Color(40, 255, 255, 255) : Color(28, 58, 89, 128));
+    auto length = SendMessageW(combo, CB_GETLBTEXTLEN, index, 0);
     if (length == CB_ERR) return;
     std::wstring label(size_t(length) + 1, L'\0');
-    SendMessageW(item.hwndItem, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(label.data()));
+    SendMessageW(combo, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(label.data()));
     label.resize(size_t(length));
-    float d = GetDpiForWindow(item.hwndItem) / 96.f;
-    bounds.X += 8 * d;
-    bounds.Width -= 12 * d;
-    drawUiText(g, label, bounds, 15 * d, colors.ink);
+    drawUiText(g, label, RectF(bounds.X + 12 * d, bounds.Y, bounds.Width - 40 * d, bounds.Height), 15 * d, colors.ink);
+    if (SendMessageW(combo, CB_GETCURSEL, 0, 0) == index) {
+        float x = bounds.GetRight() - 17 * d, y = bounds.Y + bounds.Height / 2;
+        Pen pen(colors.secondary, 1.5f * d);
+        PointF tick[] = {{x - 4 * d, y}, {x - d, y + 3 * d}, {x + 5 * d, y - 4 * d}};
+        g.DrawLines(&pen, tick, 3);
+    }
+}
+static BackdropMode comboBackdrop(HWND list) {
+    auto value = reinterpret_cast<INT_PTR>(GetPropW(list, L"VibrancyBackdrop"));
+    return value ? BackdropMode(value - 1) : BackdropMode::Solid;
+}
+static void drawComboOption(const DRAWITEMSTRUCT &item) {
+    int width = item.rcItem.right - item.rcItem.left, height = item.rcItem.bottom - item.rcItem.top;
+    if (width <= 0 || height <= 0) return;
+    COMBOBOXINFO info{sizeof(info)}; GetComboBoxInfo(item.hwndItem, &info);
+    Surface row(width, height);
+    {
+        Graphics g(row.bitmap.get()); g.SetSmoothingMode(SmoothingModeAntiAlias);
+        paintBackdrop(g, controlColors(item.hwndItem), comboBackdrop(info.hwndList));
+        comboRow(g, item.hwndItem, RectF(0, 0, float(width), float(height)), int(item.itemID), (item.itemState & ODS_SELECTED) != 0);
+    }
+    BitBlt(item.hDC, item.rcItem.left, item.rcItem.top, width, height, row.dc, 0, 0, SRCCOPY);
+}
+static LRESULT CALLBACK comboListSkin(HWND w, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR id, DWORD_PTR data) {
+    HWND combo = reinterpret_cast<HWND>(data);
+    if (msg == WM_NCDESTROY) {
+        RemovePropW(w, L"VibrancyBackdrop");
+        RemoveWindowSubclass(w, comboListSkin, id);
+        return DefSubclassProc(w, msg, wp, lp);
+    }
+    if ((msg == WM_SHOWWINDOW && wp) ||
+        (msg == WM_WINDOWPOSCHANGING && (reinterpret_cast<WINDOWPOS *>(lp)->flags & SWP_SHOWWINDOW))) {
+        auto owner = controlOwner(combo);
+        auto mode = configureBackdrop(w, owner && owner->draft.darkAppearance);
+        SetPropW(w, L"VibrancyBackdrop", reinterpret_cast<HANDLE>(INT_PTR(mode) + 1));
+    }
+    if (msg == WM_ERASEBKGND || msg == WM_NCPAINT) return 1;
+    if (msg == WM_PAINT || msg == WM_PRINTCLIENT) {
+        PAINTSTRUCT ps{};
+        HDC dc = msg == WM_PAINT ? BeginPaint(w, &ps) : reinterpret_cast<HDC>(wp);
+        RECT rect{}; GetClientRect(w, &rect);
+        if (rect.right > 0 && rect.bottom > 0) {
+            Surface surface(rect.right, rect.bottom);
+            {
+                Graphics g(surface.bitmap.get()); g.SetSmoothingMode(SmoothingModeAntiAlias);
+                const auto &colors = controlColors(combo);
+                paintBackdrop(g, colors, comboBackdrop(w));
+                int count = int(SendMessageW(w, LB_GETCOUNT, 0, 0));
+                int selected = int(SendMessageW(w, LB_GETCURSEL, 0, 0));
+                for (int index = std::max(0, int(SendMessageW(w, LB_GETTOPINDEX, 0, 0))); index < count; ++index) {
+                    RECT item{};
+                    if (SendMessageW(w, LB_GETITEMRECT, index, reinterpret_cast<LPARAM>(&item)) == LB_ERR || item.top >= rect.bottom) break;
+                    comboRow(g, combo, RectF(float(item.left), float(item.top), float(item.right - item.left), float(item.bottom - item.top)), index, index == selected);
+                }
+                GraphicsPath edge; roundPath(edge, RectF(.5f, .5f, rect.right - 1.f, rect.bottom - 1.f), 9 * GetDpiForWindow(w) / 96.f);
+                Pen border(colors.border, 1); g.DrawPath(&border, &edge);
+            }
+            BitBlt(dc, 0, 0, rect.right, rect.bottom, surface.dc, 0, 0, SRCCOPY);
+        }
+        if (msg == WM_PAINT) EndPaint(w, &ps);
+        return 0;
+    }
+    auto result = DefSubclassProc(w, msg, wp, lp);
+    if (msg == WM_SIZE) {
+        RECT r{}; GetWindowRect(w, &r);
+        int diameter = MulDiv(18, GetDpiForWindow(w), 96);
+        auto region = CreateRoundRectRgn(0, 0, r.right - r.left + 1, r.bottom - r.top + 1, diameter, diameter);
+        if (!SetWindowRgn(w, region, FALSE)) DeleteObject(region);
+    }
+    if (msg == WM_MOUSEMOVE || msg == WM_KEYDOWN || msg == WM_MOUSEWHEEL || msg == WM_VSCROLL ||
+        msg == LB_SETCURSEL || msg == LB_SETTOPINDEX || msg == WM_SHOWWINDOW)
+        InvalidateRect(w, nullptr, FALSE);
+    return result;
 }
 
 static void registerSettingsClass(const wchar_t *name, WNDPROC proc) {
@@ -233,7 +321,7 @@ static void registerSettingsClass(const wchar_t *name, WNDPROC proc) {
 }
 static bool isToggle(int id) {
     return id == Letters || id == Remaining || id == Percent || id == Animate || id == Startup ||
-           id == ShowHour || id == ShowWeek || id == DeepSeekEnabled || id == DeepSeekAlwaysShow || id == AvoidIcons;
+           id == ShowHour || id == ShowWeek || id == DeepSeekEnabled || id == DeepSeekAlwaysShow || id == DeepSeekBadge || id == AvoidIcons;
 }
 SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
     : app(a), draft(a->settings), startup(startupEnabled()) {
@@ -265,7 +353,7 @@ SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
     if (!viewport || !content) throw std::runtime_error("Cannot create settings viewport");
     applyAppearance();
     font = CreateFontW(-px(15), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                       CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+                       CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
     createControls();
     selectPage(0);
     SetTimer(window, 1, 16, nullptr);
@@ -308,9 +396,17 @@ void SettingsWindow::createControls() {
         SendMessageW(w, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
         if (combo) {
             SendMessageW(w, CB_SETITEMHEIGHT, WPARAM(-1), px(24));
-            SendMessageW(w, CB_SETITEMHEIGHT, 0, px(26));
+            SendMessageW(w, CB_SETITEMHEIGHT, 0, px(32));
+            COMBOBOXINFO info{sizeof(info)};
+            if (GetComboBoxInfo(w, &info)) {
+                SetWindowSubclass(info.hwndList, comboListSkin, 1, reinterpret_cast<DWORD_PTR>(w));
+                SetWindowLongPtrW(info.hwndList, GWL_STYLE, GetWindowLongPtrW(info.hwndList, GWL_STYLE) & ~WS_BORDER);
+                SetWindowLongPtrW(info.hwndList, GWL_EXSTYLE,
+                                  (GetWindowLongPtrW(info.hwndList, GWL_EXSTYLE) & ~WS_EX_CLIENTEDGE) | WS_EX_NOACTIVATE);
+                SetWindowPos(info.hwndList, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            }
         }
-        if (edit) SendMessageW(w, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(px(8), px(8)));
+        if (edit) SendMessageW(w, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(px(10), px(10)));
         SetWindowSubclass(w, controlSkin, 1, DWORD_PTR(combo ? ControlSkin::Combo :
                                                          edit ? ControlSkin::Edit : ControlSkin::Slider));
         controls.push_back(w);
@@ -361,6 +457,7 @@ void SettingsWindow::createControls() {
     button(L"图标自动避让", AvoidIcons, 1);
     button(L"自动跟随 DeepSeekHarness", DeepSeekEnabled, 3);
     button(L"未启动时也显示余额", DeepSeekAlwaysShow, 3);
+    button(L"显示 DSH 图标", DeepSeekBadge, 3);
     deepSeekToken = control(L"EDIT", L"", DeepSeekToken, 3, ES_PASSWORD | ES_AUTOHSCROLL);
     SendMessageW(deepSeekToken, EM_SETLIMITTEXT, 2560, 0);
     bool hasToken = !app->testing && !deepSeekCredential().empty();
@@ -428,7 +525,7 @@ void SettingsWindow::layout() {
     GetClientRect(viewport, &c);
     contentWidth = int(c.right * 96. / dpi);
     contentHeight = int(c.bottom * 96. / dpi);
-    int needed = pageHeight = page == 0 ? 836 : page == 1 ? 620 : page == 3 ? 608 : 606;
+    int needed = pageHeight = page == 0 ? 836 : page == 1 ? 620 : page == 3 ? 674 : 606;
     scroll = std::clamp(scroll, 0, std::max(0, needed - contentHeight));
     contentWidth = int(std::max(1, int(c.right) - px(14)) * 96. / dpi);
     SetWindowPos(content, nullptr, 0, -px(scroll), std::max(1, int(c.right) - px(14)), std::max<int>(c.bottom, px(needed)),
@@ -476,12 +573,13 @@ void SettingsWindow::layout() {
     place(OpenFolder, contentWidth - 146, 471, 132, 34);
     place(DeepSeekEnabled, contentWidth - 60, 89, 44, 26);
     place(DeepSeekAlwaysShow, contentWidth - 60, 155, 44, 26);
-    place(DeepSeekToken, 0, 271, contentWidth - 14, 30);
-    place(DeepSeekInterval, contentWidth - 164, 329, 150, 220);
-    place(DeepSeekRefresh, contentWidth - 124, 395, 110, 34);
-    place(DeepSeekClear, contentWidth - 124, 461, 110, 34);
-    place(DeepSeekPlatform, contentWidth - 194, 209, 180, 28);
-    place(DeepSeekHelp, contentWidth - 164, 241, 150, 26);
+    place(DeepSeekBadge, contentWidth - 60, 221, 44, 26);
+    place(DeepSeekToken, 0, 337, contentWidth - 14, 30);
+    place(DeepSeekInterval, contentWidth - 164, 395, 150, 220);
+    place(DeepSeekRefresh, contentWidth - 124, 461, 110, 34);
+    place(DeepSeekClear, contentWidth - 124, 527, 110, 34);
+    place(DeepSeekPlatform, contentWidth - 194, 275, 180, 28);
+    place(DeepSeekHelp, contentWidth - 164, 307, 150, 26);
     UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS | SWP_SHOWWINDOW;
     HDWP batch = BeginDeferWindowPos(int(placements.size()));
     for (auto &p : placements)
@@ -556,7 +654,7 @@ void SettingsWindow::reveal(HMONITOR requested) {
             DeleteObject(font);
         font =
             CreateFontW(-px(15), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+                        CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
         for (HWND w : controls)
             SendMessageW(w, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     }
@@ -673,13 +771,14 @@ void SettingsWindow::draw(HDC dc, bool inner) {
             } else {
                 row(82, L"自动跟随 DeepSeekHarness", L"Harness 运行时自动显示并刷新。", 110);
                 row(148, L"未启动时也显示余额", L"默认关闭；开启后独立显示并刷新余额和账单。", 110);
-                drawUiText(g, L"平台登录凭证 userToken", RectF(0, 214, contentWidth - 210.f, 26), 16, ink);
-                drawUiText(g, L"同一平台账户的余额、费用和 Token 明细。", RectF(0, 240, contentWidth - 175.f, 26), 14, muted);
-                row(322, L"自动刷新间隔", L"失败时保留旧数据并退避重试。", 190);
-                row(388, L"读取最新数据", L"先保存凭证；组件显示期间可刷新。", 150);
-                row(454, L"本机登录态", clearDeepSeekCredentials ? L"保存后将清除原凭证，可填写新凭证替换。" : L"留空保留原凭证，清除在保存后生效。", 150);
-                drawUiText(g, L"北京时间 UTC+8 · 平台账单可能延迟更新。", RectF(0, 530, float(contentWidth), 26), 13, muted);
-                drawUiText(g, L"平台登录态保存在本机 Windows 凭据管理器。", RectF(0, 563, float(contentWidth), 26), 12, muted);
+                row(214, L"显示 DSH 图标", L"关闭后仅显示余额和当日消费，组件自动缩短。", 110);
+                drawUiText(g, L"平台登录凭证 userToken", RectF(0, 280, contentWidth - 210.f, 26), 16, ink);
+                drawUiText(g, L"同一平台账户的余额、费用和 Token 明细。", RectF(0, 306, contentWidth - 175.f, 26), 14, muted);
+                row(388, L"自动刷新间隔", L"失败时保留旧数据并退避重试。", 190);
+                row(454, L"读取最新数据", L"先保存凭证；组件显示期间可刷新。", 150);
+                row(520, L"本机登录态", clearDeepSeekCredentials ? L"保存后将清除原凭证，可填写新凭证替换。" : L"留空保留原凭证，清除在保存后生效。", 150);
+                drawUiText(g, L"北京时间 UTC+8 · 平台账单可能延迟更新。", RectF(0, 596, float(contentWidth), 26), 13, muted);
+                drawUiText(g, L"平台登录态保存在本机 Windows 凭据管理器。", RectF(0, 629, float(contentWidth), 26), 12, muted);
             }
         }
     }
@@ -717,6 +816,7 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
                            : id == ShowWeek  ? visible.week
                            : id == DeepSeekEnabled ? draft.deepSeekEnabled
                            : id == DeepSeekAlwaysShow ? draft.deepSeekAlwaysShow
+                           : id == DeepSeekBadge ? draft.deepSeekShowBadge
                            : id == AvoidIcons ? draft.avoidIcons
                                              : startup;
             drawPanel(g, area, area.Height / 2, enabled && !disabled ? colors.focus : colors.thumb, colors.border);
@@ -766,6 +866,9 @@ void SettingsWindow::command(int id, int notice) {
         break;
     case DeepSeekAlwaysShow:
         draft.deepSeekAlwaysShow = !draft.deepSeekAlwaysShow;
+        break;
+    case DeepSeekBadge:
+        draft.deepSeekShowBadge = !draft.deepSeekShowBadge;
         break;
     case DeepSeekRefresh:
         app->refreshDeepSeek();
@@ -1384,7 +1487,7 @@ LRESULT CALLBACK SettingsWindow::procedure(HWND w, UINT msg, WPARAM wp, LPARAM l
         if (self->font)
             DeleteObject(self->font);
         self->font = CreateFontW(-self->px(15), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH,
+                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH,
                                  L"Microsoft YaHei UI");
         for (HWND ctrl : self->controls)
             SendMessageW(ctrl, WM_SETFONT, reinterpret_cast<WPARAM>(self->font), TRUE);

@@ -39,7 +39,7 @@ int liveGlassTests(const fs::path &dir, std::ostream &log) {
     auto monitor = monitors().front();
     auto work = monitor.work;
     HWND previous = GetForegroundWindow();
-    HWND back = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, c.lpszClassName, L"Synthetic glass backdrop",
+    HWND back = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, c.lpszClassName, L"Synthetic glass backdrop",
                                 WS_POPUP | WS_VISIBLE, work.left, work.top, work.right - work.left, work.bottom - work.top,
                                 nullptr, nullptr, c.hInstance, &bg);
     struct Cleanup { HWND back, previous; ~Cleanup() {
@@ -71,6 +71,7 @@ int liveGlassTests(const fs::path &dir, std::ostream &log) {
         DwmFlush();
     };
     auto repaintBackground = [&] {
+        if (IsWindowVisible(settings.window)) activateTestWindow(settings.window);
         InvalidateRect(back, nullptr, FALSE); UpdateWindow(back); settle();
     };
     auto point = [&](int x, int y) { POINT p{x, y}; ClientToScreen(settings.window, &p); return p; };
@@ -141,6 +142,61 @@ int liveGlassTests(const fs::path &dir, std::ostream &log) {
                          sample(point(settings.px(8), settings.px(200)))) < 8,
               "sidebar tint is continuous from header to navigation area");
         capture(dark ? L"live-dark-blue.png" : L"live-light-blue.png");
+        SetFocus(settings.styles);
+        activateTestWindow(settings.window);
+        SendMessageW(settings.styles, CB_SHOWDROPDOWN, TRUE, 0); settle();
+        COMBOBOXINFO list{sizeof(list)}; GetComboBoxInfo(settings.styles, &list);
+        log << "INFO menu visible=" << IsWindowVisible(list.hwndList) << " style=" << GetWindowLongPtrW(list.hwndList, GWL_STYLE)
+            << " dropped=" << SendMessageW(settings.styles, CB_GETDROPPEDSTATE, 0, 0) << std::endl;
+        check(IsWindowVisible(list.hwndList) && !(GetWindowLongPtrW(list.hwndList, GWL_STYLE) & WS_BORDER),
+              "expanded dropdown keeps native selection without the system square border");
+        POINT menuPoint{settings.px(5), settings.px(5)}; ClientToScreen(list.hwndList, &menuPoint);
+        bg.left = bg.right = RGB(224, 40, 40); repaintBackground();
+        auto menuRed = sample(menuPoint);
+        bg.left = bg.right = RGB(40, 70, 224); repaintBackground();
+        capture(dark ? L"live-dropdown-dark.png" : L"live-dropdown-light.png");
+        log << "INFO menu mode=" << reinterpret_cast<INT_PTR>(GetPropW(list.hwndList, L"VibrancyBackdrop"))
+            << " red=" << menuRed << " blue=" << sample(menuPoint) << std::endl;
+        check(difference(menuRed, sample(menuPoint)) > 15, "expanded dropdown transmits the live backdrop");
+        SendMessageW(settings.styles, WM_KEYDOWN, VK_HOME, 0);
+        SendMessageW(settings.styles, WM_KEYDOWN, VK_DOWN, 0);
+        SendMessageW(settings.styles, WM_KEYDOWN, VK_RETURN, 0); settle();
+        check(SendMessageW(settings.styles, CB_GETCURSEL, 0, 0) == 1 &&
+                  !SendMessageW(settings.styles, CB_GETDROPPEDSTATE, 0, 0),
+              "dropdown keyboard navigation and Enter still select and close");
+        SendMessageW(settings.styles, CB_SHOWDROPDOWN, TRUE, 0);
+        SendMessageW(settings.styles, WM_KEYDOWN, VK_ESCAPE, 0); settle();
+        check(!SendMessageW(settings.styles, CB_GETDROPPEDSTATE, 0, 0), "Escape dismisses the styled dropdown");
+        settings.selectPage(2); SetFocus(settings.path); settle();
+        SetWindowTextW(settings.path, L"C:\\模拟路径\\codex.exe");
+        SendMessageW(settings.path, EM_SETSEL, 3, 7);
+        SendMessageW(settings.path, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L"测试"));
+        wchar_t edited[128]{}; GetWindowTextW(settings.path, edited, 128);
+        check(std::wstring(edited) == L"C:\\测试\\codex.exe", "glass input preserves Unicode selection and replacement");
+        SendMessageW(settings.path, WM_UNDO, 0, 0);
+        GetWindowTextW(settings.path, edited, 128);
+        check(std::wstring(edited) == L"C:\\模拟路径\\codex.exe", "glass input preserves native undo");
+        SendMessageW(settings.path, EM_SETSEL, 3, 7); settle();
+        POINT inputPoint{settings.px(380), settings.px(12)}; ClientToScreen(settings.path, &inputPoint);
+        bg.left = bg.right = RGB(224, 40, 40); repaintBackground(); auto inputRed = sample(inputPoint);
+        bg.left = bg.right = RGB(40, 70, 224); repaintBackground();
+        check(difference(inputRed, sample(inputPoint)) > 20, "input background remains live glass while text is selected");
+        capture(dark ? L"live-input-dark.png" : L"live-input-light.png");
+        SetWindowTextW(settings.path, L"");
+        settings.selectPage(3); SetFocus(settings.deepSeekToken);
+        auto passwordPixels = [&] {
+            RECT r{}; GetClientRect(settings.deepSeekToken, &r);
+            Surface image(r.right, r.bottom);
+            SendMessageW(settings.deepSeekToken, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(image.dc), PRF_CLIENT);
+            GdiFlush();
+            return std::vector<BYTE>(image.pixels, image.pixels + image.width * image.height * 4);
+        };
+        SetWindowTextW(settings.deepSeekToken, L"fixture-alpha"); auto mask = passwordPixels();
+        SetWindowTextW(settings.deepSeekToken, L"fixture-bravo");
+        check(mask == passwordPixels(), "glass credential field renders identical masks for equal-length different secrets");
+        capture(dark ? L"live-credentials-dark.png" : L"live-credentials-light.png");
+        SetWindowTextW(settings.deepSeekToken, L"");
+        settings.selectPage(0); settle();
     }
     settings.draft.darkAppearance = false; settings.applyAppearance();
     POINT body = point(settings.px(235), settings.px(126));

@@ -69,6 +69,9 @@ int deepSeekTests(std::ostream &log) {
           "formatted API key cannot bypass session-only credential validation");
     auto roundTrip = Settings::fromJson(config.toJson());
     check(roundTrip.deepSeekEnabled && roundTrip.deepSeekInterval == 120, "DeepSeek opt-in settings round trip");
+    check(Settings{}.deepSeekShowBadge && Settings::fromJson({{"DeepSeekShowBadge", "invalid"}}).deepSeekShowBadge &&
+              !Settings::fromJson(Settings::fromJson({{"DeepSeekShowBadge", false}}).toJson()).deepSeekShowBadge,
+          "DSH badge defaults on and explicit off survives serialization");
     check(Settings{}.deepSeekEnabled && Settings::fromJson({{"DeepSeekRefreshSeconds", 3}}).deepSeekInterval == 60,
           "Harness automatic follow defaults on while refresh interval is normalized");
     check(!Settings::fromJson({{"DeepSeekHarnessEnabled", false}}).deepSeekEnabled &&
@@ -237,6 +240,17 @@ int deepSeekUiTests(const fs::path &dir) {
     std::atomic<bool> stop{false};
     auto now = utcNow();
     app.deepseek = readDeepSeek("fixture-only", stop, fixtureTransport(beijingDay(now)), now);
+    for (int dpi : {96, 144, 192}) {
+        auto hidden = app.settings; hidden.deepSeekShowBadge = false;
+        auto full = deepSeekLayout(app.deepseek, app.settings, dpi, 100);
+        auto compact = deepSeekLayout(app.deepseek, hidden, dpi, 100);
+        check(full.height == compact.height && full.width - compact.width == full.height,
+              "hiding DSH removes only badge spacing at DPI " + std::to_string(dpi));
+        Surface withBadge(full.width, full.height), withoutBadge(compact.width, compact.height);
+        paintDeepSeek(withBadge, app.deepseek, app.settings, false);
+        paintDeepSeek(withoutBadge, app.deepseek, hidden, false);
+        withoutBadge.save(dir / (L"deepseek-no-badge-" + std::to_wstring(dpi) + L".png"));
+    }
     app.rebuild();
     auto selected = selectedMonitors(app.settings);
     check(app.overlays.size() == selected.size() * 2, "Codex and DeepSeek coexist on each selected monitor");
@@ -292,6 +306,10 @@ int deepSeekUiTests(const fs::path &dir) {
     check(GetDlgItem(settings.content, 261) == nullptr, "DeepSeek has no API-key input control");
     check(GetWindowLongPtrW(settings.deepSeekToken, GWL_STYLE) & ES_PASSWORD, "platform session input is masked");
     settings.capture(dir / L"deepseek-settings.png");
+    settings.command(269, BN_CLICKED);
+    check(!settings.draft.deepSeekShowBadge && app.settings.deepSeekShowBadge,
+          "DSH badge switch stages changes without hiding the balance component");
+    settings.command(269, BN_CLICKED);
     settings.command(268, BN_CLICKED);
     check(settings.draft.deepSeekAlwaysShow && !app.settings.deepSeekAlwaysShow,
           "show-without-Harness setting is staged until Save");
