@@ -4,11 +4,11 @@
 
 在 Windows 任务栏显示 Codex 额度和 DeepSeek 账户余额，支持多屏、外观设置、悬浮详情和自动刷新。
 
-**最新发布：[0.3.1](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.3.1)** · Windows 10/11 x64 · C++ 原生程序
+**最新发布：[0.3.2](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.3.2)** · Windows 10/11 x64 · C++ 原生程序
 
-[安装包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.1/CodexQuotaBar-v0.3.1-Setup.exe) · [便携包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.1/CodexQuotaBar-v0.3.1-Portable-win-x64.zip) · [版本记录](CHANGELOG.md)
+[安装包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.2/CodexQuotaBar-v0.3.2-Setup.exe) · [便携包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.2/CodexQuotaBar-v0.3.2-Portable-win-x64.zip) · [版本记录](CHANGELOG.md)
 
-0.3.2 开发版的功能和设置入口见 [使用指南](native/USER_GUIDE.md)。
+功能和设置入口见 [使用指南](native/USER_GUIDE.md)。
 
 ## 功能
 
