@@ -1,7 +1,7 @@
 param([string]$Archive)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-if (-not $Archive) { $Archive = Join-Path $root 'artifacts/releases/v0.3.3/CodexQuotaBar-v0.3.3-Portable-win-x64.zip' }
+if (-not $Archive) { $Archive = Join-Path $root 'artifacts/releases/v0.3.4/CodexQuotaBar-v0.3.4-Portable-win-x64.zip' }
 $fixture = Join-Path $root ('codex_tmp/portable-uninstall-' + [Guid]::NewGuid().ToString('N'))
 $target = Join-Path $fixture "便携 空格 ' 测试"
 New-Item -ItemType Directory -Path $target -Force | Out-Null

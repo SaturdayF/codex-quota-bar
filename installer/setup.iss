@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.3.3"
+  #define AppVersion "0.3.4"
 #endif
 #ifndef PayloadDir
   #define PayloadDir "..\artifacts\native-win-x64"
@@ -23,7 +23,7 @@ OutputDir=..\artifacts\releases\v{#AppVersion}
 OutputBaseFilename=CodexQuotaBar-v{#AppVersion}-Setup
 SetupIconFile=..\assets\app.ico
 UninstallDisplayIcon={app}\CodexQuotaBar.exe
-WizardStyle=modern
+WizardStyle=modern dark hidebevels includetitlebar
 Compression=lzma2/ultra64
 SolidCompression=yes
 CloseApplications=yes

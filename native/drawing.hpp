@@ -1,6 +1,15 @@
 #pragma once
 #include "core.hpp"
 namespace quota {
+namespace vibrancy {
+inline const Color deep(255, 28, 28, 30), mid(255, 44, 44, 46), surface(255, 58, 58, 60);
+inline const Color ink(255, 244, 244, 245), secondary(255, 193, 193, 195), muted(255, 158, 158, 160);
+inline const Color border(25, 255, 255, 255), hover(18, 255, 255, 255), active(26, 255, 255, 255);
+inline const Color focus(255, 163, 190, 255), warning(255, 235, 190, 142);
+constexpr COLORREF inputBrush = RGB(28, 28, 30);
+}
+void drawPanel(Graphics &g, RectF bounds, float radius, Color fill);
+void drawHeading(Graphics &g, const std::wstring &text, RectF bounds, float size);
 struct Surface {
     int width, height;
     HDC dc = nullptr;

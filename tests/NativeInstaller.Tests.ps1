@@ -1,7 +1,7 @@
 param([string]$SetupExe, [string]$RuntimeExe)
 $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
-if (-not $SetupExe) { $SetupExe = Join-Path $project 'artifacts/releases/v0.3.3/CodexQuotaBar-v0.3.3-Setup.exe' }
+if (-not $SetupExe) { $SetupExe = Join-Path $project 'artifacts/releases/v0.3.4/CodexQuotaBar-v0.3.4-Setup.exe' }
 if (-not $RuntimeExe) { $RuntimeExe = Join-Path $project 'artifacts/native-win-x64/CodexQuotaBar.exe' }
 $temporaryRoot = [IO.Path]::GetFullPath((Join-Path $project 'codex_tmp'))
 $fixture = [IO.Path]::GetFullPath((Join-Path $temporaryRoot ('native-install-' + [Guid]::NewGuid().ToString('N'))))

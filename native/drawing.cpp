@@ -52,6 +52,14 @@ void fillRound(Graphics &g, RectF r, float radius, Color c) {
     SolidBrush brush(c);
     g.FillPath(&brush, &p);
 }
+void drawPanel(Graphics &g, RectF bounds, float radius, Color fill) {
+    GraphicsPath path;
+    roundPath(path, bounds, radius);
+    SolidBrush background(fill);
+    Pen edge(vibrancy::border, 0); // Hairline in device pixels, independent of DPI.
+    g.FillPath(&background, &path);
+    g.DrawPath(&edge, &path);
+}
 static bool usesCjkFont(const std::wstring &text) {
     return std::any_of(text.begin(), text.end(), [](wchar_t c) { return c > 0x2fff; });
 }
@@ -64,14 +72,15 @@ float uiTextWidth(Graphics &g, const std::wstring &text, float size, bool bold) 
     return bounds.Width;
 }
 static void textImpl(Graphics &g, const std::wstring &text, RectF area, float size, Color c, bool bold,
-              bool centered, bool glyph, bool ui = false) {
-    FontFamily family(L"Segoe UI");
-    FontFamily chinese(L"Microsoft YaHei UI");
+              bool centered, bool glyph, bool ui = false, bool heading = false) {
+    FontFamily family(heading ? L"Georgia" : L"Segoe UI");
+    FontFamily chinese(heading ? L"SimSun" : L"Microsoft YaHei UI");
     FontFamily *f = &family;
     if (usesCjkFont(text))
         f = &chinese;
     if (ui)
         g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
+    if (heading && !f->IsAvailable()) f = &family;
     SolidBrush brush(c);
     StringFormat format;
     format.SetFormatFlags(StringFormatFlagsNoWrap);
@@ -107,6 +116,9 @@ static void textImpl(Graphics &g, const std::wstring &text, RectF area, float si
         }
         size -= .5f;
     }
+}
+void drawHeading(Graphics &g, const std::wstring &text, RectF bounds, float size) {
+    textImpl(g, text, bounds, size, vibrancy::ink, true, false, false, true, true);
 }
 void drawText(Graphics &g, const std::wstring &text, RectF area, float size, Color c, bool bold,
               bool centered, bool glyph) {
@@ -321,8 +333,9 @@ void drawWidgetBackground(Graphics &g, RectF bounds, const Settings &settings, b
     if (hover) alpha = std::max(alpha, light ? 112 : 75);
     if (!alpha) return;
     bounds.Inflate(-.5f, -.5f);
-    BYTE shade = light ? 255 : 38;
-    fillRound(g, bounds, bounds.Height / 8, Color(BYTE(alpha), shade, shade, shade));
+    Color tint = light ? vibrancy::surface : vibrancy::mid;
+    fillRound(g, bounds, std::min(8.f, bounds.Height / 6),
+              Color(BYTE(alpha), tint.GetR(), tint.GetG(), tint.GetB()));
 }
 void paintWidget(Surface &image, const Layout &layout, const State &state, const Settings &s, bool hover,
                  double hp, double wp) {
@@ -331,29 +344,29 @@ void paintWidget(Surface &image, const Layout &layout, const State &state, const
     g.SetSmoothingMode(SmoothingModeAntiAlias);
     bool light = lightTheme();
     drawWidgetBackground(g, RectF(0, 0, float(image.width), float(image.height)), s, light, hover);
-    drawWidget(g, layout.drawing, state.q, s, state.stale(), light, hp, wp);
+    drawWidget(g, layout.drawing, state.q, s, state.stale(), light && s.backgroundOpacity < 52, hp, wp);
 }
 void renderPreviews(const fs::path &dir) {
     fs::create_directories(dir);
     Surface image(1080, 620);
     {
         Graphics g(image.bitmap.get());
-        g.Clear(Color(255, 248, 248, 248));
-        drawText(g, L"原生版 · 七种任务栏样式", RectF(36, 18, 1000, 50), 25, Color(255, 30, 30, 30), true);
+        g.Clear(vibrancy::mid);
+        drawHeading(g, L"原生版 · 七种任务栏样式", RectF(36, 18, 1000, 50), 25);
         drawText(g, L"模拟额度：5 小时 68%，每周 27%", RectF(36, 68, 1000, 30), 14,
-                 Color(255, 105, 105, 105));
+                 vibrancy::secondary);
         for (int i = 0; i < 7; ++i) {
             int y = 120 + i * 65;
-            drawText(g, StyleNames[i], RectF(36, float(y), 240, 46), 16, Color(255, 40, 40, 40));
+            drawText(g, StyleNames[i], RectF(36, float(y), 240, 46), 16, vibrancy::ink);
             Settings s;
             s.style = StyleIds[i];
             Quotas q;
             q.hour = WindowQuota{68, 0};
             q.week = WindowQuota{27, 0};
             auto l = widgetLayout(s, s.visibility(q), 144, 48);
-            drawWidget(g, RectF(310, float(y + 3), float(l.width), float(l.height)), q, s, false, true);
+            drawWidget(g, RectF(310, float(y + 3), float(l.width), float(l.height)), q, s, false, false);
             s.preferences[i].percent = false;
-            drawWidget(g, RectF(700, float(y + 3), float(l.width), float(l.height)), q, s, false, true);
+            drawWidget(g, RectF(700, float(y + 3), float(l.width), float(l.height)), q, s, false, false);
         }
     }
     image.save(dir / L"native-styles.png");

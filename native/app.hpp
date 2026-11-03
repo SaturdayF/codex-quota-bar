@@ -115,7 +115,7 @@ struct SettingsWindow {
     int64_t previewStart = -1;
     int contentWidth = 700, contentHeight = 600;
     HFONT font = nullptr;
-    HBRUSH background = nullptr, sidebar = nullptr;
+    HBRUSH background = nullptr;
     std::vector<HWND> controls;
     HWND styles = nullptr, scale = nullptr, opacitySlider = nullptr, iconOpacitySlider = nullptr, display = nullptr, path = nullptr, interval = nullptr;
     HWND deepSeekToken = nullptr, deepSeekInterval = nullptr;

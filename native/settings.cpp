@@ -50,6 +50,129 @@ static std::wstring controlText(HWND w) {
     value.resize(n);
     return value;
 }
+enum class ControlSkin : DWORD_PTR { Button, Edit, Combo, Slider };
+
+static void paintControl(HWND w, HDC dc, ControlSkin skin) {
+    RECT rect{};
+    GetClientRect(w, &rect);
+    if (rect.right < 4 || rect.bottom < 4) return;
+    float d = GetDpiForWindow(w) / 96.f;
+    bool focused = GetFocus() == w;
+    if (skin == ControlSkin::Edit) {
+        wchar_t cue[256]{};
+        if (!focused && !GetWindowTextLengthW(w) &&
+            SendMessageW(w, EM_GETCUEBANNER, reinterpret_cast<WPARAM>(cue), std::size(cue))) {
+            HBRUSH fill = CreateSolidBrush(vibrancy::inputBrush);
+            FillRect(dc, &rect, fill);
+            DeleteObject(fill);
+            int saved = SaveDC(dc);
+            SetBkMode(dc, TRANSPARENT);
+            SetTextColor(dc, RGB(158, 158, 160));
+            if (auto font = SendMessageW(w, WM_GETFONT, 0, 0))
+                SelectObject(dc, reinterpret_cast<HFONT>(font));
+            RECT label = rect;
+            InflateRect(&label, -int(8 * d), 0);
+            DrawTextW(dc, cue, -1, &label, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+            RestoreDC(dc, saved);
+        }
+        HBRUSH edge = CreateSolidBrush(focused ? RGB(163, 190, 255) : RGB(51, 51, 53));
+        FrameRect(dc, &rect, edge);
+        DeleteObject(edge);
+        return;
+    }
+    Surface surface(rect.right, rect.bottom);
+    {
+        Graphics g(surface.bitmap.get());
+        g.SetSmoothingMode(SmoothingModeAntiAlias);
+        g.Clear(vibrancy::mid);
+        RectF bounds(.5f, .5f, rect.right - 1.f, rect.bottom - 1.f);
+        if (skin == ControlSkin::Combo) {
+            drawPanel(g, bounds, 6 * d, vibrancy::deep);
+            drawUiText(g, controlText(w), RectF(8 * d, 0, rect.right - 32 * d, float(rect.bottom)),
+                       15 * d, vibrancy::ink);
+            float x = rect.right - 13 * d, y = rect.bottom / 2.f;
+            Pen chevron(vibrancy::secondary, 1);
+            PointF arrow[] = {{x - 4 * d, y - 2 * d}, {x, y + 2 * d}, {x + 4 * d, y - 2 * d}};
+            g.DrawLines(&chevron, arrow, 3);
+        } else {
+            RECT channel{}, thumb{};
+            SendMessageW(w, TBM_GETCHANNELRECT, 0, reinterpret_cast<LPARAM>(&channel));
+            SendMessageW(w, TBM_GETTHUMBRECT, 0, reinterpret_cast<LPARAM>(&thumb));
+            float y = (thumb.top + thumb.bottom) / 2.f;
+            fillRound(g, RectF(float(channel.left), y - 2 * d, float(channel.right - channel.left), 4 * d),
+                      2 * d, vibrancy::deep);
+            float x = (thumb.left + thumb.right) / 2.f;
+            drawPanel(g, RectF(x - 5 * d, y - 7 * d, 10 * d, 14 * d), 3 * d, vibrancy::surface);
+            Pen mark(vibrancy::secondary, 1);
+            g.DrawLine(&mark, x, y - 3 * d, x, y + 3 * d);
+        }
+        if (focused) {
+            GraphicsPath path;
+            roundPath(path, bounds, 6 * d);
+            Pen edge(vibrancy::focus, 1);
+            g.DrawPath(&edge, &path);
+        }
+    }
+    BitBlt(dc, 0, 0, surface.width, surface.height, surface.dc, 0, 0, SRCCOPY);
+}
+
+static LRESULT CALLBACK controlSkin(HWND w, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR id, DWORD_PTR data) {
+    auto skin = static_cast<ControlSkin>(data);
+    if (msg == WM_NCDESTROY) {
+        RemovePropW(w, L"VibrancyHover");
+        RemoveWindowSubclass(w, controlSkin, id);
+    } else if (msg == WM_MOUSEMOVE && skin == ControlSkin::Button && !GetPropW(w, L"VibrancyHover")) {
+        TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, w, 0};
+        if (TrackMouseEvent(&track)) {
+            SetPropW(w, L"VibrancyHover", reinterpret_cast<HANDLE>(1));
+            InvalidateRect(w, nullptr, FALSE);
+        }
+    } else if (msg == WM_MOUSELEAVE && skin == ControlSkin::Button) {
+        RemovePropW(w, L"VibrancyHover");
+        InvalidateRect(w, nullptr, FALSE);
+    } else if (msg == WM_PAINT && (skin == ControlSkin::Combo || skin == ControlSkin::Slider)) {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(w, &ps);
+        paintControl(w, dc, skin);
+        EndPaint(w, &ps);
+        return 0;
+    } else if (msg == WM_PRINTCLIENT && skin != ControlSkin::Button) {
+        if (skin == ControlSkin::Edit) DefSubclassProc(w, msg, wp, lp);
+        paintControl(w, reinterpret_cast<HDC>(wp), skin);
+        return 0;
+    } else if (msg == WM_PAINT && skin == ControlSkin::Edit) {
+        auto result = DefSubclassProc(w, msg, wp, lp);
+        HDC dc = GetDC(w);
+        if (dc) {
+            paintControl(w, dc, skin);
+            ReleaseDC(w, dc);
+        }
+        return result;
+    }
+    auto result = DefSubclassProc(w, msg, wp, lp);
+    if (msg == WM_SETFOCUS || msg == WM_KILLFOCUS) InvalidateRect(w, nullptr, FALSE);
+    return result;
+}
+
+static void drawComboOption(const DRAWITEMSTRUCT &item) {
+    Graphics g(item.hDC);
+    RectF bounds(float(item.rcItem.left), float(item.rcItem.top),
+                 float(item.rcItem.right - item.rcItem.left), float(item.rcItem.bottom - item.rcItem.top));
+    SolidBrush bg(item.itemState & ODS_SELECTED ? vibrancy::surface : vibrancy::deep);
+    g.FillRectangle(&bg, bounds);
+    if (item.itemID == UINT(-1)) return;
+    auto index = item.itemID;
+    auto length = SendMessageW(item.hwndItem, CB_GETLBTEXTLEN, index, 0);
+    if (length == CB_ERR) return;
+    std::wstring label(size_t(length) + 1, L'\0');
+    SendMessageW(item.hwndItem, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(label.data()));
+    label.resize(size_t(length));
+    float d = GetDpiForWindow(item.hwndItem) / 96.f;
+    bounds.X += 8 * d;
+    bounds.Width -= 12 * d;
+    drawUiText(g, label, bounds, 15 * d, vibrancy::ink);
+}
+
 static void registerSettingsClass(const wchar_t *name, WNDPROC proc) {
     WNDCLASSEXW c{};
     c.cbSize = sizeof(c);
@@ -90,8 +213,7 @@ SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
                               WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1, 1, viewport,
                               nullptr, GetModuleHandleW(nullptr), this);
     if (!viewport || !content) throw std::runtime_error("Cannot create settings viewport");
-    background = CreateSolidBrush(lightTheme() ? RGB(255, 255, 255) : RGB(32, 32, 32));
-    sidebar = CreateSolidBrush(lightTheme() ? RGB(247, 247, 247) : RGB(26, 26, 26));
+    background = CreateSolidBrush(vibrancy::inputBrush);
     font = CreateFontW(-px(15), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
     createControls();
@@ -106,8 +228,6 @@ SettingsWindow::~SettingsWindow() {
         DeleteObject(font);
     if (background)
         DeleteObject(background);
-    if (sidebar)
-        DeleteObject(sidebar);
 }
 HWND SettingsWindow::button(const wchar_t *text, int id, int p) {
     HWND parent = p < 0 ? window : content;
@@ -116,6 +236,7 @@ HWND SettingsWindow::button(const wchar_t *text, int id, int p) {
                         parent, reinterpret_cast<HMENU>(INT_PTR(id)), GetModuleHandleW(nullptr), nullptr);
     SetPropW(w, L"QuotaPage", reinterpret_cast<HANDLE>(INT_PTR(p + 2)));
     SendMessageW(w, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
+    SetWindowSubclass(w, controlSkin, 1, DWORD_PTR(ControlSkin::Button));
     controls.push_back(w);
     return w;
 }
@@ -127,11 +248,21 @@ void SettingsWindow::createControls() {
     button(L"保存更改", Save, -1);
     button(L"取消", Cancel, -1);
     auto control = [&](const wchar_t *cls, const wchar_t *text, int id, int p, DWORD style) {
-        HWND w = CreateWindowExW(cls == std::wstring(L"EDIT") ? WS_EX_CLIENTEDGE : 0, cls, text,
+        bool combo = std::wstring_view(cls) == L"COMBOBOX";
+        bool edit = std::wstring_view(cls) == L"EDIT";
+        if (combo) style |= CBS_OWNERDRAWFIXED | CBS_HASSTRINGS;
+        HWND w = CreateWindowExW(0, cls, text,
                                  WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | style, 0, 0, 1, 1, content,
                                  reinterpret_cast<HMENU>(INT_PTR(id)), GetModuleHandleW(nullptr), nullptr);
         SetPropW(w, L"QuotaPage", reinterpret_cast<HANDLE>(INT_PTR(p + 2)));
         SendMessageW(w, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
+        if (combo) {
+            SendMessageW(w, CB_SETITEMHEIGHT, WPARAM(-1), px(24));
+            SendMessageW(w, CB_SETITEMHEIGHT, 0, px(26));
+        }
+        if (edit) SendMessageW(w, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(px(8), px(8)));
+        SetWindowSubclass(w, controlSkin, 1, DWORD_PTR(combo ? ControlSkin::Combo :
+                                                         edit ? ControlSkin::Edit : ControlSkin::Slider));
         controls.push_back(w);
         return w;
     };
@@ -361,7 +492,7 @@ void SettingsWindow::reveal(HMONITOR requested) {
     // STARTUPINFO on the first ShowWindow call.
     SetWindowPos(window, HWND_TOP, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     layout();
-    BOOL dark = !lightTheme();
+    BOOL dark = TRUE;
     DwmSetWindowAttribute(window, 20, &dark, sizeof(dark));
     SetForegroundWindow(window);
 }
@@ -374,20 +505,18 @@ void SettingsWindow::draw(HDC dc, bool inner) {
     {
         Graphics g(image.bitmap.get());
         g.SetSmoothingMode(SmoothingModeAntiAlias);
-        bool light = lightTheme();
-        Color base = light ? Color(255, 255, 255, 255) : Color(255, 32, 32, 32),
-              ink = light ? Color(255, 30, 30, 30) : Color(255, 240, 240, 240),
-              muted = light ? Color(255, 110, 110, 110) : Color(255, 165, 165, 165),
-              side = light ? Color(255, 247, 247, 247) : Color(255, 26, 26, 26);
+        auto base = inner ? vibrancy::mid : vibrancy::surface;
+        auto ink = vibrancy::ink, muted = vibrancy::secondary, side = vibrancy::deep;
         g.Clear(base);
         float d = dpi / 96.f;
         g.ScaleTransform(d, d);
         if (!inner) {
             SolidBrush b(side);
             g.FillRectangle(&b, RectF(0, 0, 196, float(rect.bottom / d)));
-            drawUiText(g, L"设置", RectF(26, 22, 150, 44), 27, ink, true);
+            drawHeading(g, L"设置", RectF(26, 22, 150, 44), 29);
             drawUiText(g, L"Codex Quota Bar\n" + std::wstring(Version), RectF(24, rect.bottom / d - 80, 155, 58), 14, muted);
-            Pen line(light ? Color(255, 235, 235, 235) : Color(255, 55, 55, 55));
+            Pen line(vibrancy::border, 0);
+            g.DrawLine(&line, 196.f, 0.f, 196.f, float(rect.bottom / d));
             g.DrawLine(&line, 218.f, rect.bottom / d - 78, rect.right / d - 28, rect.bottom / d - 78);
         } else {
             const wchar_t *headings[] = {L"外观", L"常规", L"高级", L"DeepSeek 相关设置"};
@@ -395,12 +524,12 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                                           L"管理显示屏幕，以及应用的启动与退出。",
                                           L"配置额度读取来源，或手动刷新额度。",
                                           L"可随 Harness 启停，也可独立显示余额。"};
-            drawUiText(g, headings[page], RectF(0, 0, float(contentWidth), 40), 25, ink, true);
+            drawHeading(g, headings[page], RectF(0, 0, float(contentWidth), 40), 27);
             drawUiText(g, subtitles[page], RectF(0, 43, float(contentWidth), 26), 14, muted);
             auto row = [&](float y, const wchar_t *title, const wchar_t *description, float reserve = 240) {
                 drawUiText(g, title, RectF(0, y, float(contentWidth) - reserve, 25), 16, ink);
                 drawUiText(g, description, RectF(0, y + 25, float(contentWidth) - reserve, 25), 14, muted);
-                Pen p(light ? Color(255, 237, 237, 237) : Color(255, 55, 55, 55));
+                Pen p(vibrancy::border, 0);
                 g.DrawLine(&p, 0.f, y + 59, float(contentWidth) - 14, y + 59);
             };
             if (page == 0) {
@@ -415,7 +544,7 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 row(340, L"Codex 图标不透明度", L"调节额度图形和数字，最低 10%。");
                 drawUiText(g, std::to_wstring(draft.iconOpacity) + L"%",
                            RectF(contentWidth - 70.f, 343, 56, 32), 13, muted, false, true);
-                fillRound(g, RectF(0, 418, contentWidth - 14.f, 62), 6, side);
+                drawPanel(g, RectF(.5f, 418, contentWidth - 15.f, 62), 10, vibrancy::surface);
                 Quotas q;
                 q.hour = WindowQuota{68, 0};
                 q.week = WindowQuota{27, 0};
@@ -431,8 +560,8 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 else {
                     RectF bounds((contentWidth - 14 - layout.width) / 2.f, 418 + (62 - layout.height) / 2.f,
                                  float(layout.width), float(layout.height));
-                    drawWidgetBackground(g, bounds, preview, light, false);
-                    drawWidget(g, bounds, q, preview, false, light, progress, progress);
+                    drawWidgetBackground(g, bounds, preview, false, false);
+                    drawWidget(g, bounds, q, preview, false, false, progress, progress);
                 }
                 drawUiText(g, L"预览使用模拟数据", RectF(0, 482, float(contentWidth), 24), 12, muted);
                 row(512, L"仪表中间显示 H 和 W", L"H 表示 5 小时额度，W 表示周额度。", 110);
@@ -482,13 +611,11 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
     {
         Graphics g(image.bitmap.get());
         g.SetSmoothingMode(SmoothingModeAntiAlias);
-        bool light = lightTheme(), disabled = (item.itemState & ODS_DISABLED) != 0,
-             pressed = (item.itemState & ODS_SELECTED) != 0;
-        Color base = light ? Color(255, 255, 255, 255) : Color(255, 32, 32, 32),
-              ink = light ? Color(255, 30, 30, 30) : Color(255, 240, 240, 240),
-              side = light ? Color(255, 247, 247, 247) : Color(255, 26, 26, 26);
-        if (id >= NavAppearance && id <= NavDeepSeek)
-            base = side;
+        bool disabled = (item.itemState & ODS_DISABLED) != 0;
+        bool pressed = (item.itemState & ODS_SELECTED) != 0;
+        bool hot = (item.itemState & ODS_HOTLIGHT) != 0 || GetPropW(item.hwndItem, L"VibrancyHover");
+        bool nav = id >= NavAppearance && id <= NavDeepSeek;
+        auto base = nav ? vibrancy::deep : (GetParent(item.hwndItem) == window ? vibrancy::surface : vibrancy::mid);
         g.Clear(base);
         float d = dpi / 96.f;
         RectF area(1, 1, image.width - 2.f, image.height - 2.f);
@@ -504,53 +631,41 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
                            : id == DeepSeekAlwaysShow ? draft.deepSeekAlwaysShow
                            : id == AvoidIcons ? draft.avoidIcons
                                              : startup;
-            Color track = enabled ? (light ? Color(255, 35, 35, 35) : Color(255, 225, 225, 225))
-                                  : (light ? Color(255, 180, 180, 180) : Color(255, 85, 85, 85));
-            if (disabled)
-                track = Color(255, 205, 205, 205);
-            fillRound(g, area, area.Height / 2, track);
-            float r = area.Height - 6 * d;
-            float left = enabled ? area.GetRight() - r - 3 * d : area.X + 3 * d;
-            SolidBrush b(enabled && !light ? Color(255, 35, 35, 35) : Color(255, 255, 255, 255));
-            g.FillEllipse(&b, RectF(left, area.Y + 3 * d, r, r));
+            drawPanel(g, area, 7 * d, enabled ? vibrancy::surface : vibrancy::deep);
+            float size = area.Height - 8 * d;
+            float left = enabled ? area.GetRight() - size - 4 * d : area.X + 4 * d;
+            fillRound(g, RectF(left, area.Y + 4 * d, size, size), 4 * d,
+                      disabled ? vibrancy::muted : enabled ? vibrancy::ink : vibrancy::secondary);
         } else {
-            Color fill = base, text = ink;
-            bool nav = id >= NavAppearance && id <= NavDeepSeek;
-            if (nav && id - NavAppearance == page)
-                fill = light ? Color(255, 230, 230, 230) : Color(255, 54, 54, 54);
-            if (id == Save) {
-                fill = ink;
-                text = base;
-            }
-            if (id == HourColor || id == WeekColor) {
-                fill = parseColor(id == HourColor ? draft.hourColor : draft.weekColor, ink);
-                text = (fill.GetR() * 299 + fill.GetG() * 587 + fill.GetB() * 114) > 155000
-                           ? Color(255, 15, 15, 15)
-                           : Color(255, 255, 255, 255);
-            }
-            if (pressed)
-                fill = light ? Color(255, 210, 210, 210) : Color(255, 75, 75, 75);
+            auto fill = nav ? base : id == Save ? vibrancy::surface : vibrancy::deep;
             fillRound(g, area, 8 * d, fill);
-            if (!nav && id != Save && id != HourColor && id != WeekColor) {
+            if (pressed || (nav && id - NavAppearance == page))
+                fillRound(g, area, 8 * d, vibrancy::active);
+            else if (hot && !disabled)
+                fillRound(g, area, 8 * d, vibrancy::hover);
+            if (!nav) {
                 GraphicsPath p;
                 roundPath(p, area, 8 * d);
-                Pen line(light ? Color(255, 221, 221, 221) : Color(255, 72, 72, 72), 1);
-                g.DrawPath(&line, &p);
+                Pen border(vibrancy::border, 1);
+                g.DrawPath(&border, &p);
             }
-            if (disabled)
-                text = Color(255, 150, 150, 150);
             RectF textArea = area;
             if (nav) {
                 textArea.X += 12 * d;
                 textArea.Width -= 18 * d;
+            } else if (id == HourColor || id == WeekColor) {
+                auto color = parseColor(id == HourColor ? draft.hourColor : draft.weekColor, vibrancy::ink);
+                fillRound(g, RectF(9 * d, (image.height - 10 * d) / 2.f, 10 * d, 10 * d), 2 * d, color);
+                textArea.X += 13 * d;
+                textArea.Width -= 13 * d;
             }
-            drawUiText(g, controlText(item.hwndItem), textArea, 15 * d, text, id == Save, !nav);
+            drawUiText(g, controlText(item.hwndItem), textArea, 15 * d,
+                       disabled ? vibrancy::muted : vibrancy::ink, id == Save, !nav);
         }
         if (item.itemState & ODS_FOCUS) {
             GraphicsPath p;
             roundPath(p, RectF(2, 2, image.width - 4.f, image.height - 4.f), 6 * d);
-            Pen focus(Color(255, 0, 120, 215), 1);
-            focus.SetDashStyle(DashStyleDot);
+            Pen focus(vibrancy::focus, 1);
             g.DrawPath(&focus, &p);
         }
     }
@@ -942,11 +1057,8 @@ LRESULT CALLBACK SettingsWindow::paletteProcedure(HWND w, UINT msg, WPARAM wp, L
         Surface image(r.right, r.bottom);
         {
             Graphics g(image.bitmap.get());
-            bool light = lightTheme();
-            Color base = light ? Color(255, 255, 255, 255) : Color(255, 32, 32, 32),
-                  ink = light ? Color(255, 30, 30, 30) : Color(255, 240, 240, 240),
-                  header = light ? Color(255, 243, 244, 246) : Color(255, 46, 46, 46);
-            g.Clear(base);
+            auto ink = vibrancy::ink, header = vibrancy::surface;
+            g.Clear(vibrancy::mid);
             g.ScaleTransform(self->dpi / 96.f, self->dpi / 96.f);
             g.SetSmoothingMode(SmoothingModeAntiAlias);
             fillRound(g, RectF(8, 8, 278, 30), 5, header);
@@ -965,9 +1077,7 @@ LRESULT CALLBACK SettingsWindow::paletteProcedure(HWND w, UINT msg, WPARAM wp, L
                 SolidBrush b(c);
                 g.FillRectangle(&b, RectF(float(x), float(y), 21, 21));
                 Pen pen(hexColor(c) == hexColor(self->selectedColor) || selection == i
-                            ? Color(255, 0, 120, 215)
-                            : Color(255, 216, 218, 223),
-                        selection == i ? 2 : 1);
+                            ? vibrancy::focus : vibrancy::border, 0);
                 g.DrawRectangle(&pen, RectF(float(x), float(y), 21, 21));
             }
             drawUiText(g, L"其他颜色…", RectF(16, 278, 264, 28), 13, ink);
@@ -1021,9 +1131,12 @@ LRESULT CALLBACK SettingsWindow::contentProcedure(HWND w, UINT msg, WPARAM wp, L
     case WM_COMMAND:
         self->command(LOWORD(wp), HIWORD(wp));
         return 0;
-    case WM_DRAWITEM:
-        self->drawButton(*reinterpret_cast<DRAWITEMSTRUCT *>(lp));
+    case WM_DRAWITEM: {
+        auto &item = *reinterpret_cast<DRAWITEMSTRUCT *>(lp);
+        if (item.CtlType == ODT_COMBOBOX) drawComboOption(item);
+        else self->drawButton(item);
         return TRUE;
+    }
     case WM_HSCROLL:
         if (reinterpret_cast<HWND>(lp) == self->scale) {
             self->draft.scale = SendMessageW(self->scale, TBM_GETPOS, 0, 0) / 100.;
@@ -1071,8 +1184,8 @@ LRESULT CALLBACK SettingsWindow::contentProcedure(HWND w, UINT msg, WPARAM wp, L
     case WM_CTLCOLORSTATIC:
     case WM_CTLCOLORLISTBOX: {
         HDC dc = reinterpret_cast<HDC>(wp);
-        SetTextColor(dc, lightTheme() ? RGB(30, 30, 30) : RGB(240, 240, 240));
-        SetBkColor(dc, lightTheme() ? RGB(255, 255, 255) : RGB(32, 32, 32));
+        SetTextColor(dc, RGB(244, 244, 245));
+        SetBkColor(dc, vibrancy::inputBrush);
         return reinterpret_cast<LRESULT>(self->background);
     }
     }
@@ -1151,11 +1264,8 @@ LRESULT CALLBACK SettingsWindow::procedure(HWND w, UINT msg, WPARAM wp, LPARAM l
         PostMessageW(self->app->controller, WM_APP + 10, 0, 0);
         return 0;
     case WM_SETTINGCHANGE:
-        if (self->background)
-            DeleteObject(self->background);
-        self->background = CreateSolidBrush(lightTheme() ? RGB(255, 255, 255) : RGB(32, 32, 32));
         {
-            BOOL dark = !lightTheme();
+            BOOL dark = TRUE;
             DwmSetWindowAttribute(w, 20, &dark, sizeof(dark));
         }
         InvalidateRect(w, nullptr, TRUE);

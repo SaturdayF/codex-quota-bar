@@ -247,16 +247,9 @@ void Overlay::showDetails(const fs::path &capture) {
         Graphics g(image.bitmap.get());
         g.Clear(Color(0, 0, 0, 0));
         g.SetSmoothingMode(SmoothingModeAntiAlias);
-        bool light = lightTheme();
-        Color ink = light ? Color(255, 30, 30, 30) : Color(255, 240, 240, 240);
-        Color muted = light ? Color(255, 105, 105, 105) : Color(255, 178, 178, 178);
-        fillRound(g, RectF(1, 1, width - 2.f, height - 2.f), 8 * d,
-                  light ? Color(252, 249, 249, 249) : Color(252, 38, 38, 38));
-        GraphicsPath border;
-        roundPath(border, RectF(1, 1, width - 2.f, height - 2.f), 8 * d);
-        Pen pen(light ? Color(255, 218, 218, 218) : Color(255, 75, 75, 75), 1);
-        g.DrawPath(&pen, &border);
-        drawUiText(g, L"Codex 额度", RectF(20 * d, 12 * d, 124 * d, 32 * d), 20 * d, ink, true);
+        auto ink = vibrancy::ink, muted = vibrancy::secondary;
+        drawPanel(g, RectF(1, 1, width - 2.f, height - 2.f), 10 * d, vibrancy::mid);
+        drawHeading(g, L"Codex 额度", RectF(20 * d, 12 * d, 124 * d, 32 * d), 20 * d);
         drawUiText(g, state.q.planLabel(), RectF(154 * d, 12 * d, width - 174 * d, 32 * d),
                    14 * d, muted);
         drawUiText(g, visible.count() == 2 ? L"5 小时与每周额度" : visible.hour ? L"5 小时额度" : L"每周额度",
@@ -276,7 +269,7 @@ void Overlay::showDetails(const fs::path &capture) {
                 precise << L"--";
             drawUiText(g, precise.str(), RectF(155 * d, yy, width - 175 * d, 32 * d), 24 * d, c, true, true);
             fillRound(g, RectF(20 * d, yy + 40 * d, width - 40 * d, 4 * d), 2 * d,
-                      light ? Color(255, 222, 225, 230) : Color(255, 73, 78, 85));
+                      vibrancy::surface);
             if (q && q->remaining > 0)
                 fillRound(g, RectF(20 * d, yy + 40 * d, (width - 40 * d) * float(q->remaining / 100), 4 * d),
                           2 * d, c);
@@ -292,7 +285,7 @@ void Overlay::showDetails(const fs::path &capture) {
         std::wstring status =
             state.error.empty() ? (state.stale() ? L"数据已过期，等待更新" : L"右键打开设置") : state.error;
         drawUiText(g, status, RectF(20 * d, footer + 30 * d, width - 40 * d, 28 * d), 14 * d,
-                 state.stale() ? Color(255, 170, 110, 55) : muted);
+                 state.stale() ? vibrancy::warning : muted);
     }
     if (!capture.empty())
         image.save(capture);

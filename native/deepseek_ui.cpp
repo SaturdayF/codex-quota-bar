@@ -24,10 +24,11 @@ void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &s
     g.SetSmoothingMode(SmoothingModeAntiAlias);
     bool light = lightTheme();
     float d = image.height / 32.f;
-    Color ink = light ? Color(255, 32, 32, 32) : Color(255, 245, 245, 245);
-    Color muted = light ? Color(255, 110, 110, 110) : Color(255, 170, 170, 170);
+    bool darkInk = light && settings.backgroundOpacity < 52;
+    Color ink = darkInk ? vibrancy::deep : vibrancy::ink;
+    Color muted = darkInk ? Color(255, 65, 65, 67) : vibrancy::secondary;
     drawWidgetBackground(g, RectF(0, 0, float(image.width), float(image.height)), settings, light, hover);
-    fillRound(g, RectF(5 * d, 5 * d, 24 * d, 22 * d), 5 * d, Color(255, 75, 106, 235));
+    fillRound(g, RectF(5 * d, 5 * d, 24 * d, 22 * d), 5 * d, vibrancy::surface);
     drawUiText(g, L"DSH", RectF(5 * d, 5 * d, 24 * d, 22 * d), 11 * d, Color(255, 255, 255, 255), true, true);
     auto [balance, today] = deepSeekLabels(state);
     drawUiText(g, balance, RectF(37 * d, 0, image.width - 42 * d, 16 * d),
@@ -57,16 +58,12 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
         Graphics g(image.bitmap.get());
         g.Clear(Color(0, 0, 0, 0));
         g.SetSmoothingMode(SmoothingModeAntiAlias);
-        bool light = lightTheme();
-        Color ink = light ? Color(255, 30, 30, 30) : Color(255, 240, 240, 240);
-        Color muted = light ? Color(255, 105, 105, 105) : Color(255, 178, 178, 178);
-        Color accent(255, 75, 106, 235);
-        fillRound(g, RectF(1, 1, width - 2.f, height - 2.f), 8 * d,
-                  light ? Color(252, 249, 249, 249) : Color(252, 38, 38, 38));
+        auto ink = vibrancy::ink, muted = vibrancy::secondary, accent = vibrancy::focus;
+        drawPanel(g, RectF(1, 1, width - 2.f, height - 2.f), 10 * d, vibrancy::mid);
         auto line = [&](const std::wstring &text, float y, float size, Color color, bool bold = false) {
             drawUiText(g, text, RectF(20 * d, y * d, width - 40 * d, 28 * d), size * d, color, bold);
         };
-        line(L"DeepSeekHarness · 当日消耗", 14, 20, ink, true);
+        drawHeading(g, L"DeepSeekHarness · 当日消耗", RectF(20 * d, 14 * d, width - 40 * d, 28 * d), 20 * d);
         line(beijingDate(utcNow()) + L" · 北京时间 00:00 起 · 账户汇总", 49, 13, muted);
         float yy = 88;
         for (int i = 0; i < balanceRows; ++i) {
@@ -118,7 +115,7 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
         std::wstring error = !data.balanceError.empty() ? data.balanceError : !data.costError.empty() ? data.costError : data.tokensError;
         if (!today && data.costAt) error = L"日期已切换，正在读取今日账单";
         line(error.empty() ? L"平台账单可能延迟更新 · 右键打开 DeepSeek 相关设置" : error,
-             footer + 30, 12, error.empty() ? muted : Color(255, 170, 110, 55));
+             footer + 30, 12, error.empty() ? muted : vibrancy::warning);
         line(L"平台账户账单 · 不按模型单价估算费用", footer + 56, 12, muted);
     }
     if (!capture.empty()) image.save(capture);
