@@ -59,7 +59,7 @@ UI 与协议回归使用模拟数据。安装卸载测试使用独立目录，�
 发布前核对版本、ZIP 内容、PE 系统依赖和 SHA-256。发布脚本校验远端标签指向及上传文件摘要。已发布标签和下载文件保持固定，后续功能修改使用新版本。
 
 ```powershell
-python scripts/github-release.py v0.3.2 <commit> <setup> <zip> <sha256-file>
+python scripts/github-release.py v0.3.3 <commit> <setup> <zip> <sha256-file>
 ```
 
 ## 验证范围
