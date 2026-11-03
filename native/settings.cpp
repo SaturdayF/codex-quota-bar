@@ -2,6 +2,7 @@
 #include <commdlg.h>
 #include <windowsx.h>
 namespace quota {
+constexpr int CaptionHeight = 32;
 enum {
     NavAppearance = 100,
     NavGeneral,
@@ -61,6 +62,22 @@ static const GlassPalette &controlColors(HWND w) {
     return glassPalette(settings && settings->draft.darkAppearance);
 }
 
+static void glassControl(Graphics &g, RectF bounds, float d, const GlassPalette &colors,
+                         bool hot = false, bool pressed = false, bool primary = false, bool disabled = false) {
+    bool dark = colors.ink.GetR() > 128;
+    BYTE opacity = disabled ? 24 : pressed ? 40 : hot ? 100 : 65;
+    Color fill = primary ? Color(opacity, 94, 142, 213) : Color(opacity, 255, 255, 255);
+    if (dark && !primary) fill = Color(BYTE(opacity / 2), 255, 255, 255);
+    GraphicsPath shape;
+    roundPath(shape, bounds, 9 * d);
+    SolidBrush surface(fill);
+    g.FillPath(&surface, &shape);
+    LinearGradientBrush rim(PointF(bounds.X, bounds.Y), PointF(bounds.X, bounds.GetBottom()),
+                            Color(dark ? 65 : 140, 255, 255, 255), colors.border);
+    Pen edge(&rim, 1);
+    g.DrawPath(&edge, &shape);
+}
+
 static void paintControl(HWND w, HDC dc, ControlSkin skin) {
     RECT rect{};
     GetClientRect(w, &rect);
@@ -106,7 +123,8 @@ static void paintControl(HWND w, HDC dc, ControlSkin skin) {
         else g.Clear(colors.mid);
         RectF bounds(.5f, .5f, rect.right - 1.f, rect.bottom - 1.f);
         if (skin == ControlSkin::Combo) {
-            drawPanel(g, bounds, 6 * d, colors.deep, colors.border);
+            glassControl(g, bounds, d, colors, GetPropW(w, L"VibrancyHover") != nullptr,
+                         SendMessageW(w, CB_GETDROPPEDSTATE, 0, 0) != 0, false, !IsWindowEnabled(w));
             drawUiText(g, controlText(w), RectF(8 * d, 0, rect.right - 32 * d, float(rect.bottom)),
                        15 * d, colors.ink);
             float x = rect.right - 13 * d, y = rect.bottom / 2.f;
@@ -134,7 +152,7 @@ static void paintControl(HWND w, HDC dc, ControlSkin skin) {
             drawPanel(g, RectF(x - 7 * d, y - 7 * d, 14 * d, 14 * d), 7 * d,
                       Color(255, 255, 255, 255), accent);
         }
-        if (focused && skin != ControlSkin::Slider) {
+        if (focused && skin != ControlSkin::Slider && !(SendMessageW(w, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS)) {
             GraphicsPath path;
             roundPath(path, bounds, 6 * d);
             Pen edge(colors.focus, 1);
@@ -149,13 +167,13 @@ static LRESULT CALLBACK controlSkin(HWND w, UINT msg, WPARAM wp, LPARAM lp, UINT
     if (msg == WM_NCDESTROY) {
         RemovePropW(w, L"VibrancyHover");
         RemoveWindowSubclass(w, controlSkin, id);
-    } else if (msg == WM_MOUSEMOVE && skin == ControlSkin::Button && !GetPropW(w, L"VibrancyHover")) {
+    } else if (msg == WM_MOUSEMOVE && (skin == ControlSkin::Button || skin == ControlSkin::Combo) && !GetPropW(w, L"VibrancyHover")) {
         TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, w, 0};
         if (TrackMouseEvent(&track)) {
             SetPropW(w, L"VibrancyHover", reinterpret_cast<HANDLE>(1));
             InvalidateRect(w, nullptr, FALSE);
         }
-    } else if (msg == WM_MOUSELEAVE && skin == ControlSkin::Button) {
+    } else if (msg == WM_MOUSELEAVE && (skin == ControlSkin::Button || skin == ControlSkin::Combo)) {
         RemovePropW(w, L"VibrancyHover");
         InvalidateRect(w, nullptr, FALSE);
     } else if (msg == WM_PAINT && (skin == ControlSkin::Combo || skin == ControlSkin::Slider)) {
@@ -237,6 +255,7 @@ SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
                         px(1000), px(730), nullptr, nullptr, GetModuleHandleW(nullptr), this);
     if (!window)
         throw std::runtime_error("Cannot create settings window");
+    SetWindowPos(window, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     viewport = CreateWindowExW(WS_EX_COMPOSITED, L"CodexQuotaBar.Native.Viewport", L"",
                               WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0, 0, 1, 1, window,
                               nullptr, GetModuleHandleW(nullptr), this);
@@ -403,7 +422,7 @@ void SettingsWindow::layout() {
     RECT r;
     GetClientRect(window, &r);
     int w = r.right, h = r.bottom;
-    SetWindowPos(viewport, nullptr, px(218), px(22), std::max(1, w - px(246)), std::max(1, h - px(100)),
+    SetWindowPos(viewport, nullptr, px(218), px(22 + CaptionHeight), std::max(1, w - px(246)), std::max(1, h - px(100 + CaptionHeight)),
                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
     RECT c;
     GetClientRect(viewport, &c);
@@ -423,7 +442,7 @@ void SettingsWindow::layout() {
     };
     int right = contentWidth - 224;
     for (int i = 0; i < 4; ++i)
-        SetWindowPos(GetDlgItem(window, NavAppearance + i), nullptr, px(15), px(82 + i * 43), px(166), px(38),
+        SetWindowPos(GetDlgItem(window, NavAppearance + i), nullptr, px(15), px(82 + CaptionHeight + i * 43), px(166), px(38),
                      SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
     SetWindowPos(GetDlgItem(window, Save), nullptr, w - px(148), h - px(58), px(120), px(36),
                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
@@ -574,7 +593,7 @@ void SettingsWindow::draw(HDC dc, bool inner) {
             SolidBrush b(draft.darkAppearance ? Color(120, 18, 19, 23) : Color(125, 255, 255, 255));
             g.FillRectangle(&b, RectF(0, 0, 196, float(rect.bottom / d)));
             g.Restore(saved);
-            drawHeading(g, L"设置", RectF(26, 22, 150, 44), 29, ink);
+            drawHeading(g, L"设置", RectF(26, 22 + CaptionHeight, 150, 44), 29, ink);
             drawUiText(g, L"Codex Quota Bar\n" + std::wstring(Version), RectF(24, rect.bottom / d - 80, 155, 58), 14, muted);
             Pen line(colors.border, 0);
             g.DrawLine(&line, 196.f, 0.f, 196.f, float(rect.bottom / d));
@@ -605,8 +624,7 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 row(340, L"Codex 图标不透明度", L"调节额度图形和数字，最低 10%。");
                 drawUiText(g, std::to_wstring(draft.iconOpacity) + L"%",
                            RectF(contentWidth - 70.f, 343, 56, 32), 13, muted, false, true);
-                auto previewBackdrop = draft.darkAppearance ? colors.deep : Color(255, 230, 235, 243);
-                drawPanel(g, RectF(.5f, 418, contentWidth - 15.f, 62), 12, previewBackdrop, colors.border);
+                glassControl(g, RectF(.5f, 418, contentWidth - 15.f, 62), 1, colors);
                 Quotas q;
                 q.hour = WindowQuota{68, 0};
                 q.week = WindowQuota{27, 0};
@@ -706,17 +724,11 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
             float left = enabled ? area.GetRight() - size - 4 * d : area.X + 4 * d;
             fillRound(g, RectF(left, area.Y + 4 * d, size, size), size / 2, Color(255, 255, 255, 255));
         } else {
-            if (!nav) fillRound(g, area, 8 * d, id == Save ? colors.surface : colors.deep);
-            if (pressed || (nav && id - NavAppearance == page))
+            if (!nav) glassControl(g, area, d, colors, hot, pressed, id == Save, disabled);
+            if (nav && (pressed || id - NavAppearance == page))
                 fillRound(g, area, 8 * d, colors.active);
-            else if (hot && !disabled)
+            else if (nav && hot && !disabled)
                 fillRound(g, area, 8 * d, colors.hover);
-            if (!nav) {
-                GraphicsPath p;
-                roundPath(p, area, 8 * d);
-                Pen border(colors.border, 1);
-                g.DrawPath(&border, &p);
-            }
             RectF textArea = area;
             if (nav) {
                 textArea.X += 12 * d;
@@ -730,7 +742,7 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
             drawUiText(g, controlText(item.hwndItem), textArea, 15 * d,
                        disabled ? colors.muted : colors.ink, id == Save, !nav);
         }
-        if (item.itemState & ODS_FOCUS) {
+        if ((item.itemState & ODS_FOCUS) && !(item.itemState & ODS_NOFOCUSRECT)) {
             GraphicsPath p;
             roundPath(p, RectF(2, 2, image.width - 4.f, image.height - 4.f), 6 * d);
             Pen focus(colors.focus, 1);
@@ -1311,7 +1323,38 @@ LRESULT CALLBACK SettingsWindow::procedure(HWND w, UINT msg, WPARAM wp, LPARAM l
     }
     if (!self)
         return DefWindowProcW(w, msg, wp, lp);
+    LRESULT captionResult = 0;
+    if (msg != WM_NCCALCSIZE && DwmDefWindowProc(w, msg, wp, lp, &captionResult)) return captionResult;
     switch (msg) {
+    case WM_NCCALCSIZE:
+        if (wp) {
+            auto params = reinterpret_cast<NCCALCSIZE_PARAMS *>(lp);
+            LONG top = params->rgrc[0].top;
+            DefWindowProcW(w, msg, wp, lp);
+            // Retain native side/bottom resize borders, extend only the client
+            // top. DWM still draws caption buttons, but no icon or title text.
+            int inset = IsZoomed(w) ? GetSystemMetricsForDpi(SM_CYSIZEFRAME, self->dpi) +
+                                     GetSystemMetricsForDpi(SM_CXPADDEDBORDER, self->dpi) : 0;
+            params->rgrc[0].top = top + inset;
+            return 0;
+        }
+        break;
+    case WM_NCHITTEST: {
+        auto native = DefWindowProcW(w, msg, wp, lp);
+        if (native != HTCLIENT) return native;
+        POINT p{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        ScreenToClient(w, &p);
+        RECT r{}; GetClientRect(w, &r);
+        int edge = GetSystemMetricsForDpi(SM_CYSIZEFRAME, self->dpi) +
+                   GetSystemMetricsForDpi(SM_CXPADDEDBORDER, self->dpi);
+        if (!IsZoomed(w) && p.y < edge) {
+            if (p.x < edge) return HTTOPLEFT;
+            if (p.x >= r.right - edge) return HTTOPRIGHT;
+            return HTTOP;
+        }
+        if (p.y < self->px(CaptionHeight)) return HTCAPTION;
+        return HTCLIENT;
+    }
     case WM_MOUSEWHEEL:
         if (self->content) return SendMessageW(self->content, msg, wp, lp);
         break;

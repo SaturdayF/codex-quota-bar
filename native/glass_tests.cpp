@@ -89,6 +89,30 @@ int liveGlassTests(const fs::path &dir, std::ostream &log) {
         image.save(dir / name);
     };
     settle();
+    RECT windowBounds{}; GetWindowRect(settings.window, &windowBounds);
+    POINT clientOrigin = point(0, 0);
+    check(clientOrigin.y == windowBounds.top, "sidebar client surface extends through the former title area");
+    POINT dragPoint = point(settings.px(250), settings.px(20));
+    check(SendMessageW(settings.window, WM_NCHITTEST, 0, MAKELPARAM(dragPoint.x, dragPoint.y)) == HTCAPTION,
+          "empty header retains native dragging and double-click behavior");
+    POINT topEdge = point(settings.px(250), 1);
+    check(SendMessageW(settings.window, WM_NCHITTEST, 0, MAKELPARAM(topEdge.x, topEdge.y)) == HTTOP,
+          "extended header retains top-edge resizing");
+    RECT caption{};
+    bool buttons = SUCCEEDED(DwmGetWindowAttribute(settings.window, 5, &caption, sizeof(caption))) && caption.right > caption.left;
+    if (buttons) {
+        int expected[] = {HTMINBUTTON, HTMAXBUTTON, HTCLOSE};
+        for (int i = 0; i < 3; ++i) {
+            POINT p{windowBounds.left + caption.left + (caption.right - caption.left) * (2 * i + 1) / 6,
+                    windowBounds.top + (caption.top + caption.bottom) / 2};
+            buttons &= SendMessageW(settings.window, WM_NCHITTEST, 0, MAKELPARAM(p.x, p.y)) == expected[i];
+        }
+    }
+    check(buttons, "DWM retains native minimize, maximize and close button hit targets");
+    SendMessageW(settings.window, WM_SYSCOMMAND, SC_MAXIMIZE, 0); settle();
+    check(IsZoomed(settings.window), "custom header supports native maximize");
+    SendMessageW(settings.window, WM_SYSCOMMAND, SC_RESTORE, 0); settle();
+    check(!IsZoomed(settings.window), "custom header restores window bounds");
     check(!settings.settingsFrost, "live settings never capture or cache desktop pixels");
     if (settings.backdrop == BackdropMode::Solid) {
         log << "SKIP live compositor checks: composition or transparency unavailable\n";
@@ -98,26 +122,35 @@ int liveGlassTests(const fs::path &dir, std::ostream &log) {
         settings.draft.darkAppearance = dark; settings.applyAppearance();
         activateTestWindow(settings.window);
         bg.left = bg.right = RGB(224, 40, 40); repaintBackground();
-        POINT body = point(settings.px(235), settings.px(94));
-        POINT title = point(width / 2, -settings.px(12));
+        POINT body = point(settings.px(235), settings.px(126));
+        POINT title = point(width / 2, settings.px(16));
+        POINT option{settings.px(14), settings.px(5)}, action{settings.px(14), settings.px(7)};
+        ClientToScreen(settings.styles, &option);
+        ClientToScreen(GetDlgItem(settings.window, 110), &action);
         log << "INFO glass visible=" << IsWindowVisible(settings.window) << " iconic=" << IsIconic(settings.window) << " foreground=" << (GetForegroundWindow() == settings.window) << " bodyRoot=" << (GetAncestor(WindowFromPoint(body), GA_ROOT) == settings.window) << std::endl;
         check(GetAncestor(WindowFromPoint(body), GA_ROOT) == settings.window, "live glass fixture is visible above its synthetic background");
         auto red = sample(body), redTitle = sample(title);
+        auto optionRed = sample(option), actionRed = sample(action);
         bg.left = bg.right = RGB(40, 70, 224); repaintBackground();
         check(difference(red, sample(body)) > 20, "live glass follows changes behind the settings content without repainting it");
+        check(difference(optionRed, sample(option)) > 20 && difference(actionRed, sample(action)) > 20,
+              "dropdown and action button surfaces transmit the live backdrop");
         if (settings.backdrop == BackdropMode::Acrylic)
-            check(difference(redTitle, sample(title)) > 20, "native title bar follows the same live Acrylic background");
+            check(difference(redTitle, sample(title)) > 20, "extended header follows the same live Acrylic background");
+        check(difference(sample(point(settings.px(8), settings.px(16))),
+                         sample(point(settings.px(8), settings.px(200)))) < 8,
+              "sidebar tint is continuous from header to navigation area");
         capture(dark ? L"live-dark-blue.png" : L"live-light-blue.png");
     }
     settings.draft.darkAppearance = false; settings.applyAppearance();
-    POINT body = point(settings.px(235), settings.px(94));
+    POINT body = point(settings.px(235), settings.px(126));
     bg.left = RGB(224, 40, 40); bg.right = RGB(40, 70, 224); bg.split = body.x - work.left + 50;
     repaintBackground();
     auto before = sample(body);
     RECT bounds{}; GetWindowRect(settings.window, &bounds);
     SetWindowPos(settings.window, nullptr, bounds.left + 120, bounds.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     settle();
-    body = point(settings.px(235), settings.px(94));
+    body = point(settings.px(235), settings.px(126));
     check(difference(before, sample(body)) > 20, "moving settings samples its new screen position through DWM");
     capture(L"live-moved.png");
     SetWindowPos(settings.window, nullptr, 0, 0, width - 50, height - 30, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);

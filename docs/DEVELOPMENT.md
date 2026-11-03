@@ -45,6 +45,8 @@ DeepSeek 使用 WinHTTP 读取 `platform.deepseek.com` 的账户余额、费用�
 
 GDI+ 表面保留预乘 Alpha，通过 BitBlt 提交到窗口重定向表面；原生输入框显式恢复不透明 Alpha，避免黑色文字消失。详情改为普通 DWM 窗口并缓存前景绘制结果，背景由合成器持续更新。运行时不截取桌面，不依赖定时截图，也不需要在窗口移动时重新模糊。仅导出预览使用模拟背景。
 
+设置窗口通过 `WM_NCCALCSIZE` 将客户区延伸到顶部，隐藏可见标题与图标，侧栏底色覆盖完整高度；窗口名称仍用于任务切换和辅助功能。`DwmDefWindowProc` 保留原生标题栏按钮，顶部补充拖动及缩放命中检测。下拉框、操作按钮和预览区共用半透明表面、细高光边框和悬停/按下状态。
+
 实现参考：[Microsoft 系统背景属性](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwm_systembackdrop_type)、[DWM 自定义窗口框架](https://learn.microsoft.com/en-us/windows/win32/dwm/customframe)和 [window-vibrancy](https://github.com/tauri-apps/window-vibrancy) 的平台兼容说明。未引入第三方图形运行库。
 
 `native/glass_tests.cpp` 使用独立的纯色/分区背景窗口，验证浅色和深色内容、原生顶栏、移动后的背景变化及详情窗口实时更新，并生成仅含模拟数据的合成截图。Windows 10 的兼容路径仍需在对应系统实机验证。
