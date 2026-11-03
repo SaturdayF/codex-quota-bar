@@ -1,6 +1,8 @@
 #include "app.hpp"
 #include "uninstall.hpp"
 namespace quota {
+int liveGlassTests(const fs::path &dir, std::ostream &log);
+void activateTestWindow(HWND window);
 int selfTests(const fs::path &output) {
     std::ofstream log(output);
     int checks = 0;
@@ -316,6 +318,8 @@ int uiTests(const fs::path &dir) {
             throw std::runtime_error(name);
         ++count;
     };
+    // Run composited screen checks before any other fixture can cover them.
+    count += liveGlassTests(dir, log);
     // Exercise shell lifecycle without touching the user's real tray or Explorer.
     std::vector<DWORD> trayCalls;
     {
@@ -468,6 +472,7 @@ int uiTests(const fs::path &dir) {
     }
     app.showSettings();
     auto &settings = *app.settingsWindow;
+    activateTestWindow(settings.window);
     auto proState = regularState;
     proState.q.plan = "prolite";
     proState.q.hour.reset();
@@ -762,6 +767,11 @@ int uiTests(const fs::path &dir) {
     setAppearance(1);
     UpdateWindow(settings.window);
     RedrawWindow(settings.viewport, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    log << "INFO theme draft=" << settings.draft.darkAppearance << " serialized="
+        << Settings::fromJson(settings.draft.toJson()).darkAppearance << " pixelsChanged="
+        << (lightPixels != readControl(settings.viewport)) << " foreground="
+        << (GetForegroundWindow() == settings.window) << std::endl;
+    settings.capture(dir / L"settings-theme-check.png");
     check(Settings::fromJson(settings.draft.toJson()).darkAppearance && lightPixels != readControl(settings.viewport),
           "dark appearance applies immediately and survives the settings round trip");
     settings.capture(dir / L"settings-dark.png");

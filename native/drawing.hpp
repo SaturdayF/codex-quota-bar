@@ -28,7 +28,10 @@ struct Surface {
     void present(HWND window, int x, int y, bool move = true);
     void save(const fs::path &file);
 };
-std::unique_ptr<Surface> captureFrost(RECT bounds, bool simulated);
+enum class BackdropMode { Solid, Acrylic, Blur };
+BackdropMode configureBackdrop(HWND window, bool dark);
+void paintBackdrop(Graphics &g, const GlassPalette &colors, BackdropMode mode);
+std::unique_ptr<Surface> previewFrost(int width, int height);
 void paintFrost(Graphics &g, RectF bounds, float radius, const GlassPalette &colors,
                 const Surface *frost, RectF sourcePlacement);
 void roundPath(GraphicsPath &path, RectF area, float radius);

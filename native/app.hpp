@@ -20,6 +20,8 @@ struct Overlay {
     WidgetKind kind = WidgetKind::Codex;
     int detailPage = 0;
     std::unique_ptr<Surface> detailFrost;
+    std::unique_ptr<Surface> detailImage;
+    BackdropMode detailBackdrop = BackdropMode::Solid;
     bool hover = false, dragging = false;
     POINT dragStart{}, origin{};
     std::optional<int> dragPeerOrigin;
@@ -47,6 +49,7 @@ struct Overlay {
     void showDetails(const fs::path &capture = {});
     void showDeepSeekDetails(const fs::path &capture = {});
     void hideDetails();
+    void presentDetails(std::unique_ptr<Surface> image, int left, int top);
     static LRESULT CALLBACK procedure(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK detailProcedure(HWND, UINT, WPARAM, LPARAM);
 };
@@ -120,6 +123,8 @@ struct SettingsWindow {
     int wheelRemainder = 0;
     int pageHeight = 0, thumbGrab = -1;
     std::unique_ptr<Surface> settingsFrost;
+    BackdropMode backdrop = BackdropMode::Solid;
+    bool simulatedGlass = false;
     bool startup = false, closing = false;
     bool loading = false;
     bool layingOut = false;

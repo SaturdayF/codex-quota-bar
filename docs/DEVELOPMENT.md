@@ -41,9 +41,13 @@ DeepSeek 使用 WinHTTP 读取 `platform.deepseek.com` 的账户余额、费用�
 
 字体统一为 Segoe UI / Microsoft YaHei UI，无衬线标题与正文共用绘制路径。滑动条保留原生键盘和辅助功能语义，自绘有色轨道及圆形滑块，键盘焦点仅标记滑块。
 
-设置及详情在打开时采样背景，缩小后进行两遍分离模糊，再调整饱和度、叠加主题染色、柔和高光和固定噪点。所有子控件按父窗口坐标绘制同一材质，避免滚动时的接缝或纹理跳动。该路径使用缓存的背景图像，不是实时 DWM Acrylic。
+设置与详情使用 DWM 实时背景合成。设置在 Windows 11 22H2+ 使用 `DWMWA_SYSTEMBACKDROP_TYPE = DWMSBT_TRANSIENTWINDOW`；较早系统通过动态加载的 `SetWindowCompositionAttribute` 启用兼容模糊。详情窗口使用不依赖激活状态的 Accent Acrylic，避免无焦点窗口被系统退回纯色，同时不抢焦点。关闭合成或高对比度时退回纯色。顶栏保留原生窗口行为，`DwmExtendFrameIntoClientArea` 将同一材质延伸到内容区。
 
-材质参考：[Win32Acrylic](https://github.com/ALTaleX531/Win32Acrylic) 的模糊、饱和度、噪点与染色分层，以及 [Microsoft Acrylic 文档](https://github.com/MicrosoftDocs/windows-dev-docs/blob/docs/hub/apps/develop/ui/in-app-acrylic.md)。采用本项目原生 GDI+ 绘制，未引入上述项目的代码或依赖。
+GDI+ 表面保留预乘 Alpha，通过 BitBlt 提交到窗口重定向表面；原生输入框显式恢复不透明 Alpha，避免黑色文字消失。详情改为普通 DWM 窗口并缓存前景绘制结果，背景由合成器持续更新。运行时不截取桌面，不依赖定时截图，也不需要在窗口移动时重新模糊。仅导出预览使用模拟背景。
+
+实现参考：[Microsoft 系统背景属性](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwm_systembackdrop_type)、[DWM 自定义窗口框架](https://learn.microsoft.com/en-us/windows/win32/dwm/customframe)和 [window-vibrancy](https://github.com/tauri-apps/window-vibrancy) 的平台兼容说明。未引入第三方图形运行库。
+
+`native/glass_tests.cpp` 使用独立的纯色/分区背景窗口，验证浅色和深色内容、原生顶栏、移动后的背景变化及详情窗口实时更新，并生成仅含模拟数据的合成截图。Windows 10 的兼容路径仍需在对应系统实机验证。
 
 托盘使用 Shell_NotifyIcon v4，接收 TaskbarCreated 重建通知，首次注册失败时每 5 秒重试。退出时删除图标，测试和渲染模式不注册真实托盘图标。UI 检查通过模拟 Shell 调用验证注册、重试、恢复和清理，避免重启用户的 Explorer。
 

@@ -39,7 +39,7 @@ Overlay::Overlay(Application *a, const Monitor &m, const Settings &s, const Stat
     if (!window)
         throw std::runtime_error("Cannot create quota widget");
     if (rejectedHost) SetPropW(window, L"QuotaRejectedHost", rejectedHost);
-    details = CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+    details = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
                               L"CodexQuotaBar.Native.Details", kind == WidgetKind::DeepSeek ? L"DeepSeekHarness 详情" : L"额度详情", WS_POPUP, 0, 0, 1, 1, app->controller,
                               nullptr, GetModuleHandleW(nullptr), this);
     update(initial);
@@ -230,6 +230,13 @@ void Overlay::hideDetails() {
     if (details)
         ShowWindow(details, SW_HIDE);
     detailFrost.reset();
+    detailImage.reset();
+}
+void Overlay::presentDetails(std::unique_ptr<Surface> image, int left, int top) {
+    detailImage = std::move(image);
+    SetWindowPos(details, HWND_TOPMOST, left, top, detailImage->width, detailImage->height,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    RedrawWindow(details, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
 }
 void Overlay::showDetails(const fs::path &capture) {
     if (kind == WidgetKind::DeepSeek) {
@@ -243,17 +250,20 @@ void Overlay::showDetails(const fs::path &capture) {
     int left =
         std::clamp<LONG>(x, monitor.work.left, std::max(monitor.work.left, monitor.work.right - width));
     int top = std::max(int(monitor.work.top), y - height - int(12 * d));
-    if (!IsWindowVisible(details) || !detailFrost)
-        detailFrost = captureFrost({left, top, left + width, top + height}, app->testing || app->preview || !capture.empty());
+    bool simulated = app->testing || app->preview || !capture.empty();
+    if (simulated && !detailFrost) detailFrost = previewFrost(width, height);
+    detailBackdrop = configureBackdrop(details, settings.darkAppearance);
     const auto &colors = glassPalette(settings.darkAppearance);
-    Surface image(width, height);
+    auto rendered = std::make_unique<Surface>(width, height);
+    auto &image = *rendered;
     {
         Graphics g(image.bitmap.get());
         g.Clear(Color(0, 0, 0, 0));
         g.SetSmoothingMode(SmoothingModeAntiAlias);
         auto ink = colors.ink, muted = colors.secondary;
         RectF glass(1, 1, width - 2.f, height - 2.f);
-        paintFrost(g, glass, 16 * d, colors, detailFrost.get(), glass);
+        if (simulated) paintFrost(g, glass, 16 * d, colors, detailFrost.get(), glass);
+        else paintBackdrop(g, colors, detailBackdrop);
         drawHeading(g, L"Codex 额度", RectF(20 * d, 12 * d, 124 * d, 32 * d), 20 * d, ink);
         drawUiText(g, state.q.planLabel(), RectF(154 * d, 12 * d, width - 174 * d, 32 * d),
                    14 * d, muted);
@@ -294,9 +304,7 @@ void Overlay::showDetails(const fs::path &capture) {
     }
     if (!capture.empty())
         image.save(capture);
-    image.present(details, left, top);
-    ShowWindow(details, SW_SHOWNOACTIVATE);
-    SetWindowPos(details, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    presentDetails(std::move(rendered), left, top);
 }
 void Overlay::tick(const POINT *simulatedPointer) {
     if (blocked || slideStart >= 0) {
@@ -410,6 +418,20 @@ LRESULT CALLBACK Overlay::detailProcedure(HWND w, UINT msg, WPARAM wp, LPARAM lp
     if (msg == WM_NCCREATE)
         SetWindowLongPtrW(w, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams));
     auto self = reinterpret_cast<Overlay *>(GetWindowLongPtrW(w, GWLP_USERDATA));
+    if (self && msg == WM_ERASEBKGND) return 1;
+    if (self && msg == WM_PAINT) {
+        PAINTSTRUCT paint{};
+        HDC dc = BeginPaint(w, &paint);
+        if (self->detailImage)
+            BitBlt(dc, 0, 0, self->detailImage->width, self->detailImage->height, self->detailImage->dc, 0, 0, SRCCOPY);
+        EndPaint(w, &paint);
+        return 0;
+    }
+    if (self && (msg == WM_DWMCOMPOSITIONCHANGED || msg == WM_THEMECHANGED || msg == WM_SETTINGCHANGE)) {
+        self->detailBackdrop = configureBackdrop(w, self->settings.darkAppearance);
+        if (IsWindowVisible(w)) self->showDetails();
+        return 0;
+    }
     if (msg == WM_MOUSEWHEEL && self && self->kind == WidgetKind::DeepSeek) {
         self->detailPage = std::max(0, self->detailPage + (GET_WHEEL_DELTA_WPARAM(wp) < 0 ? 1 : -1));
         self->showDeepSeekDetails();

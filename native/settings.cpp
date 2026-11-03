@@ -89,6 +89,13 @@ static void paintControl(HWND w, HDC dc, ControlSkin skin) {
                                        (colors.ink.GetR() > 128 ? RGB(70, 70, 73) : RGB(213, 216, 222)));
         FrameRect(dc, &rect, edge);
         DeleteObject(edge);
+        // Native GDI edits erase alpha. Keep their opaque input surfaces and
+        // text intact when the parent is extended into the DWM glass frame.
+        Surface edit(rect.right, rect.bottom);
+        BitBlt(edit.dc, 0, 0, rect.right, rect.bottom, dc, 0, 0, SRCCOPY);
+        GdiFlush();
+        for (int i = 0; i < edit.width * edit.height; ++i) edit.pixels[i * 4 + 3] = 255;
+        BitBlt(dc, 0, 0, rect.right, rect.bottom, edit.dc, 0, 0, SRCCOPY);
         return;
     }
     Surface surface(rect.right, rect.bottom);
@@ -212,6 +219,7 @@ static bool isToggle(int id) {
 }
 SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
     : app(a), draft(a->settings), startup(startupEnabled()) {
+    simulatedGlass = a->testing || a->preview;
     auto all = monitors();
     for (auto &m : all)
         if (m.handle == requested || (!requested && m.primary))
@@ -467,12 +475,15 @@ void SettingsWindow::layout() {
 void SettingsWindow::applyAppearance() {
     if (background) DeleteObject(background);
     background = CreateSolidBrush(glassPalette(draft.darkAppearance).inputBrush());
-    BOOL dark = draft.darkAppearance;
-    DwmSetWindowAttribute(window, 20, &dark, sizeof(dark));
-    RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_FRAME);
+    backdrop = configureBackdrop(window, draft.darkAppearance);
+    RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_FRAME | RDW_UPDATENOW);
 }
 
 void SettingsWindow::paintGlass(Graphics &g, HWND target, int width, int height) const {
+    if (!simulatedGlass) {
+        paintBackdrop(g, glassPalette(draft.darkAppearance), backdrop);
+        return;
+    }
     RECT client{};
     GetClientRect(window, &client);
     POINT origin{};
@@ -534,14 +545,12 @@ void SettingsWindow::reveal(HMONITOR requested) {
     int height = std::min(px(768), int(monitor.work.bottom - monitor.work.top) - px(24));
     int x = monitor.work.left + (monitor.work.right - monitor.work.left - width) / 2,
         y = monitor.work.top + (monitor.work.bottom - monitor.work.top - height) / 2;
-    if (!IsWindowVisible(window) || !settingsFrost)
-        settingsFrost = captureFrost({x, y, x + width, y + height}, app->testing || app->preview);
+    if (simulatedGlass && !settingsFrost) settingsFrost = previewFrost(width, height);
     // Explicit visibility avoids inheriting SW_HIDE from a background listener's
     // STARTUPINFO on the first ShowWindow call.
     SetWindowPos(window, HWND_TOP, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     layout();
-    BOOL dark = draft.darkAppearance;
-    DwmSetWindowAttribute(window, 20, &dark, sizeof(dark));
+    applyAppearance();
     SetForegroundWindow(window);
 }
 void SettingsWindow::draw(HDC dc, bool inner) {
@@ -1366,11 +1375,10 @@ LRESULT CALLBACK SettingsWindow::procedure(HWND w, UINT msg, WPARAM wp, LPARAM l
         self->closing = true;
         PostMessageW(self->app->controller, WM_APP + 10, 0, 0);
         return 0;
+    case WM_DWMCOMPOSITIONCHANGED:
+    case WM_THEMECHANGED:
     case WM_SETTINGCHANGE:
-        {
-            BOOL dark = self->draft.darkAppearance;
-            DwmSetWindowAttribute(w, 20, &dark, sizeof(dark));
-        }
+        self->applyAppearance();
         InvalidateRect(w, nullptr, TRUE);
         RedrawWindow(self->content, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
         return 0;

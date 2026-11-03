@@ -53,17 +53,20 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
     int height = std::min(int((base + rows * 100 + 110) * d), int(monitor.work.bottom - monitor.work.top) - int(12 * d));
     int left = std::clamp<LONG>(x, monitor.work.left, std::max(monitor.work.left, monitor.work.right - width));
     int top = std::max(int(monitor.work.top), y - height - int(12 * d));
-    if (!IsWindowVisible(details) || !detailFrost)
-        detailFrost = captureFrost({left, top, left + width, top + height}, app->testing || app->preview || !capture.empty());
+    bool simulated = app->testing || app->preview || !capture.empty();
+    if (simulated && !detailFrost) detailFrost = previewFrost(width, height);
+    detailBackdrop = configureBackdrop(details, settings.darkAppearance);
     const auto &colors = glassPalette(settings.darkAppearance);
-    Surface image(width, height);
+    auto rendered = std::make_unique<Surface>(width, height);
+    auto &image = *rendered;
     {
         Graphics g(image.bitmap.get());
         g.Clear(Color(0, 0, 0, 0));
         g.SetSmoothingMode(SmoothingModeAntiAlias);
         auto ink = colors.ink, muted = colors.secondary;
         RectF glass(1, 1, width - 2.f, height - 2.f);
-        paintFrost(g, glass, 16 * d, colors, detailFrost.get(), glass);
+        if (simulated) paintFrost(g, glass, 16 * d, colors, detailFrost.get(), glass);
+        else paintBackdrop(g, colors, detailBackdrop);
         auto accent = colors.focus;
         auto line = [&](const std::wstring &text, float y, float size, Color color, bool bold = false) {
             drawUiText(g, text, RectF(20 * d, y * d, width - 40 * d, 28 * d), size * d, color, bold);
@@ -124,9 +127,7 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
         line(L"平台账户账单 · 不按模型单价估算费用", footer + 56, 12, muted);
     }
     if (!capture.empty()) image.save(capture);
-    image.present(details, left, top);
-    ShowWindow(details, SW_SHOWNOACTIVATE);
-    SetWindowPos(details, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    presentDetails(std::move(rendered), left, top);
 }
 void Application::refreshDeepSeek() {
     { std::lock_guard<std::mutex> guard(mutex); deepSeekRefreshRequested = true; }

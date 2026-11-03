@@ -1,5 +1,6 @@
 #include "app.hpp"
 #include "uninstall.hpp"
+namespace quota { int liveGlassTests(const fs::path &, std::ostream &); }
 using namespace quota;
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     using DpiFn = BOOL(WINAPI *)(HANDLE);
@@ -44,6 +45,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             result = removeUninstallUserData(has(L"-WhatIf")) ? 0 : 1;
         else if (has(L"--self-test"))
             result = selfTests(after(L"--output", L"native-tests.txt"));
+        else if (has(L"--glass-test")) {
+            auto dir = after(L"--output", L"native-glass-tests");
+            fs::create_directories(dir);
+            std::ofstream log(dir / L"checks.txt");
+            liveGlassTests(dir, log);
+        }
         else if (has(L"--ui-test"))
             result = uiTests(after(L"--output", L"native-ui-tests"));
         else if (has(L"--render-ui"))

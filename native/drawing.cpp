@@ -64,27 +64,59 @@ const GlassPalette &glassPalette(bool dark) {
     return dark ? night : light;
 }
 
-std::unique_ptr<Surface> captureFrost(RECT bounds, bool simulated) {
-    int width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
+BackdropMode configureBackdrop(HWND window, bool dark) {
+    BOOL night = dark;
+    DwmSetWindowAttribute(window, 20, &night, sizeof(night));
+    COLORREF automatic = 0xffffffff;
+    DwmSetWindowAttribute(window, 35, &automatic, sizeof(automatic)); // Native caption uses the same material.
+    int corners = 2;
+    DwmSetWindowAttribute(window, 33, &corners, sizeof(corners));
+    BOOL composition = FALSE;
+    HIGHCONTRASTW contrast{sizeof(contrast)};
+    SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0);
+    bool available = SUCCEEDED(DwmIsCompositionEnabled(&composition)) && composition &&
+                     !(contrast.dwFlags & HCF_HIGHCONTRASTON);
+    bool transient = (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_NOACTIVATE) != 0;
+    // System Acrylic falls back to a solid fill on non-activating popups.
+    // Those use the compositor's accent material without taking focus.
+    int type = available && !transient ? 3 : 1;
+    HRESULT system = DwmSetWindowAttribute(window, 38, &type, sizeof(type));
+    MARGINS margins = available ? MARGINS{-1, -1, -1, -1} : MARGINS{};
+    HRESULT frame = DwmExtendFrameIntoClientArea(window, &margins);
+    if (available && !transient && SUCCEEDED(system) && SUCCEEDED(frame)) return BackdropMode::Acrylic;
+
+    // Windows 10/early Windows 11: use compositor blur, avoiding legacy
+    // Acrylic's expensive synchronous work during interactive move/resize.
+    struct Accent { int state; int flags; DWORD color; int animation; }
+        accent{available ? (transient ? 4 : 3) : 0, 0, transient ? (dark ? 0xb8282828u : 0xa8fafafau) : 0, 0};
+    struct Attribute { int attribute; void *data; size_t size; } attribute{19, &accent, sizeof(accent)};
+    using SetComposition = BOOL(WINAPI *)(HWND, Attribute *);
+    auto set = reinterpret_cast<SetComposition>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetWindowCompositionAttribute"));
+    if (set && set(window, &attribute) && available && SUCCEEDED(frame))
+        return transient ? BackdropMode::Acrylic : BackdropMode::Blur;
+    margins = {};
+    DwmExtendFrameIntoClientArea(window, &margins);
+    return BackdropMode::Solid;
+}
+
+void paintBackdrop(Graphics &g, const GlassPalette &colors, BackdropMode mode) {
+    // Preserve premultiplied alpha all the way into DWM. Acrylic supplies its
+    // own tint/noise; painting an opaque fill here would conceal the live view.
+    BYTE alpha = mode == BackdropMode::Solid ? 255 : mode == BackdropMode::Blur ? 180 : 0;
+    g.Clear(Color(alpha, colors.mid.GetR(), colors.mid.GetG(), colors.mid.GetB()));
+}
+
+std::unique_ptr<Surface> previewFrost(int width, int height) {
     if (width <= 0 || height <= 0) return {};
-    // Blur a small in-memory sample once. Never sample the already visible panel.
+    // Deterministic synthetic material for exported previews only. Runtime
+    // windows use DWM; no desktop pixels are captured or cached by the app.
     auto frost = std::make_unique<Surface>(std::max(1, width / 6), std::max(1, height / 6));
-    if (simulated) {
+    {
         Graphics g(frost->bitmap.get());
         g.Clear(Color(255, 194, 213, 232));
         SolidBrush warm(Color(255, 244, 205, 185)), cool(Color(255, 171, 194, 231));
         g.FillEllipse(&warm, 0, 0, frost->width / 2, frost->height);
         g.FillEllipse(&cool, frost->width / 2, frost->height / 3, frost->width / 2, frost->height);
-    } else {
-        HDC screen = GetDC(nullptr);
-        if (!screen) return {};
-        SetStretchBltMode(frost->dc, HALFTONE);
-        SetBrushOrgEx(frost->dc, 0, 0, nullptr);
-        BOOL copied = StretchBlt(frost->dc, 0, 0, frost->width, frost->height, screen,
-                                bounds.left, bounds.top, width, height, SRCCOPY);
-        ReleaseDC(nullptr, screen);
-        if (!copied) return {};
-        GdiFlush();
     }
     size_t bytes = size_t(frost->width) * frost->height * 4;
     std::vector<BYTE> pass(frost->pixels, frost->pixels + bytes);
