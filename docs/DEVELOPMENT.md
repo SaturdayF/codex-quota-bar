@@ -66,7 +66,7 @@ Start-Process $app -ArgumentList '--render-ui codex_tmp/previews' -Wait
 ./tests/PortableUninstall.Tests.ps1
 ```
 
-0.3.1 通过 430 项核心检查与 243 项 UI 检查，其中包含 28 项 DeepSeek UI 检查。覆盖额度解析、配置、子进程通信、多 DPI 绘图、滚动重绘、悬浮与右键、布局避让、拖动交换和会话取消。集成测试覆盖自定义路径安装、安装版卸载、便携版卸载及无关文件保留。
+0.3.4 通过 444 项核心检查与 304 项 UI 检查，其中包含 34 项 DeepSeek UI 检查。覆盖额度解析、配置、子进程通信、多 DPI 绘图、滚动重绘、悬浮与右键、布局避让、拖动交换和会话取消。集成测试覆盖自定义路径安装、安装版卸载、便携版卸载及无关文件保留。
 
 UI 与协议回归使用模拟数据。安装卸载测试使用独立目录，禁止对用户真实安装进行卸载测试。
 
@@ -77,7 +77,7 @@ UI 与协议回归使用模拟数据。安装卸载测试使用独立目录，�
 发布前核对版本、ZIP 内容、PE 系统依赖和 SHA-256。发布脚本校验远端标签指向及上传文件摘要。已发布标签和下载文件保持固定，后续功能修改使用新版本。
 
 ```powershell
-python scripts/github-release.py v0.3.3 <commit> <setup> <zip> <sha256-file>
+python scripts/github-release.py v0.3.4 <commit> <setup> <zip> <sha256-file>
 ```
 
 ## 验证范围

@@ -6,7 +6,7 @@
 ./scripts/build-native-installer.ps1 -InnoCompiler C:/path/to/ISCC.exe
 ```
 
-0.3.1 使用 Inno Setup 6.7.4 验证，采用 LZMA2 压缩。负载包含原生程序、版本信息、使用指南和许可证。
+0.3.4 使用 Inno Setup 6.7.4 验证，采用 LZMA2 压缩。负载包含原生程序、版本信息、使用指南和许可证。
 
 设置页根据同目录 `installer.ini` 的产品标记启动 Inno 卸载器。卸载按安装记录删除文件，保留用户额外文件。
 

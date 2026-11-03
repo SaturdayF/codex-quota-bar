@@ -1,6 +1,6 @@
 """Publish a frozen tag and assets via existing Git credential helper; never logs credentials.
 
-Usage: python scripts/github-release.py v0.3.3 <commit> <setup> <zip> <sha256-file>
+Usage: python scripts/github-release.py v0.3.4 <commit> <setup> <zip> <sha256-file>
 The tag must already exist on origin. Does not overwrite a published release.
 """
 import json
@@ -16,7 +16,7 @@ REPO = "SaturdayF/codex-quota-bar"
 
 def main():
     tag, commit, *paths = sys.argv[1:]
-    if tag != "v0.3.3":
+    if tag != "v0.3.4":
         raise RuntimeError("Only the current native version can be published")
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
     credential = subprocess.run(["git", "-c", f"safe.directory={ROOT.as_posix()}", "credential", "fill"],
@@ -34,23 +34,23 @@ def main():
         with request.urlopen(request.Request(url, data=body, headers=headers, method=method), timeout=180) as response:
             payload = response.read()
             return json.loads(payload) if payload else None
-    if tag == "v0.3.3":
+    if tag == "v0.3.4":
         tagged = api(f"/repos/{REPO}/git/ref/tags/{tag}")["object"]
         while tagged["type"] == "tag":
             tagged = api(f"/repos/{REPO}/git/tags/{tagged['sha']}")["object"]
         if tagged["type"] != "commit" or tagged["sha"] != commit:
             raise RuntimeError("Release tag does not point to the expected source commit")
-        allowed = {"CodexQuotaBar-v0.3.3-Setup.exe", "CodexQuotaBar-v0.3.3-Portable-win-x64.zip", "SHA256SUMS.txt"}
+        allowed = {"CodexQuotaBar-v0.3.4-Setup.exe", "CodexQuotaBar-v0.3.4-Portable-win-x64.zip", "SHA256SUMS.txt"}
         if {Path(path).name for path in paths} != allowed:
             raise RuntimeError("Native release requires exact installer, ZIP and checksum asset set")
-        body = (ROOT / "docs/releases/v0.3.3.md").read_text(encoding="utf-8").replace("{SOURCE_COMMIT}", commit)
+        body = (ROOT / "docs/releases/v0.3.4.md").read_text(encoding="utf-8").replace("{SOURCE_COMMIT}", commit)
         try:
             release = api(f"/repos/{REPO}/releases/tags/{tag}")
         except error.HTTPError as exc:
             if exc.code != 404:
                 raise
             release = api(f"/repos/{REPO}/releases", {"tag_name": tag, "target_commitish": commit,
-                "name": "Codex Quota Bar 0.3.3 · Native", "body": body, "draft": True, "prerelease": False})
+                "name": "Codex Quota Bar 0.3.4 · Native", "body": body, "draft": True, "prerelease": False})
         if release["target_commitish"] != commit:
             raise RuntimeError("Native release commit does not match")
         expected = {}
@@ -75,7 +75,7 @@ def main():
             if not any(a["name"] == name and a.get("digest") == digest for a in verified["assets"]):
                 raise RuntimeError("Native release hash verification failed; draft retained")
         if verified["draft"]:
-            verified = api(f"/repos/{REPO}/releases/{release['id']}", {"draft": False}, "PATCH")
+            verified = api(f"/repos/{REPO}/releases/{release['id']}", {"draft": False, "make_latest": "true"}, "PATCH")
         snapshot = {"url": verified["html_url"], "tag": tag, "commit": commit, "draft": verified["draft"],
             "assets": [{k: a[k] for k in ("name", "size", "digest")} for a in verified["assets"]]}
         snapshot_dir = ROOT / "codex_tmp/releases" / tag
