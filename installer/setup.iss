@@ -34,6 +34,12 @@ CreateUninstallRegKey=not IsIsolatedTest
 Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "chinesesimp"; MessagesFile: "ChineseSimplified.isl"
 
+[LangOptions]
+english.DialogFontName=Segoe UI
+english.WelcomeFontName=Segoe UI
+chinesesimp.DialogFontName=Microsoft YaHei UI
+chinesesimp.WelcomeFontName=Microsoft YaHei UI
+
 [Tasks]
 Name: "desktopicon"; Description: "添加桌面快捷方式"; Flags: unchecked
 Name: "loginstartup"; Description: "随 Windows 登录启动"; Flags: checkedonce

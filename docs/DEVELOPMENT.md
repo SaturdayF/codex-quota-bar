@@ -37,6 +37,16 @@ DeepSeek 使用 WinHTTP 读取 `platform.deepseek.com` 的账户余额、费用�
 
 拖动落位采用约 240 毫秒的减速过渡，支持中途接管。设置页使用固定控件画布和裁剪视口，滚动只移动画布；栏目切换批量定位当前控件并重绘。显示比例跟随屏幕 DPI，动画遵循系统设置。
 
+### 界面材质与托盘
+
+字体统一为 Segoe UI / Microsoft YaHei UI，无衬线标题与正文共用绘制路径。滑动条保留原生键盘和辅助功能语义，自绘有色轨道及圆形滑块，键盘焦点仅标记滑块。
+
+设置及详情在打开时采样背景，缩小后进行两遍分离模糊，再调整饱和度、叠加主题染色、柔和高光和固定噪点。所有子控件按父窗口坐标绘制同一材质，避免滚动时的接缝或纹理跳动。该路径使用缓存的背景图像，不是实时 DWM Acrylic。
+
+材质参考：[Win32Acrylic](https://github.com/ALTaleX531/Win32Acrylic) 的模糊、饱和度、噪点与染色分层，以及 [Microsoft Acrylic 文档](https://github.com/MicrosoftDocs/windows-dev-docs/blob/docs/hub/apps/develop/ui/in-app-acrylic.md)。采用本项目原生 GDI+ 绘制，未引入上述项目的代码或依赖。
+
+托盘使用 Shell_NotifyIcon v4，接收 TaskbarCreated 重建通知，首次注册失败时每 5 秒重试。退出时删除图标，测试和渲染模式不注册真实托盘图标。UI 检查通过模拟 Shell 调用验证注册、重试、恢复和清理，避免重启用户的 Explorer。
+
 ## 验证
 
 ```powershell

@@ -3,6 +3,8 @@
 #include "deepseek.hpp"
 #include "taskbar.hpp"
 namespace quota {
+constexpr UINT TrayMessage = WM_APP + 12;
+constexpr UINT TraySettings = 40001, TrayExit = 40002;
 enum class WidgetKind { Codex, DeepSeek };
 Layout deepSeekLayout(const DeepSeekState &state, const Settings &settings, int dpi, int available);
 void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &settings, bool hover);
@@ -51,6 +53,10 @@ struct Overlay {
 struct SettingsWindow;
 struct Application {
     HWND controller = nullptr;
+    UINT taskbarCreatedMessage = RegisterWindowMessageW(L"TaskbarCreated");
+    bool trayEnabled = false, trayAdded = false;
+    ULONGLONG trayRetryAt = 0;
+    std::function<BOOL(DWORD, NOTIFYICONDATAW *)> notifyIcon = Shell_NotifyIconW;
     Settings settings = Settings::load();
     State state;
     DeepSeekState deepseek;
@@ -100,6 +106,9 @@ struct Application {
     void showSettings(HMONITOR monitor = nullptr);
     void checkSettingsFile();
     void stop();
+    void addTrayIcon();
+    void removeTrayIcon();
+    void showTrayMenu();
     static LRESULT CALLBACK procedure(HWND, UINT, WPARAM, LPARAM);
 };
 struct SettingsWindow {

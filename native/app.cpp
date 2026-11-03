@@ -426,6 +426,8 @@ Application::Application(bool previewMode, bool test) : preview(previewMode), te
                                  GetModuleHandleW(nullptr), this);
     if (!controller)
         throw std::runtime_error("Cannot create controller");
+    trayEnabled = !testing && !preview;
+    addTrayIcon();
     if (!testing && !preview) {
         quitEvent = CreateEventW(nullptr, TRUE, FALSE, L"Local\\CodexQuotaBar.Quit");
         ResetEvent(quitEvent);
@@ -446,6 +448,7 @@ Application::Application(bool previewMode, bool test) : preview(previewMode), te
     }
 }
 Application::~Application() {
+    removeTrayIcon();
     stopping = true;
     *deepSeekSessionStop = true;
     wake.notify_all();
@@ -471,10 +474,59 @@ Application::~Application() {
     }
 }
 void Application::stop() {
+    removeTrayIcon();
     stopping = true;
     *deepSeekSessionStop = true;
     wake.notify_all();
     PostQuitMessage(0);
+}
+void Application::addTrayIcon() {
+    if (!trayEnabled || trayAdded || stopping || !controller) return;
+    trayRetryAt = GetTickCount64() + 5000;
+    NOTIFYICONDATAW icon{};
+    icon.cbSize = sizeof(icon);
+    icon.hWnd = controller;
+    icon.uID = 1;
+    icon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP;
+    icon.uCallbackMessage = TrayMessage;
+    icon.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
+    wcscpy_s(icon.szTip, L"Codex Quota Bar");
+    trayAdded = notifyIcon(NIM_ADD, &icon) != FALSE;
+    if (trayAdded) {
+        icon.uVersion = NOTIFYICON_VERSION_4;
+        notifyIcon(NIM_SETVERSION, &icon);
+    }
+}
+void Application::removeTrayIcon() {
+    if (!trayAdded) return;
+    NOTIFYICONDATAW icon{};
+    icon.cbSize = sizeof(icon);
+    icon.hWnd = controller;
+    icon.uID = 1;
+    notifyIcon(NIM_DELETE, &icon);
+    trayAdded = false;
+}
+void Application::showTrayMenu() {
+    POINT point{};
+    GetCursorPos(&point);
+    // Keyboard invocation anchors to the icon, including the overflow panel.
+    if (!(GetAsyncKeyState(VK_RBUTTON) & 0x8000)) {
+        NOTIFYICONIDENTIFIER id{sizeof(id), controller, 1, {}};
+        RECT bounds{};
+        if (SUCCEEDED(Shell_NotifyIconGetRect(&id, &bounds))) point = {bounds.left, bounds.top};
+    }
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+    AppendMenuW(menu, MF_STRING, TraySettings, L"打开设置");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, TrayExit, L"退出 Codex Quota Bar");
+    SetMenuDefaultItem(menu, TraySettings, FALSE);
+    SetForegroundWindow(controller);
+    UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+                                   point.x, point.y, controller, nullptr);
+    DestroyMenu(menu);
+    PostMessageW(controller, WM_NULL, 0, 0);
+    if (command) SendMessageW(controller, WM_COMMAND, command, 0);
 }
 void Application::refresh() {
     {
@@ -779,7 +831,24 @@ LRESULT CALLBACK Application::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) 
     }
     if (!self)
         return DefWindowProcW(w, msg, wp, lp);
+    if (msg == self->taskbarCreatedMessage && msg != 0) {
+        self->trayAdded = false;
+        self->addTrayIcon();
+        return 0;
+    }
     switch (msg) {
+    case TrayMessage:
+        // v4 emits WM_CONTEXTMENU for mouse and keyboard invocation. Handling
+        // WM_RBUTTONUP as well can reopen the menu after the first one closes.
+        if (LOWORD(lp) == WM_CONTEXTMENU)
+            self->showTrayMenu();
+        else if (LOWORD(lp) == NIN_SELECT || LOWORD(lp) == NIN_KEYSELECT || LOWORD(lp) == WM_LBUTTONDBLCLK)
+            self->showSettings();
+        return 0;
+    case WM_COMMAND:
+        if (LOWORD(wp) == TraySettings) self->showSettings();
+        else if (LOWORD(wp) == TrayExit) self->stop();
+        return 0;
     case TaskbarMessage: {
         std::unique_ptr<TaskbarUpdate> update(reinterpret_cast<TaskbarUpdate *>(lp));
         if (!self->stopping && update->generation == self->generation && self->settings.avoidIcons) {
@@ -811,6 +880,7 @@ LRESULT CALLBACK Application::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) 
         self->rebuild();
         return 0;
     case WM_TIMER:
+        if (!self->trayAdded && GetTickCount64() >= self->trayRetryAt) self->addTrayIcon();
         if (self->quitEvent && WaitForSingleObject(self->quitEvent, 0) == WAIT_OBJECT_0) {
             self->stop();
             return 0;

@@ -316,6 +316,52 @@ int uiTests(const fs::path &dir) {
             throw std::runtime_error(name);
         ++count;
     };
+    // Exercise shell lifecycle without touching the user's real tray or Explorer.
+    std::vector<DWORD> trayCalls;
+    {
+        Application tray(false, true);
+        bool failAdd = true;
+        tray.notifyIcon = [&](DWORD operation, NOTIFYICONDATAW *icon) -> BOOL {
+            trayCalls.push_back(operation);
+            if (operation == NIM_ADD) {
+                check(icon->hWnd == tray.controller && icon->hIcon && icon->uID == 1 &&
+                          icon->uCallbackMessage == TrayMessage && (icon->uFlags & NIF_TIP),
+                      "tray registers the embedded app icon and callback");
+                return !failAdd;
+            }
+            return TRUE;
+        };
+        tray.addTrayIcon();
+        check(trayCalls.empty(), "test and preview applications do not add shell icons");
+        tray.trayEnabled = true;
+        tray.addTrayIcon();
+        check(!tray.trayAdded && tray.trayRetryAt > GetTickCount64(), "unavailable shell schedules tray retry");
+        failAdd = false;
+        tray.trayRetryAt = 0;
+        SendMessageW(tray.controller, WM_TIMER, 1, 0);
+        check(tray.trayAdded && trayCalls.back() == NIM_SETVERSION, "timer retries icon registration with v4 events");
+        size_t before = trayCalls.size();
+        tray.addTrayIcon();
+        SendMessageW(tray.controller, WM_TIMER, 1, 0);
+        check(trayCalls.size() == before, "idle polling does not recreate a registered tray icon");
+        SendMessageW(tray.controller, tray.taskbarCreatedMessage, 0, 0);
+        check(tray.trayAdded && trayCalls.size() == before + 2, "Explorer restart re-registers icon and version");
+        SendMessageW(tray.controller, WM_COMMAND, TraySettings, 0);
+        check(tray.settingsWindow && IsWindowVisible(tray.settingsWindow->window), "tray settings command opens settings");
+        HWND settingsHandle = tray.settingsWindow->window;
+        ShowWindow(settingsHandle, SW_HIDE);
+        SendMessageW(tray.controller, TrayMessage, 0, MAKELPARAM(NIN_KEYSELECT, 1));
+        check(tray.settingsWindow->window == settingsHandle && IsWindowVisible(settingsHandle),
+              "keyboard tray activation restores the existing settings window");
+        SendMessageW(tray.controller, WM_COMMAND, TrayExit, 0);
+        check(tray.stopping && !tray.trayAdded && trayCalls.back() == NIM_DELETE, "tray exit removes its icon");
+        before = trayCalls.size();
+        tray.addTrayIcon();
+        tray.removeTrayIcon();
+        check(trayCalls.size() == before, "shutdown neither restores nor deletes the icon twice");
+        MSG quit{};
+        PeekMessageW(&quit, nullptr, WM_QUIT, WM_QUIT, PM_REMOVE);
+    }
     Application app(false, true);
     app.state.active = true;
     app.state.error.clear();
@@ -678,6 +724,40 @@ int uiTests(const fs::path &dir) {
         SendMessageW(settings.content, WM_COMMAND, MAKEWPARAM(249, CBN_SELCHANGE),
                      reinterpret_cast<LPARAM>(appearance));
     };
+    auto printSlider = [&] {
+        RECT r{};
+        GetClientRect(settings.opacitySlider, &r);
+        Surface image(r.right, r.bottom);
+        SendMessageW(settings.opacitySlider, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(image.dc), PRF_CLIENT);
+        GdiFlush();
+        return std::vector<BYTE>(image.pixels, image.pixels + r.right * r.bottom * 4);
+    };
+    for (int theme : {0, 1}) {
+        setAppearance(theme);
+        SetFocus(settings.styles);
+        auto idle = printSlider();
+        SetFocus(settings.opacitySlider);
+        auto focused = printSlider();
+        RECT r{}, channel{}, thumb{};
+        GetClientRect(settings.opacitySlider, &r);
+        SendMessageW(settings.opacitySlider, TBM_GETCHANNELRECT, 0, reinterpret_cast<LPARAM>(&channel));
+        SendMessageW(settings.opacitySlider, TBM_GETTHUMBRECT, 0, reinterpret_cast<LPARAM>(&thumb));
+        bool borderUnchanged = true;
+        for (int y = 0; y < r.bottom; ++y)
+            for (int x = 0; x < r.right; ++x)
+                if (y < 3 || y >= r.bottom - 3 || x < 3 || x >= r.right - 3)
+                    for (int c = 0; c < 3; ++c)
+                        borderUnchanged &= idle[(y * r.right + x) * 4 + c] == focused[(y * r.right + x) * 4 + c];
+        check(borderUnchanged, "slider focus never draws an outer rectangle in theme " + std::to_string(theme));
+        int x = channel.left + 2, y = (thumb.top + thumb.bottom) / 2;
+        auto track = &focused[(y * r.right + x) * 4];
+        auto background = &focused[((y - settings.px(6)) * r.right + x) * 4];
+        int contrast = 0;
+        for (int c = 0; c < 3; ++c) contrast += std::abs(int(track[c]) - int(background[c]));
+        check(contrast > 100, "slider track remains visible in theme " + std::to_string(theme));
+    }
+    setAppearance(0);
+    SetFocus(settings.styles);
     auto lightPixels = readControl(settings.viewport);
     setAppearance(1);
     UpdateWindow(settings.window);

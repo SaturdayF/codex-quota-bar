@@ -111,14 +111,23 @@ static void paintControl(HWND w, HDC dc, ControlSkin skin) {
             SendMessageW(w, TBM_GETCHANNELRECT, 0, reinterpret_cast<LPARAM>(&channel));
             SendMessageW(w, TBM_GETTHUMBRECT, 0, reinterpret_cast<LPARAM>(&thumb));
             float y = (thumb.top + thumb.bottom) / 2.f;
-            fillRound(g, RectF(float(channel.left), y - 2 * d, float(channel.right - channel.left), 4 * d),
-                      2 * d, colors.deep);
             float x = (thumb.left + thumb.right) / 2.f;
-            drawPanel(g, RectF(x - 5 * d, y - 7 * d, 10 * d, 14 * d), 3 * d, colors.thumb, colors.border);
-            Pen mark(colors.secondary, 1);
-            g.DrawLine(&mark, x, y - 3 * d, x, y + 3 * d);
+            bool dark = colors.ink.GetR() > 128;
+            Color accent = dark ? Color(255, 120, 172, 255) : Color(255, 66, 125, 207);
+            fillRound(g, RectF(float(channel.left), y - 2 * d, float(channel.right - channel.left), 4 * d),
+                      2 * d, dark ? Color(255, 113, 121, 136) : Color(255, 164, 176, 194));
+            if (x > channel.left)
+                fillRound(g, RectF(float(channel.left), y - 2 * d, x - channel.left, 4 * d), 2 * d, accent);
+            // Keep focus local to the thumb; never outline the whole control.
+            bool keyboardFocus = focused && !(SendMessageW(w, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS);
+            if (keyboardFocus)
+                fillRound(g, RectF(x - 11 * d, y - 11 * d, 22 * d, 22 * d), 11 * d,
+                          Color(75, accent.GetR(), accent.GetG(), accent.GetB()));
+            fillRound(g, RectF(x - 8 * d, y - 7 * d, 16 * d, 16 * d), 8 * d, Color(30, 0, 0, 0));
+            drawPanel(g, RectF(x - 7 * d, y - 7 * d, 14 * d, 14 * d), 7 * d,
+                      Color(255, 255, 255, 255), accent);
         }
-        if (focused) {
+        if (focused && skin != ControlSkin::Slider) {
             GraphicsPath path;
             roundPath(path, bounds, 6 * d);
             Pen edge(colors.focus, 1);
@@ -550,8 +559,12 @@ void SettingsWindow::draw(HDC dc, bool inner) {
         float d = dpi / 96.f;
         g.ScaleTransform(d, d);
         if (!inner) {
+            auto saved = g.Save();
+            g.SetSmoothingMode(SmoothingModeNone);
+            g.SetPixelOffsetMode(PixelOffsetModeHalf);
             SolidBrush b(draft.darkAppearance ? Color(120, 18, 19, 23) : Color(125, 255, 255, 255));
             g.FillRectangle(&b, RectF(0, 0, 196, float(rect.bottom / d)));
+            g.Restore(saved);
             drawHeading(g, L"设置", RectF(26, 22, 150, 44), 29, ink);
             drawUiText(g, L"Codex Quota Bar\n" + std::wstring(Version), RectF(24, rect.bottom / d - 80, 155, 58), 14, muted);
             Pen line(colors.border, 0);
@@ -658,8 +671,12 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
         bool nav = id >= NavAppearance && id <= NavDeepSeek;
         paintGlass(g, item.hwndItem, image.width, image.height);
         if (nav) {
+            auto saved = g.Save();
+            g.SetSmoothingMode(SmoothingModeNone);
+            g.SetPixelOffsetMode(PixelOffsetModeHalf);
             SolidBrush sidebar(draft.darkAppearance ? Color(120, 18, 19, 23) : Color(125, 255, 255, 255));
             g.FillRectangle(&sidebar, 0, 0, image.width, image.height);
+            g.Restore(saved);
         }
         float d = dpi / 96.f;
         RectF area(1, 1, image.width - 2.f, image.height - 2.f);
@@ -1161,7 +1178,8 @@ LRESULT CALLBACK SettingsWindow::viewportProcedure(HWND w, UINT msg, WPARAM wp, 
                         g.SetSmoothingMode(SmoothingModeAntiAlias);
                         RectF bar(float(thumb.left), float(thumb.top),
                                   float(thumb.right - thumb.left), float(thumb.bottom - thumb.top));
-                        fillRound(g, bar, bar.Width / 2, glassPalette(self->draft.darkAppearance).thumb);
+                        fillRound(g, bar, bar.Width / 2, self->draft.darkAppearance
+                                  ? Color(255, 152, 163, 180) : Color(255, 120, 136, 156));
                     }
                 }
                 BitBlt(dc, 0, 0, image.width, image.height, image.dc, 0, 0, SRCCOPY);

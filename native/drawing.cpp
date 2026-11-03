@@ -68,7 +68,7 @@ std::unique_ptr<Surface> captureFrost(RECT bounds, bool simulated) {
     int width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
     if (width <= 0 || height <= 0) return {};
     // Blur a small in-memory sample once. Never sample the already visible panel.
-    auto frost = std::make_unique<Surface>(std::max(1, width / 10), std::max(1, height / 10));
+    auto frost = std::make_unique<Surface>(std::max(1, width / 6), std::max(1, height / 6));
     if (simulated) {
         Graphics g(frost->bitmap.get());
         g.Clear(Color(255, 194, 213, 232));
@@ -104,6 +104,12 @@ std::unique_ptr<Surface> captureFrost(RECT bounds, bool simulated) {
             }
         if (horizontal) std::copy_n(frost->pixels, bytes, pass.data());
     }
+    // Retain background colour through the material, without retaining text.
+    for (size_t i = 0; i < bytes; i += 4) {
+        float luminance = .0722f * frost->pixels[i] + .7152f * frost->pixels[i + 1] + .2126f * frost->pixels[i + 2];
+        for (int c = 0; c < 3; ++c)
+            frost->pixels[i + c] = BYTE(std::clamp(luminance + 1.22f * (frost->pixels[i + c] - luminance), 0.f, 255.f));
+    }
     return frost;
 }
 
@@ -116,7 +122,10 @@ void paintFrost(Graphics &g, RectF bounds, float radius, const GlassPalette &col
         g.SetClip(&path, CombineModeIntersect);
         paintFrost(g, bounds, 0, colors, frost, sourcePlacement);
         g.Restore(saved);
-        Pen edge(colors.border, 1);
+        bool dark = colors.ink.GetR() > 128;
+        LinearGradientBrush rim(PointF(bounds.X, bounds.Y), PointF(bounds.X, bounds.GetBottom()),
+                                Color(dark ? 90 : 205, 255, 255, 255), colors.border);
+        Pen edge(&rim, 1);
         g.DrawPath(&edge, &path);
         return;
     }
@@ -130,8 +139,27 @@ void paintFrost(Graphics &g, RectF bounds, float radius, const GlassPalette &col
     if (frost) {
         g.SetInterpolationMode(InterpolationModeHighQualityBilinear);
         g.DrawImage(frost->bitmap.get(), sourcePlacement);
-        SolidBrush tint(Color(218, colors.mid.GetR(), colors.mid.GetG(), colors.mid.GetB()));
+        bool dark = colors.ink.GetR() > 128;
+        SolidBrush tint(Color(dark ? 176 : 158, colors.mid.GetR(), colors.mid.GetG(), colors.mid.GetB()));
         g.FillRectangle(&tint, bounds);
+        // The highlight and grain share parent coordinates, including clipped
+        // child controls, so repainting and scrolling cannot produce seams.
+        LinearGradientBrush sheen(PointF(sourcePlacement.X, sourcePlacement.Y),
+                                  PointF(sourcePlacement.X, sourcePlacement.GetBottom()),
+                                  Color(dark ? 12 : 38, 255, 255, 255), Color(0, 255, 255, 255));
+        g.FillRectangle(&sheen, bounds);
+        Surface grain(32, 32);
+        unsigned seed = 0x435142u;
+        for (int i = 0; i < 32 * 32; ++i) {
+            seed = seed * 1664525u + 1013904223u;
+            BYTE alpha = BYTE(2 + (seed >> 28) % 4);
+            BYTE value = (seed & 0x10000) ? alpha : 0; // Premultiplied white or black.
+            for (int c = 0; c < 3; ++c) grain.pixels[i * 4 + c] = value;
+            grain.pixels[i * 4 + 3] = alpha;
+        }
+        TextureBrush texture(grain.bitmap.get(), WrapModeTile);
+        texture.TranslateTransform(sourcePlacement.X, sourcePlacement.Y);
+        g.FillRectangle(&texture, bounds);
     }
     g.Restore(saved);
 }
@@ -156,15 +184,15 @@ float uiTextWidth(Graphics &g, const std::wstring &text, float size, bool bold) 
     return bounds.Width;
 }
 static void textImpl(Graphics &g, const std::wstring &text, RectF area, float size, Color c, bool bold,
-              bool centered, bool glyph, bool ui = false, bool heading = false) {
-    FontFamily family(heading ? L"Georgia" : L"Segoe UI");
-    FontFamily chinese(heading ? L"SimSun" : L"Microsoft YaHei UI");
+              bool centered, bool glyph, bool ui = false) {
+    FontFamily family(L"Segoe UI");
+    FontFamily chinese(L"Microsoft YaHei UI");
     FontFamily *f = &family;
     if (usesCjkFont(text))
         f = &chinese;
     if (ui)
         g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
-    if (heading && !f->IsAvailable()) f = &family;
+    if (!f->IsAvailable()) f = &family;
     SolidBrush brush(c);
     StringFormat format;
     format.SetFormatFlags(StringFormatFlagsNoWrap);
@@ -202,7 +230,7 @@ static void textImpl(Graphics &g, const std::wstring &text, RectF area, float si
     }
 }
 void drawHeading(Graphics &g, const std::wstring &text, RectF bounds, float size, Color ink) {
-    textImpl(g, text, bounds, size, ink, true, false, false, true, true);
+    textImpl(g, text, bounds, size, ink, true, false, false, true);
 }
 void drawText(Graphics &g, const std::wstring &text, RectF area, float size, Color c, bool bold,
               bool centered, bool glyph) {
