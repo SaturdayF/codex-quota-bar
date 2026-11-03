@@ -4,7 +4,7 @@ Layout deepSeekLayout(const Settings &settings, int dpi, int available) {
     double scale = std::min(settings.scale * dpi / 96., std::max(8, available - 2) / 32.);
     return {std::max(1, int(200 * scale)), std::max(1, int(32 * scale)), RectF()};
 }
-void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &, bool hover) {
+void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &settings, bool hover) {
     Graphics g(image.bitmap.get());
     g.Clear(Color(1, 0, 0, 0));
     g.SetSmoothingMode(SmoothingModeAntiAlias);
@@ -12,9 +12,7 @@ void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &,
     float d = image.height / 32.f;
     Color ink = light ? Color(255, 32, 32, 32) : Color(255, 245, 245, 245);
     Color muted = light ? Color(255, 110, 110, 110) : Color(255, 170, 170, 170);
-    if (hover)
-        fillRound(g, RectF(.5f, .5f, image.width - 1.f, image.height - 1.f), 4 * d,
-                  light ? Color(150, 230, 230, 230) : Color(150, 75, 75, 75));
+    drawWidgetBackground(g, RectF(0, 0, float(image.width), float(image.height)), settings, light, hover);
     fillRound(g, RectF(5 * d, 5 * d, 24 * d, 22 * d), 5 * d, Color(255, 75, 106, 235));
     drawUiText(g, L"DSH", RectF(5 * d, 5 * d, 24 * d, 22 * d), 11 * d, Color(255, 255, 255, 255), true, true);
     auto currency = state.currency();

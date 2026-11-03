@@ -286,15 +286,21 @@ Layout widgetLayout(const Settings &s, QuotaVisibility visible, int dpi, int ava
     int height = std::min(h, available);
     return {w, height, RectF(0, float((height - (ink.bottom - ink.top)) / 2.) - ink.top, float(w), float(h))};
 }
+void drawWidgetBackground(Graphics &g, RectF bounds, const Settings &settings, bool light, bool hover) {
+    int alpha = (255 * settings.backgroundOpacity + 50) / 100;
+    if (hover) alpha = std::max(alpha, light ? 112 : 75);
+    if (!alpha) return;
+    bounds.Inflate(-.5f, -.5f);
+    BYTE shade = light ? 255 : 38;
+    fillRound(g, bounds, bounds.Height / 8, Color(BYTE(alpha), shade, shade, shade));
+}
 void paintWidget(Surface &image, const Layout &layout, const State &state, const Settings &s, bool hover,
                  double hp, double wp) {
     Graphics g(image.bitmap.get());
     g.Clear(Color(1, 0, 0, 0));
     g.SetSmoothingMode(SmoothingModeAntiAlias);
     bool light = lightTheme();
-    if (hover)
-        fillRound(g, RectF(.5f, .5f, image.width - 1.f, image.height - 1.f), 4 * image.height / 32.f,
-                  Color(light ? 112 : 28, 255, 255, 255));
+    drawWidgetBackground(g, RectF(0, 0, float(image.width), float(image.height)), s, light, hover);
     drawWidget(g, layout.drawing, state.q, s, state.stale(), light, hp, wp);
 }
 void renderPreviews(const fs::path &dir) {

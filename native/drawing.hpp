@@ -27,6 +27,7 @@ struct Layout {
     RectF drawing;
 };
 Layout widgetLayout(const Settings &s, QuotaVisibility visible, int dpi, int available);
+void drawWidgetBackground(Graphics &g, RectF bounds, const Settings &settings, bool light, bool hover);
 void paintWidget(Surface &surface, const Layout &layout, const State &state, const Settings &settings,
                  bool hover, double h = 1, double w = 1);
 void renderPreviews(const fs::path &dir);

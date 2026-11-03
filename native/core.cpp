@@ -115,6 +115,8 @@ Settings Settings::fromJson(const json &j) {
             if (d.is_string())
                 s.displays.push_back(d.get<std::string>());
     s.codexPath = wide(string("CodexPath", ""));
+    if (auto opacity = j.find("WidgetBackgroundOpacity"); opacity != j.end() && opacity->is_number_integer())
+        s.backgroundOpacity = int(std::clamp(opacity->get<double>(), 0., 100.));
     s.letters = boolean(j, "ShowDialLetters", true);
     s.deepSeekEnabled = boolean(j, "DeepSeekHarnessEnabled", true);
     s.deepSeekAlwaysShow = boolean(j, "DeepSeekShowWhenStopped", false);
@@ -170,6 +172,7 @@ json Settings::toJson() const {
     j["ShowHourQuota"] = showHour ? json(*showHour) : json(nullptr);
     j["ShowWeekQuota"] = showWeek ? json(*showWeek) : json(nullptr);
     j["WidgetScale"] = scale;
+    j["WidgetBackgroundOpacity"] = backgroundOpacity;
     j["HourColorHex"] = hourColor;
     j["WeekColorHex"] = weekColor;
     j["RefreshIntervalSeconds"] = interval;
@@ -227,37 +230,6 @@ bool setStartup(bool enabled) {
     }
     RegCloseKey(key);
     return status == ERROR_SUCCESS;
-}
-bool nativeInstalled(const fs::path &dir) {
-    wchar_t product[80]{}, version[80]{};
-    auto marker = dir / L"installer.ini";
-    GetPrivateProfileStringW(L"Installation", L"Product", L"", product, 80, marker.c_str());
-    GetPrivateProfileStringW(L"Installation", L"Version", L"", version, 80, marker.c_str());
-    return std::wstring(product) == L"CodexQuotaBar" && std::wstring(version) == Version &&
-           fs::is_regular_file(dir / L"unins000.exe");
-}
-bool portableInstalled(const fs::path &dir) {
-    try {
-        std::ifstream input(dir / L"portable.json"); json marker; input >> marker;
-        return marker.value("product", "") == "CodexQuotaBar" && marker.value("version", "") == VersionUtf8 &&
-               fs::is_regular_file(dir / L"portable-uninstall.ps1") && !fs::exists(dir / L"installer.ini");
-    } catch (...) { return false; }
-}
-bool launchUninstaller(HWND owner) {
-    auto dir = executable().parent_path();
-    if (!nativeInstalled(dir)) {
-        if (!portableInstalled(dir)) return false;
-        wchar_t system[MAX_PATH]{}; if (!GetSystemDirectoryW(system, MAX_PATH)) return false;
-        auto shell = fs::path(system) / L"WindowsPowerShell/v1.0/powershell.exe";
-        auto arguments = L"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File " + quote((dir / L"portable-uninstall.ps1").wstring()) +
-                         L" -ParentId " + std::to_wstring(GetCurrentProcessId()) + L" -InstallDirectory " + quote(dir.wstring());
-        if (reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open", shell.c_str(), arguments.c_str(), dir.c_str(), SW_HIDE)) <= 32) return false;
-        try { saveDeepSeekCredential(""); setStartup(false); fs::remove(dataDirectory() / L"settings.json"); } catch (...) {}
-        return true;
-    }
-    return reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open", (dir / L"unins000.exe").c_str(),
-                                                   L"/SILENT /NORESTART /RemoveSettings", dir.c_str(),
-                                                   SW_SHOWNORMAL)) > 32;
 }
 static std::string planKey(const std::string &plan) {
     auto p = plan;

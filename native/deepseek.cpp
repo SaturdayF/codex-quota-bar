@@ -238,7 +238,7 @@ static json get(const std::wstring &host, const std::wstring &path, const std::s
     if (host != L"platform.deepseek.com")
         throw std::runtime_error("Invalid DeepSeek host");
     if (!validDeepSeekCredential(token)) throw std::runtime_error("Invalid DeepSeek credential");
-    InternetHandle session(WinHttpOpen(L"CodexQuotaBar/0.3.1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    InternetHandle session(WinHttpOpen(L"CodexQuotaBar/0.3.2", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     if (!WinHttpSetTimeouts(session.value, 3000, 3000, 3000, 5000)) throw std::runtime_error("DeepSeek network error");
     InternetHandle connection(WinHttpConnect(session.value, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0));

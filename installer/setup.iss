@@ -1,8 +1,8 @@
 #ifndef AppVersion
-  #define AppVersion "0.3.1"
+  #define AppVersion "0.3.2"
 #endif
 #ifndef PayloadDir
-  #define PayloadDir "..\artifacts\native-payload"
+  #define PayloadDir "..\artifacts\native-win-x64"
 #endif
 
 [Setup]
@@ -35,10 +35,17 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "chinesesimp"; MessagesFile: "ChineseSimplified.isl"
 
 [Tasks]
+Name: "desktopicon"; Description: "添加桌面快捷方式"; Flags: unchecked
 Name: "loginstartup"; Description: "随 Windows 登录启动"; Flags: checkedonce
 
 [Files]
-Source: "{#PayloadDir}\*"; DestDir: "{app}"; Excludes: "*.pdb,install.ps1,uninstall.ps1"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PayloadDir}\CodexQuotaBar.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PayloadDir}\version.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PayloadDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PayloadDir}\LICENSE-json.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PayloadDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PayloadDir}\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PayloadDir}\uninstall-manifest.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [INI]
 Filename: "{app}\installer.ini"; Section: "Installation"; Key: "Product"; String: "CodexQuotaBar"
@@ -48,6 +55,7 @@ Filename: "{app}\installer.ini"; Section: "Installation"; Key: "Version"; String
 Type: files; Name: "{app}\uninstall.ps1"; Check: IsLegacyInstall
 
 [Icons]
+Name: "{code:DesktopShortcutFolder}\Codex Quota Bar"; Filename: "{app}\CodexQuotaBar.exe"; Parameters: "--settings"; WorkingDir: "{app}"; Tasks: desktopicon
 Name: "{autoprograms}\Codex Quota Bar\Codex Quota Bar Settings"; Filename: "{app}\CodexQuotaBar.exe"; Parameters: "--settings"; Check: not IsIsolatedTest
 
 [Registry]
@@ -85,6 +93,12 @@ begin
   Result := HasSwitch('/ISOLATEDTEST=1');
 end;
 
+function DesktopShortcutFolder(Param: String): String;
+begin
+  if IsIsolatedTest then Result := ExpandConstant('{app}\test-desktop')
+  else Result := ExpandConstant('{userdesktop}');
+end;
+
 procedure StopListener;
 var Handle: THandle;
 begin
@@ -108,7 +122,7 @@ begin
   Dir := AddBackslash(ExpandFileName(WizardDirValue));
   if (Length(Dir) <= 3) or (CompareText(Dir, AddBackslash(ExpandConstant('{win}'))) = 0) or
      (CompareText(Dir, AddBackslash(GetEnv('USERPROFILE'))) = 0) then begin
-    MsgBox('请选择本工具专用的文件夹，不能使用磁盘根目录或系统、用户根目录。', mbError, MB_OK);
+    SuppressibleMsgBox('请选择本工具专用的文件夹，不能使用磁盘根目录或系统、用户根目录。', mbError, MB_OK, IDOK);
     Result := False; Exit;
   end;
   HasFiles := False;
@@ -120,7 +134,7 @@ begin
     finally FindClose(FindRec); end;
   end;
   if HasFiles and not (FileExists(Dir + 'CodexQuotaBar.exe') and FileExists(Dir + 'version.json')) then begin
-    MsgBox('该文件夹已有其他内容。请选择空文件夹或已有的 Codex Quota Bar 安装目录。', mbError, MB_OK);
+    SuppressibleMsgBox('该文件夹已有其他内容。请选择空文件夹或已有的 Codex Quota Bar 安装目录。', mbError, MB_OK, IDOK);
     Result := False;
   end;
 end;

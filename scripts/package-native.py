@@ -3,20 +3,24 @@ import hashlib
 import json
 from pathlib import Path
 import zipfile
+import sys
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = "0.3.1"
-payload = ROOT / "artifacts/native-win-x64"
+VERSION = "0.3.2"
+payload = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "artifacts/native-win-x64"
 if json.loads((payload / "version.json").read_text(encoding="utf-8-sig")).get("version") != VERSION:
     raise RuntimeError("Native runtime version does not match package version")
 release = ROOT / "artifacts/releases" / f"v{VERSION}"
 release.mkdir(parents=True, exist_ok=True)
 archive = release / f"CodexQuotaBar-v{VERSION}-Portable-win-x64.zip"
 allowed = {"CodexQuotaBar.exe", "version.json", "LICENSE", "LICENSE-json.txt", "README.md", "CHANGELOG.md"}
-(payload / "portable.json").write_text(json.dumps({"product":"CodexQuotaBar","version":VERSION}), encoding="utf-8")
-import shutil
-shutil.copyfile(ROOT / "scripts/portable-uninstall.ps1", payload / "portable-uninstall.ps1")
-allowed.update({"portable.json", "portable-uninstall.ps1"})
+manifest = json.loads((payload / "uninstall-manifest.json").read_text(encoding="utf-8-sig"))
+if manifest["product"] != "CodexQuotaBar" or set(manifest["files"]) != allowed:
+    raise RuntimeError("Invalid native payload manifest")
+for name, digest in manifest["files"].items():
+    if hashlib.sha256((payload / name).read_bytes()).hexdigest() != digest:
+        raise RuntimeError(f"Native payload changed after build: {name}")
+allowed.add("uninstall-manifest.json")
 with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as output:
     for name in sorted(allowed):
         file = payload / name

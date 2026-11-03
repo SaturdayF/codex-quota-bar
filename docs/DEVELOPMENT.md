@@ -23,7 +23,7 @@
 
 可通过 `-Compiler`、`-Windres` 指定工具路径，或通过 `-OutputDirectory` 选择独立构建目录。运行中的 EXE 不能直接覆盖。
 
-程序使用 C++17、Win32 和 GDI+，静态链接 C++ 运行库。输出位于 `artifacts/native-win-x64`，发布包位于 `artifacts/releases/v0.3.1`，包含 Setup EXE、Portable ZIP 和 SHA256SUMS.txt。
+程序使用 C++17、Win32 和 GDI+，静态链接 C++ 运行库。输出位于 `artifacts/native-win-x64`，发布包位于 `artifacts/releases/v0.3.2`，包含 Setup EXE、Portable ZIP 和 SHA256SUMS.txt。
 
 ## 数据读取
 
@@ -54,7 +54,7 @@ UI 与协议回归使用模拟数据。安装卸载测试使用独立目录，�
 
 ## 打包与发布
 
-安装版通过 `installer.ini` 识别对应产品和版本的 Inno 卸载器。便携包附带 `portable.json` 和 PowerShell 卸载脚本，校验产品和版本后按固定文件清单清理。
+安装版通过 `installer.ini` 识别对应产品的 Inno 卸载器。便携版使用内置清理流程，等待程序退出后按 `uninstall-manifest.json` 校验和清理随附文件。测试分别覆盖清理进程和实际打包清单。
 
 发布前核对版本、ZIP 内容、PE 系统依赖和 SHA-256。发布脚本校验远端标签指向及上传文件摘要。已发布标签和下载文件保持固定，后续功能修改使用新版本。
 

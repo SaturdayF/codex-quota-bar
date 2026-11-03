@@ -125,7 +125,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             auto file = after(L"--output", L"native-error.txt");
             if (fs::is_directory(file))
                 file /= L"error.txt";
-            std::ofstream out(file);
+            std::ofstream out(file, has(L"--self-test") ? std::ios::app : std::ios::out);
             out << "Error: " << e.what();
         } else if (!has(L"--uninstall-user-data"))
             MessageBoxW(nullptr, L"程序无法完成操作，请检查运行目录、Codex 路径和登录状态。",

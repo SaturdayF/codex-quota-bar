@@ -98,13 +98,19 @@ try {
         if (-not (Test-Path -LiteralPath $path)) { return $false }
         $item = Get-Item -LiteralPath $path -Force
         if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $false }
-        return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $entry.sha256
+        $stream = [IO.File]::OpenRead($path)
+        try {
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try { return [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') -eq $entry.sha256 }
+            finally { $sha.Dispose() }
+        } finally { $stream.Dispose() }
     }
     Check-Root
     foreach ($entry in $plan.files) {
         if ($allowed -cnotcontains $entry.name -or $entry.sha256 -notmatch '^[a-f0-9]{64}$') { throw 'Invalid uninstall file' }
     }
     $parent = Get-Process -Id $plan.parentPid
+    [void]$parent.Handle
     $ready = [Threading.EventWaitHandle]::OpenExisting([string]$plan.readyEvent)
     [void]$ready.Set()
     $ready.Dispose()
@@ -123,7 +129,6 @@ try {
     }
     foreach ($entry in $plan.files) {
         # Preserve a file replaced or edited after the uninstall was requested.
-        if (-not (Matches $entry)) { continue }
         $path = Join-Path $root ([string]$entry.name)
         for ($attempt = 0; $attempt -lt 80; $attempt++) {
             if (-not (Matches $entry)) { break }
@@ -135,6 +140,7 @@ try {
     if (@(Get-ChildItem -LiteralPath $root -Force).Count -eq 0) { Remove-Item -LiteralPath $root }
     exit 0
 } catch {
+    if ($plan.diagnostic) { $_ | Out-String | Set-Content -LiteralPath $plan.diagnostic }
     if ($plan.interactive) {
         Add-Type -AssemblyName System.Windows.Forms
         [void][Windows.Forms.MessageBox]::Show(([string]$plan.errorMessage + [Environment]::NewLine + $root), 'Codex Quota Bar')
@@ -303,7 +309,8 @@ int uninstallTests(std::ostream &log) {
     check(plan["files"].size() == 2, "legacy portable removes executable and recognized version only");
     { std::ofstream out(root / L"LICENSE"); out << "fixture bundled license"; }
     json manifest = {{"product", "CodexQuotaBar"}, {"files", {
-        {"LICENSE", sha256(root / L"LICENSE")}, {"../outside.txt", "ignored"},
+        {"LICENSE", sha256(root / L"LICENSE")}, {"version.json", sha256(root / L"version.json")},
+        {"../outside.txt", "ignored"},
         {"README.md", std::string(64, '0')}}}};
     { std::ofstream out(root / L"uninstall-manifest.json"); out << manifest.dump(); }
     plan = portableUninstallPlan(app);
@@ -317,6 +324,8 @@ int uninstallTests(std::ostream &log) {
     auto command = quote(app.wstring()) + L" --uninstall-test-child";
     check(CreateProcessW(app.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED,
                          nullptr, fixture.c_str(), &info, &child), "launch isolated locked executable");
+    auto diagnostic = fixture / L"cleanup-error.txt";
+    plan["diagnostic"] = utf8(diagnostic.wstring());
     auto cleanup = startPortableUninstall(plan, child.dwProcessId, false, false);
     bool waited = fs::exists(app);
     // A replacement after planning must also survive the cleanup.
@@ -331,6 +340,7 @@ int uninstallTests(std::ostream &log) {
     DWORD result = 1;
     GetExitCodeProcess(cleanup, &result);
     CloseHandle(cleanup);
+    if (fs::exists(diagnostic)) { std::ifstream detail(diagnostic); log << detail.rdbuf() << std::endl; }
     check(finished && result == 0, "portable cleanup completes without user-data access");
     check(!fs::exists(app) && !fs::exists(root / L"version.json") &&
           !fs::exists(root / L"uninstall-manifest.json"), "portable executable and owned metadata removed");

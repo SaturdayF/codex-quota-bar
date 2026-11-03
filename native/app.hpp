@@ -19,6 +19,7 @@ struct Overlay {
     int detailPage = 0;
     bool hover = false, dragging = false;
     POINT dragStart{}, origin{};
+    std::optional<int> dragPeerOrigin;
     int64_t hoverStart = 0, lastInside = 0;
     int x = 0, y = 0;
     int visualX = 0, slideFrom = 0, slideTarget = 0;
@@ -105,7 +106,7 @@ struct SettingsWindow {
     HWND window = nullptr, viewport = nullptr, content = nullptr, palette = nullptr;
     Settings draft;
     Monitor monitor;
-    int dpi = 96, page = 0, scroll = 0, oldStyle = 0;
+    int dpi = 96, page = 0, scroll = 0;
     int wheelRemainder = 0;
     bool startup = false, closing = false;
     bool loading = false;
@@ -116,7 +117,7 @@ struct SettingsWindow {
     HFONT font = nullptr;
     HBRUSH background = nullptr, sidebar = nullptr;
     std::vector<HWND> controls;
-    HWND styles = nullptr, scale = nullptr, display = nullptr, path = nullptr, interval = nullptr;
+    HWND styles = nullptr, scale = nullptr, opacitySlider = nullptr, display = nullptr, path = nullptr, interval = nullptr;
     HWND deepSeekToken = nullptr, deepSeekInterval = nullptr;
     Color selectedColor;
     bool colorHour = true;

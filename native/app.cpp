@@ -142,6 +142,10 @@ void Overlay::beginDrag(POINT pointer) {
     dragging = true;
     dragStart = pointer;
     origin = {x, y};
+    dragPeerOrigin.reset();
+    for (auto &other : app->overlays)
+        if (other.get() != this && other->monitor.handle == monitor.handle && !other->blocked)
+            dragPeerOrigin = other->x;
     hideDetails();
     SetWindowPos(window, host ? HWND_TOP : HWND_TOPMOST, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -152,44 +156,22 @@ void Overlay::dragTo(POINT pointer) {
     app->layoutWidgets(this);
 }
 void Overlay::finishDrag(POINT pointer, bool cancel) {
-    (void)pointer; // Drop decisions use widget geometry, not the pointer hotspot.
     if (!dragging) return;
+    if (!cancel) x = origin.x + pointer.x - dragStart.x;
+    else x = origin.x;
     dragging = false;
-    if (!cancel) {
-        RECT dragged{x, y, x + layout.width, y + layout.height};
-        Overlay *target = nullptr;
-        int64_t largestOverlap = 0;
-        for (auto &other : app->overlays) {
-            if (other.get() == this || other->monitor.handle != monitor.handle || other->blocked) continue;
-            RECT bounds{other->x, other->y, other->x + other->layout.width, other->y + other->layout.height};
-            RECT overlap{};
-            if (IntersectRect(&overlap, &dragged, &bounds)) {
-                int64_t area = int64_t(overlap.right - overlap.left) * (overlap.bottom - overlap.top);
-                if (area > largestOverlap) { largestOverlap = area; target = other.get(); }
-            }
-        }
-        if (target) {
-            auto other = target;
-            int64_t smaller = std::min(int64_t(layout.width) * layout.height,
-                                       int64_t(other->layout.width) * other->layout.height);
-            if (largestOverlap * 2 < smaller) x = origin.x;
-            else {
-                int gap = std::max(1, 8 * monitor.dpi / 96);
-                if (origin.x < other->x) {
-                    x = std::max<int>(other->x, origin.x + other->layout.width + gap);
-                    other->x = origin.x;
-                } else {
-                    int left = other->x;
-                    other->x = std::max<int>(origin.x, left + layout.width + gap);
-                    x = left;
-                }
-                other->hideDetails();
-            }
-        }
-    } else x = origin.x;
     hover = false;
     hideDetails();
-    app->layoutWidgets(nullptr, true);
+    if (cancel) {
+        if (dragPeerOrigin)
+            for (auto &other : app->overlays)
+                if (other.get() != this && other->monitor.handle == monitor.handle)
+                    other->x = *dragPeerOrigin;
+        app->layoutWidgets(nullptr, true);
+    } else {
+        app->layoutWidgets(this, true);
+    }
+    dragPeerOrigin.reset();
     render();
 }
 void Overlay::ensureLayer() {
@@ -539,7 +521,12 @@ void Application::rebuild() {
         auto found = std::find_if(widgetPositions.begin(), widgetPositions.end(), [&](auto &p) {
             return p.monitor == overlay->monitor.name && p.kind == overlay->kind;
         });
-        WidgetPosition p{overlay->monitor.name, overlay->kind, overlay->dragging ? int(overlay->origin.x) : overlay->x};
+        int savedX = overlay->dragging ? int(overlay->origin.x) : overlay->x;
+        for (auto &moving : overlays)
+            if (moving.get() != overlay.get() && moving->dragging && moving->dragPeerOrigin &&
+                moving->monitor.handle == overlay->monitor.handle)
+                savedX = *moving->dragPeerOrigin;
+        WidgetPosition p{overlay->monitor.name, overlay->kind, savedX};
         if (found == widgetPositions.end()) widgetPositions.push_back(p);
         else *found = p;
     }
@@ -564,10 +551,6 @@ void Application::layoutWidgets(Overlay *moving, bool animate) {
         std::vector<Overlay *> group;
         for (auto &o : overlays) if (o->monitor.handle == monitor.handle) group.push_back(o.get());
         if (group.empty()) continue;
-        if (!group.front()->settings.avoidIcons) {
-            for (auto o : group) o->place(o->x, false, animate);
-            continue;
-        }
         RECT bar{};
         HWND host = group.front()->host;
         bool hasBar = host && GetWindowRect(host, &bar);
@@ -586,11 +569,69 @@ void Application::layoutWidgets(Overlay *moving, bool animate) {
             if (space.monitor == monitor.handle && space.host == host && hasBar && EqualRect(&space.bounds, &bar)) {
                 occupied = space.occupied; ready = true; break;
             }
+        bool avoid = group.front()->settings.avoidIcons;
+        if (!avoid) { occupied.clear(); ready = true; }
         if (moving && moving->monitor.handle == monitor.handle) {
-            // A captured drag can cross shell icons and our other providers.
-            // Only the committed drop layout must avoid occupied shell regions.
-            auto x = freeTaskbarX(lane, moving->layout.width, moving->x, {}, 0);
-            moving->place(x.value_or(moving->x), !ready || !x);
+            auto dragX = freeTaskbarX(lane, moving->layout.width, moving->x, {}, 0);
+            Overlay *peer = nullptr;
+            if (moving->dragPeerOrigin)
+                for (auto o : group) if (o != moving) peer = o;
+            if (peer && dragX) {
+                int anchor = *moving->dragPeerOrigin;
+                RECT original{anchor, peer->y, anchor + peer->layout.width, peer->y + peer->layout.height};
+                RECT dragged{*dragX, moving->y, *dragX + moving->layout.width, moving->y + moving->layout.height};
+                RECT intersection{};
+                bool overlaps = IntersectRect(&intersection, &dragged, &original);
+                auto area = [](RECT r) { return int64_t(r.right - r.left) * (r.bottom - r.top); };
+                bool swap = overlaps && area(intersection) * 2 >= std::min(area(original), area(dragged));
+                std::optional<int> peerSlot, dropSlot;
+                if (swap) {
+                    bool peerGoesLeft = moving->origin.x < anchor;
+                    int left = std::min<int>(moving->origin.x, anchor);
+                    int right = std::max<int>(moving->origin.x, anchor);
+                    int firstWidth = peerGoesLeft ? peer->layout.width : moving->layout.width;
+                    right = std::max(right, left + firstWidth + gap);
+                    auto slots = arrangeTaskbarWidgets(lane, {moving->layout.width, peer->layout.width},
+                        peerGoesLeft ? std::vector<int>{right, left} : std::vector<int>{left, right},
+                        occupied, gap);
+                    if (slots[0] && slots[1] && (peerGoesLeft
+                            ? *slots[1] + peer->layout.width + gap <= *slots[0]
+                            : *slots[0] + moving->layout.width + gap <= *slots[1])) {
+                        dropSlot = slots[0];
+                        peerSlot = slots[1];
+                    }
+                }
+                peer->place(peerSlot.value_or(anchor), !ready, true);
+                if (moving->dragging) {
+                    moving->place(*dragX, !ready);
+                } else if (dropSlot) {
+                    moving->place(*dropSlot, !ready, true);
+                } else {
+                    // Pin the other component. Prefer the edge on the drop side,
+                    // then search the rest of the taskbar for a valid slot.
+                    occupied.push_back(original);
+                    auto dropLane = lane;
+                    int desired = *dragX;
+                    if (overlaps) {
+                        if (dragged.left + dragged.right <= original.left + original.right) {
+                            desired = anchor - moving->layout.width - gap;
+                            dropLane.right = std::min(dropLane.right, original.left - gap);
+                        } else {
+                            desired = original.right + gap;
+                            dropLane.left = std::max(dropLane.left, original.right + gap);
+                        }
+                    }
+                    auto slot = freeTaskbarX(dropLane, moving->layout.width, desired, occupied, gap);
+                    if (!slot) slot = freeTaskbarX(lane, moving->layout.width, desired, occupied, gap);
+                    moving->place(slot.value_or(moving->origin.x), !ready || !slot, true);
+                }
+            } else {
+                auto slot = moving->dragging ? dragX :
+                    freeTaskbarX(lane, moving->layout.width, moving->x, occupied, gap);
+                moving->place(slot.value_or(moving->origin.x), !ready || !slot, animate);
+            }
+        } else if (!avoid) {
+            for (auto o : group) o->place(o->x, false, animate);
         } else {
             std::vector<int> widths, desired;
             for (auto o : group) { widths.push_back(o->layout.width); desired.push_back(o->x); }

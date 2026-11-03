@@ -31,6 +31,8 @@ enum {
     Refresh,
     Exit,
     Uninstall,
+    OpenFolder,
+    BackgroundOpacity,
     DeepSeekEnabled = 260,
     DeepSeekToken = 262,
     DeepSeekInterval,
@@ -70,7 +72,6 @@ SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
     if (!monitor.handle && !all.empty())
         monitor = all.front();
     dpi = monitor.dpi;
-    oldStyle = draft.styleIndex();
     registerSettingsClass(L"CodexQuotaBar.Native.Settings", procedure);
     registerSettingsClass(L"CodexQuotaBar.Native.Content", contentProcedure);
     registerSettingsClass(L"CodexQuotaBar.Native.Viewport", viewportProcedure);
@@ -140,6 +141,9 @@ void SettingsWindow::createControls() {
     scale = control(TRACKBAR_CLASSW, L"显示大小", Scale, 0, TBS_NOTICKS | TBS_HORZ);
     SendMessageW(scale, TBM_SETRANGE, TRUE, MAKELPARAM(60, 140));
     SendMessageW(scale, TBM_SETPOS, TRUE, int(std::round(draft.scale * 100)));
+    opacitySlider = control(TRACKBAR_CLASSW, L"底色不透明度", BackgroundOpacity, 0, TBS_NOTICKS | TBS_HORZ);
+    SendMessageW(opacitySlider, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
+    SendMessageW(opacitySlider, TBM_SETPOS, TRUE, draft.backgroundOpacity);
     button(L"5 小时", HourColor, 0);
     button(L"每周", WeekColor, 0);
     button(L"默认颜色", ResetColors, 0);
@@ -192,12 +196,11 @@ void SettingsWindow::createControls() {
     }
     button(L"立即刷新", Refresh, 2);
     button(L"退出额度工具", Exit, 2);
-    auto un = button(L"卸载程序", Uninstall, 2);
-    EnableWindow(un, (nativeInstalled(executable().parent_path()) || portableInstalled(executable().parent_path())));
+    button(L"卸载程序", Uninstall, 2);
+    button(L"打开文件夹", OpenFolder, 2);
     styleChanged();
 }
 void SettingsWindow::styleChanged() {
-    oldStyle = draft.styleIndex();
     EnableWindow(GetDlgItem(content, Letters), draft.style == "gauges");
     EnableWindow(GetDlgItem(content, Remaining), draft.style != "plain");
     EnableWindow(GetDlgItem(content, Demo), draft.pref().animate);
@@ -236,7 +239,7 @@ void SettingsWindow::layout() {
     GetClientRect(viewport, &c);
     contentWidth = int(c.right * 96. / dpi);
     contentHeight = int(c.bottom * 96. / dpi);
-    int needed = page == 0 ? 704 : page == 1 ? 620 : page == 3 ? 608 : 540;
+    int needed = page == 0 ? 770 : page == 1 ? 620 : page == 3 ? 608 : 606;
     scroll = std::clamp(scroll, 0, std::max(0, needed - contentHeight));
     SCROLLINFO si{sizeof(si), SIF_RANGE | SIF_PAGE | SIF_POS,   0,
                   needed - 1, UINT(std::max(1, contentHeight)), scroll,
@@ -267,11 +270,12 @@ void SettingsWindow::layout() {
     place(HourColor, contentWidth - 292, 212, 80, 32);
     place(WeekColor, contentWidth - 205, 212, 76, 32);
     place(ResetColors, contentWidth - 122, 212, 108, 32);
-    place(Letters, contentWidth - 60, 386, 44, 26);
-    place(Remaining, contentWidth - 60, 452, 44, 26);
-    place(Percent, contentWidth - 60, 518, 44, 26);
-    place(Animate, contentWidth - 60, 584, 44, 26);
-    place(Demo, 0, 650, 122, 34);
+    place(Letters, contentWidth - 60, 452, 44, 26);
+    place(Remaining, contentWidth - 60, 518, 44, 26);
+    place(Percent, contentWidth - 60, 584, 44, 26);
+    place(Animate, contentWidth - 60, 650, 44, 26);
+    place(BackgroundOpacity, right - 24, 279, 180, 32);
+    place(Demo, 0, 716, 122, 34);
     place(Display, right - 20, 89, 230, 300);
     place(Startup, contentWidth - 60, 155, 44, 26);
     place(ShowHour, contentWidth - 60, 221, 44, 26);
@@ -284,6 +288,7 @@ void SettingsWindow::layout() {
     place(Refresh, contentWidth - 124, 273, 110, 34);
     place(Exit, contentWidth - 146, 339, 132, 34);
     place(Uninstall, contentWidth - 124, 405, 110, 34);
+    place(OpenFolder, contentWidth - 146, 471, 132, 34);
     place(DeepSeekEnabled, contentWidth - 60, 89, 44, 26);
     place(DeepSeekAlwaysShow, contentWidth - 60, 155, 44, 26);
     place(DeepSeekToken, 0, 271, contentWidth - 14, 30);
@@ -399,7 +404,10 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 drawUiText(g, std::to_wstring(int(std::round(draft.scale * 100))) + L"%",
                          RectF(contentWidth - 70.f, 151, 56, 32), 13, muted, false, true);
                 row(214, L"图标颜色", L"分别选择两种额度的颜色。", 310);
-                fillRound(g, RectF(0, 286, contentWidth - 14.f, 62), 6, side);
+                row(274, L"底色不透明度", L"适用于两个组件，0% 为透明。");
+                drawUiText(g, std::to_wstring(draft.backgroundOpacity) + L"%",
+                           RectF(contentWidth - 70.f, 277, 56, 32), 13, muted, false, true);
+                fillRound(g, RectF(0, 352, contentWidth - 14.f, 62), 6, side);
                 Quotas q;
                 q.hour = WindowQuota{68, 0};
                 q.week = WindowQuota{27, 0};
@@ -410,18 +418,19 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                     previewStart < 0 ? 1 : std::clamp((GetTickCount64() - previewStart) / 1200., 0., 1.);
                 double progress = 1 - std::pow(1 - t, 3);
                 if (!visible.count())
-                    drawUiText(g, L"已隐藏所有额度", RectF(0, 298, contentWidth - 14.f, 36),
+                    drawUiText(g, L"已隐藏所有额度", RectF(0, 364, contentWidth - 14.f, 36),
                                14, muted, false, true);
-                else
-                    drawWidget(g,
-                               RectF((contentWidth - 14 - layout.width) / 2.f, 286 + (62 - layout.height) / 2.f,
-                                     float(layout.width), float(layout.height)),
-                               q, preview, false, light, progress, progress);
-                drawUiText(g, L"预览使用模拟数据", RectF(0, 350, float(contentWidth), 24), 12, muted);
-                row(380, L"仪表中间显示 H 和 W", L"H 表示 5 小时额度，W 表示周额度。", 110);
-                row(446, L"在图标上展示余量", L"关闭后保持完整纯色图形；按样式分别保存。", 110);
-                row(512, L"显示百分号", L"关闭后只显示数字；按样式分别保存。", 110);
-                row(578, L"启动与额度重置动画", L"图形渐满；纯数字从 0 递增至真实值。", 110);
+                else {
+                    RectF bounds((contentWidth - 14 - layout.width) / 2.f, 352 + (62 - layout.height) / 2.f,
+                                 float(layout.width), float(layout.height));
+                    drawWidgetBackground(g, bounds, preview, light, false);
+                    drawWidget(g, bounds, q, preview, false, light, progress, progress);
+                }
+                drawUiText(g, L"预览使用模拟数据", RectF(0, 416, float(contentWidth), 24), 12, muted);
+                row(446, L"仪表中间显示 H 和 W", L"H 表示 5 小时额度，W 表示周额度。", 110);
+                row(512, L"在图标上展示余量", L"关闭后保持完整纯色图形；按样式分别保存。", 110);
+                row(578, L"显示百分号", L"关闭后只显示数字；按样式分别保存。", 110);
+                row(644, L"启动与额度重置动画", L"图形渐满；纯数字从 0 递增至真实值。", 110);
             } else if (page == 1) {
                 row(82, L"显示屏幕", L"选择任务栏组件出现的位置。");
                 row(148, L"随 Windows 登录启动", L"启动轻量监听器，自动跟随应用。", 110);
@@ -440,10 +449,9 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 row(200, L"自动刷新间隔", L"保存后立即生效。");
                 row(266, L"额度读取", L"读取失败时自动退避重试。");
                 row(332, L"退出", L"停止显示与后台监听。");
-                row(398, L"卸载",
-                    (nativeInstalled(executable().parent_path()) || portableInstalled(executable().parent_path())) ? L"删除本工具及设置，卸载前会再次确认。"
-                                                                : L"此目录缺少有效卸载记录。");
-                drawUiText(g, L"通过本机 Codex 读取，不保存登录信息。", RectF(0, 483, float(contentWidth), 32),
+                row(398, L"卸载", L"删除本工具及设置，保留目录中的其他文件。");
+                row(464, L"程序所在文件夹", L"在文件资源管理器中打开。");
+                drawUiText(g, L"通过本机 Codex 读取，不保存登录信息。", RectF(0, 549, float(contentWidth), 32),
                          14, muted);
             } else {
                 row(82, L"自动跟随 DeepSeekHarness", L"Harness 运行时自动显示并刷新。", 110);
@@ -662,9 +670,13 @@ void SettingsWindow::command(int id, int notice) {
     case Exit:
         app->stop();
         break;
+    case OpenFolder:
+        if (reinterpret_cast<INT_PTR>(ShellExecuteW(window, L"open", executable().parent_path().c_str(),
+                                                   nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+            MessageBoxW(window, L"无法打开程序所在文件夹。", L"Codex Quota Bar", MB_OK | MB_ICONERROR);
+        break;
     case Uninstall:
-        if ((nativeInstalled(executable().parent_path()) || portableInstalled(executable().parent_path())) &&
-            MessageBoxW(
+        if (MessageBoxW(
                 window,
                 L"卸载本工具并删除设置、启动项和快捷方式？\n不会删除 ChatGPT、Codex 或它们的登录数据。",
                 L"卸载 Codex Quota Bar", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES) {
@@ -1007,6 +1019,9 @@ LRESULT CALLBACK SettingsWindow::contentProcedure(HWND w, UINT msg, WPARAM wp, L
     case WM_HSCROLL:
         if (reinterpret_cast<HWND>(lp) == self->scale) {
             self->draft.scale = SendMessageW(self->scale, TBM_GETPOS, 0, 0) / 100.;
+            InvalidateRect(w, nullptr, FALSE);
+        } else if (reinterpret_cast<HWND>(lp) == self->opacitySlider) {
+            self->draft.backgroundOpacity = int(SendMessageW(self->opacitySlider, TBM_GETPOS, 0, 0));
             InvalidateRect(w, nullptr, FALSE);
         }
         return 0;

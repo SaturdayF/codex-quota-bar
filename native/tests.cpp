@@ -286,12 +286,6 @@ int selfTests(const fs::path &output) {
     WritePrivateProfileStringW(L"Installation", L"Product", L"OtherProduct", marker.c_str());
     check(!nativeInstalled(fixture), "native uninstall rejects unrelated marker");
     fs::remove(marker);
-    { std::ofstream out(fixture / L"portable.json"); out << json{{"product", "CodexQuotaBar"}, {"version", VersionUtf8}}; }
-    { std::ofstream out(fixture / L"portable-uninstall.ps1"); out << "fixture"; }
-    check(portableInstalled(fixture), "portable uninstall recognizes versioned manifest and helper");
-    { std::ofstream out(fixture / L"portable.json"); out << json{{"product", "OtherProduct"}, {"version", VersionUtf8}}; }
-    check(!portableInstalled(fixture), "portable uninstall rejects unrelated product");
-    fs::remove(fixture / L"portable.json"); fs::remove(fixture / L"portable-uninstall.ps1");
     fs::remove(fixture / L"unins000.exe");
     fs::remove(fixture);
     checks += uninstallTests(log);
@@ -479,7 +473,7 @@ int uiTests(const fs::path &dir) {
         settings.draw(image.dc, true);
         GdiFlush();
         std::vector<BYTE> pixels;
-        for (int y = settings.px(286); y < settings.px(348); ++y)
+        for (int y = settings.px(352); y < settings.px(414); ++y)
             pixels.insert(pixels.end(), image.pixels + y * image.width * 4,
                           image.pixels + (y + 1) * image.width * 4);
         return pixels;
@@ -526,6 +520,14 @@ int uiTests(const fs::path &dir) {
     settings.command(204, BN_CLICKED);
     check(settings.draft.hourColor == "#219E86" && settings.draft.weekColor == "#648DE6",
           "default colors restore");
+    auto transparentPreview = previewPixels(-1);
+    SendMessageW(settings.opacitySlider, TBM_SETPOS, TRUE, 65);
+    SendMessageW(settings.content, WM_HSCROLL, TB_THUMBPOSITION, reinterpret_cast<LPARAM>(settings.opacitySlider));
+    check(settings.previewSettings().backgroundOpacity == 65 &&
+          Settings::fromJson(settings.draft.toJson()).backgroundOpacity == 65,
+          "background slider updates preview and persists through settings JSON");
+    check(transparentPreview != previewPixels(-1), "opacity changes rendered preview pixels");
+    settings.capture(dir / L"settings-background.png");
     settings.selectPage(1);
     settings.capture(dir / L"settings-general.png");
     settings.selectPage(2);
@@ -816,10 +818,9 @@ int uiTests(const fs::path &dir) {
         codexWidget.finishDrag({}, true);
         check(codexWidget.x == beforeCancel && !codexWidget.dragging, "lost capture cancels a drag without swapping");
         codexWidget.x = startX;
-        deepseekWidget.x = startX + codexWidget.layout.width + gap;
+        deepseekWidget.x = startX + codexWidget.layout.width + gap + 50;
         fixture.checkTaskbars();
         int targetBefore = deepseekWidget.x;
-        int sourceBefore = codexWidget.x;
         grab = {codexWidget.x + codexWidget.layout.width / 2, codexWidget.y + codexWidget.layout.height / 2};
         int shallowLeft = deepseekWidget.x - codexWidget.layout.width + codexWidget.layout.width / 4;
         drop = {grab.x + shallowLeft - codexWidget.x, grab.y};
@@ -831,11 +832,16 @@ int uiTests(const fs::path &dir) {
         check(IntersectRect(&overlap, &movingBounds, &targetBounds) && GetWindow(host, GW_CHILD) == codexWidget.window,
               "drag preview can overlap another widget and appears above it");
         codexWidget.finishDrag(drop);
-        check(codexWidget.x == sourceBefore && deepseekWidget.x == targetBefore,
-              "overlap below half of the smaller widget returns to the original position");
+        check(codexWidget.x == targetBefore - codexWidget.layout.width - gap && deepseekWidget.x == targetBefore,
+              "shallow overlap snaps beside a stationary peer");
         int halfLeft = deepseekWidget.x - codexWidget.layout.width + (codexWidget.layout.width + 1) / 2;
+        grab.x = codexWidget.x + codexWidget.layout.width / 2;
         drop = {grab.x + halfLeft - codexWidget.x, grab.y};
         codexWidget.beginDrag(grab);
+        codexWidget.dragTo(drop);
+        check(deepseekWidget.x < targetBefore, "crossing the threshold moves the peer before release");
+        codexWidget.dragTo(grab);
+        check(deepseekWidget.x == targetBefore, "leaving the threshold restores the peer");
         codexWidget.dragTo(drop);
         codexWidget.finishDrag(drop);
         check(deepseekWidget.x + deepseekWidget.layout.width + gap <= codexWidget.x,
