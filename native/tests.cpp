@@ -666,7 +666,34 @@ int uiTests(const fs::path &dir) {
                  originalBounds.bottom - originalBounds.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     settings.scroll = 0;
     settings.layout();
+    SendMessageW(settings.iconOpacitySlider, TBM_SETPOS, TRUE, 100);
+    SendMessageW(settings.content, WM_HSCROLL, TB_THUMBPOSITION, reinterpret_cast<LPARAM>(settings.iconOpacitySlider));
+    SetFocus(GetDlgItem(settings.window, 100));
     settings.capture(dir / L"settings-appearance.png");
+    HWND appearance = GetDlgItem(settings.content, 249);
+    check(appearance && !Settings::fromJson(json::object()).darkAppearance,
+          "missing appearance preference defaults to light");
+    auto setAppearance = [&](int index) {
+        SendMessageW(appearance, CB_SETCURSEL, index, 0);
+        SendMessageW(settings.content, WM_COMMAND, MAKEWPARAM(249, CBN_SELCHANGE),
+                     reinterpret_cast<LPARAM>(appearance));
+    };
+    auto lightPixels = readControl(settings.viewport);
+    setAppearance(1);
+    UpdateWindow(settings.window);
+    RedrawWindow(settings.viewport, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    check(Settings::fromJson(settings.draft.toJson()).darkAppearance && lightPixels != readControl(settings.viewport),
+          "dark appearance applies immediately and survives the settings round trip");
+    settings.capture(dir / L"settings-dark.png");
+    setAppearance(0);
+    RECT thumb = settings.scrollThumb();
+    check(thumb.bottom > thumb.top && !(GetWindowLongPtrW(settings.viewport, GWL_STYLE) & WS_VSCROLL),
+          "scrolling uses a single custom thumb");
+    SendMessageW(settings.viewport, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(thumb.left + 1, thumb.top + 4));
+    SendMessageW(settings.viewport, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(thumb.left + 1, thumb.top + 80));
+    SendMessageW(settings.viewport, WM_LBUTTONUP, 0, MAKELPARAM(thumb.left + 1, thumb.top + 80));
+    check(settings.scroll > 0 && settings.scrollThumb().top > thumb.top, "dragging the slim thumb scrolls the page");
+    settings.scrollTo(0);
     ShowWindow(settings.window, SW_MINIMIZE);
     settings.reveal(nullptr);
     check(IsWindowVisible(settings.window) && !IsIconic(settings.window), "minimized settings recover");

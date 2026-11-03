@@ -24,7 +24,7 @@ void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &s
     g.SetSmoothingMode(SmoothingModeAntiAlias);
     bool light = lightTheme();
     float d = image.height / 32.f;
-    bool darkInk = light && settings.backgroundOpacity < 52;
+    bool darkInk = settings.backgroundOpacity >= 52 ? !settings.darkAppearance : light;
     Color ink = darkInk ? vibrancy::deep : vibrancy::ink;
     Color muted = darkInk ? Color(255, 65, 65, 67) : vibrancy::secondary;
     drawWidgetBackground(g, RectF(0, 0, float(image.width), float(image.height)), settings, light, hover);
@@ -53,17 +53,22 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
     int height = std::min(int((base + rows * 100 + 110) * d), int(monitor.work.bottom - monitor.work.top) - int(12 * d));
     int left = std::clamp<LONG>(x, monitor.work.left, std::max(monitor.work.left, monitor.work.right - width));
     int top = std::max(int(monitor.work.top), y - height - int(12 * d));
+    if (!IsWindowVisible(details) || !detailFrost)
+        detailFrost = captureFrost({left, top, left + width, top + height}, app->testing || app->preview || !capture.empty());
+    const auto &colors = glassPalette(settings.darkAppearance);
     Surface image(width, height);
     {
         Graphics g(image.bitmap.get());
         g.Clear(Color(0, 0, 0, 0));
         g.SetSmoothingMode(SmoothingModeAntiAlias);
-        auto ink = vibrancy::ink, muted = vibrancy::secondary, accent = vibrancy::focus;
-        drawPanel(g, RectF(1, 1, width - 2.f, height - 2.f), 10 * d, vibrancy::mid);
+        auto ink = colors.ink, muted = colors.secondary;
+        RectF glass(1, 1, width - 2.f, height - 2.f);
+        paintFrost(g, glass, 16 * d, colors, detailFrost.get(), glass);
+        auto accent = colors.focus;
         auto line = [&](const std::wstring &text, float y, float size, Color color, bool bold = false) {
             drawUiText(g, text, RectF(20 * d, y * d, width - 40 * d, 28 * d), size * d, color, bold);
         };
-        drawHeading(g, L"DeepSeekHarness · 当日消耗", RectF(20 * d, 14 * d, width - 40 * d, 28 * d), 20 * d);
+        drawHeading(g, L"DeepSeekHarness · 当日消耗", RectF(20 * d, 14 * d, width - 40 * d, 28 * d), 20 * d, ink);
         line(beijingDate(utcNow()) + L" · 北京时间 00:00 起 · 账户汇总", 49, 13, muted);
         float yy = 88;
         for (int i = 0; i < balanceRows; ++i) {
@@ -115,7 +120,7 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
         std::wstring error = !data.balanceError.empty() ? data.balanceError : !data.costError.empty() ? data.costError : data.tokensError;
         if (!today && data.costAt) error = L"日期已切换，正在读取今日账单";
         line(error.empty() ? L"平台账单可能延迟更新 · 右键打开 DeepSeek 相关设置" : error,
-             footer + 30, 12, error.empty() ? muted : vibrancy::warning);
+             footer + 30, 12, error.empty() ? muted : colors.warning);
         line(L"平台账户账单 · 不按模型单价估算费用", footer + 56, 12, muted);
     }
     if (!capture.empty()) image.save(capture);

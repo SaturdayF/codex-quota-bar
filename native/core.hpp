@@ -71,6 +71,7 @@ struct QuotaVisibility {
     }
 };
 struct Settings {
+    bool darkAppearance = false;
     std::string displayMode = "all", style = "gauges", hourColor = "#219E86", weekColor = "#648DE6";
     std::vector<std::string> displays;
     std::wstring codexPath;

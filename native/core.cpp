@@ -105,6 +105,7 @@ Settings Settings::fromJson(const json &j) {
     auto boolean = [&](const json &obj, const char *k, bool def) {
         return obj.contains(k) && obj[k].is_boolean() ? obj[k].get<bool>() : def;
     };
+    s.darkAppearance = string("Appearance", "light") == "dark";
     s.style = string("WidgetStyle", "gauges");
     s.style = StyleIds[s.styleIndex()];
     s.displayMode = string("DisplayMode", "all");
@@ -161,6 +162,7 @@ json Settings::toJson() const {
     json j = extra;
     if (!j.contains("StyleOptions") || !j["StyleOptions"].is_object())
         j["StyleOptions"] = json::object();
+    j["Appearance"] = darkAppearance ? "dark" : "light";
     j["WidgetStyle"] = style;
     j["DisplayMode"] = displayMode;
     j["Displays"] = displays;

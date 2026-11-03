@@ -8,8 +8,13 @@ inline const Color border(25, 255, 255, 255), hover(18, 255, 255, 255), active(2
 inline const Color focus(255, 163, 190, 255), warning(255, 235, 190, 142);
 constexpr COLORREF inputBrush = RGB(28, 28, 30);
 }
-void drawPanel(Graphics &g, RectF bounds, float radius, Color fill);
-void drawHeading(Graphics &g, const std::wstring &text, RectF bounds, float size);
+struct GlassPalette {
+    Color deep, mid, surface, ink, secondary, muted, border, hover, active, focus, warning, thumb;
+    COLORREF inputBrush() const { return RGB(deep.GetR(), deep.GetG(), deep.GetB()); }
+};
+const GlassPalette &glassPalette(bool dark);
+void drawPanel(Graphics &g, RectF bounds, float radius, Color fill, Color edge = vibrancy::border);
+void drawHeading(Graphics &g, const std::wstring &text, RectF bounds, float size, Color ink = vibrancy::ink);
 struct Surface {
     int width, height;
     HDC dc = nullptr;
@@ -23,6 +28,9 @@ struct Surface {
     void present(HWND window, int x, int y, bool move = true);
     void save(const fs::path &file);
 };
+std::unique_ptr<Surface> captureFrost(RECT bounds, bool simulated);
+void paintFrost(Graphics &g, RectF bounds, float radius, const GlassPalette &colors,
+                const Surface *frost, RectF sourcePlacement);
 void roundPath(GraphicsPath &path, RectF area, float radius);
 void fillRound(Graphics &g, RectF area, float radius, Color c);
 void drawText(Graphics &g, const std::wstring &text, RectF area, float size, Color c, bool bold = false,

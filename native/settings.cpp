@@ -34,6 +34,7 @@ enum {
     OpenFolder,
     BackgroundOpacity,
     IconOpacity,
+    AppearanceMode,
     DeepSeekEnabled = 260,
     DeepSeekToken = 262,
     DeepSeekInterval,
@@ -52,22 +53,31 @@ static std::wstring controlText(HWND w) {
 }
 enum class ControlSkin : DWORD_PTR { Button, Edit, Combo, Slider };
 
+static SettingsWindow *controlOwner(HWND w) {
+    return reinterpret_cast<SettingsWindow *>(GetWindowLongPtrW(GetAncestor(w, GA_ROOT), GWLP_USERDATA));
+}
+static const GlassPalette &controlColors(HWND w) {
+    auto settings = controlOwner(w);
+    return glassPalette(settings && settings->draft.darkAppearance);
+}
+
 static void paintControl(HWND w, HDC dc, ControlSkin skin) {
     RECT rect{};
     GetClientRect(w, &rect);
     if (rect.right < 4 || rect.bottom < 4) return;
     float d = GetDpiForWindow(w) / 96.f;
     bool focused = GetFocus() == w;
+    const auto &colors = controlColors(w);
     if (skin == ControlSkin::Edit) {
         wchar_t cue[256]{};
         if (!focused && !GetWindowTextLengthW(w) &&
             SendMessageW(w, EM_GETCUEBANNER, reinterpret_cast<WPARAM>(cue), std::size(cue))) {
-            HBRUSH fill = CreateSolidBrush(vibrancy::inputBrush);
+            HBRUSH fill = CreateSolidBrush(colors.inputBrush());
             FillRect(dc, &rect, fill);
             DeleteObject(fill);
             int saved = SaveDC(dc);
             SetBkMode(dc, TRANSPARENT);
-            SetTextColor(dc, RGB(158, 158, 160));
+            SetTextColor(dc, RGB(colors.muted.GetR(), colors.muted.GetG(), colors.muted.GetB()));
             if (auto font = SendMessageW(w, WM_GETFONT, 0, 0))
                 SelectObject(dc, reinterpret_cast<HFONT>(font));
             RECT label = rect;
@@ -75,7 +85,8 @@ static void paintControl(HWND w, HDC dc, ControlSkin skin) {
             DrawTextW(dc, cue, -1, &label, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
             RestoreDC(dc, saved);
         }
-        HBRUSH edge = CreateSolidBrush(focused ? RGB(163, 190, 255) : RGB(51, 51, 53));
+        HBRUSH edge = CreateSolidBrush(focused ? RGB(colors.focus.GetR(), colors.focus.GetG(), colors.focus.GetB()) :
+                                       (colors.ink.GetR() > 128 ? RGB(70, 70, 73) : RGB(213, 216, 222)));
         FrameRect(dc, &rect, edge);
         DeleteObject(edge);
         return;
@@ -84,14 +95,15 @@ static void paintControl(HWND w, HDC dc, ControlSkin skin) {
     {
         Graphics g(surface.bitmap.get());
         g.SetSmoothingMode(SmoothingModeAntiAlias);
-        g.Clear(vibrancy::mid);
+        if (auto owner = controlOwner(w)) owner->paintGlass(g, w, surface.width, surface.height);
+        else g.Clear(colors.mid);
         RectF bounds(.5f, .5f, rect.right - 1.f, rect.bottom - 1.f);
         if (skin == ControlSkin::Combo) {
-            drawPanel(g, bounds, 6 * d, vibrancy::deep);
+            drawPanel(g, bounds, 6 * d, colors.deep, colors.border);
             drawUiText(g, controlText(w), RectF(8 * d, 0, rect.right - 32 * d, float(rect.bottom)),
-                       15 * d, vibrancy::ink);
+                       15 * d, colors.ink);
             float x = rect.right - 13 * d, y = rect.bottom / 2.f;
-            Pen chevron(vibrancy::secondary, 1);
+            Pen chevron(colors.secondary, 1);
             PointF arrow[] = {{x - 4 * d, y - 2 * d}, {x, y + 2 * d}, {x + 4 * d, y - 2 * d}};
             g.DrawLines(&chevron, arrow, 3);
         } else {
@@ -100,16 +112,16 @@ static void paintControl(HWND w, HDC dc, ControlSkin skin) {
             SendMessageW(w, TBM_GETTHUMBRECT, 0, reinterpret_cast<LPARAM>(&thumb));
             float y = (thumb.top + thumb.bottom) / 2.f;
             fillRound(g, RectF(float(channel.left), y - 2 * d, float(channel.right - channel.left), 4 * d),
-                      2 * d, vibrancy::deep);
+                      2 * d, colors.deep);
             float x = (thumb.left + thumb.right) / 2.f;
-            drawPanel(g, RectF(x - 5 * d, y - 7 * d, 10 * d, 14 * d), 3 * d, vibrancy::surface);
-            Pen mark(vibrancy::secondary, 1);
+            drawPanel(g, RectF(x - 5 * d, y - 7 * d, 10 * d, 14 * d), 3 * d, colors.thumb, colors.border);
+            Pen mark(colors.secondary, 1);
             g.DrawLine(&mark, x, y - 3 * d, x, y + 3 * d);
         }
         if (focused) {
             GraphicsPath path;
             roundPath(path, bounds, 6 * d);
-            Pen edge(vibrancy::focus, 1);
+            Pen edge(colors.focus, 1);
             g.DrawPath(&edge, &path);
         }
     }
@@ -155,11 +167,13 @@ static LRESULT CALLBACK controlSkin(HWND w, UINT msg, WPARAM wp, LPARAM lp, UINT
 }
 
 static void drawComboOption(const DRAWITEMSTRUCT &item) {
+    const auto &colors = controlColors(item.hwndItem);
     Graphics g(item.hDC);
     RectF bounds(float(item.rcItem.left), float(item.rcItem.top),
                  float(item.rcItem.right - item.rcItem.left), float(item.rcItem.bottom - item.rcItem.top));
-    SolidBrush bg(item.itemState & ODS_SELECTED ? vibrancy::surface : vibrancy::deep);
+    SolidBrush bg(colors.deep);
     g.FillRectangle(&bg, bounds);
+    if (item.itemState & ODS_SELECTED) { SolidBrush selected(colors.active); g.FillRectangle(&selected, bounds); }
     if (item.itemID == UINT(-1)) return;
     auto index = item.itemID;
     auto length = SendMessageW(item.hwndItem, CB_GETLBTEXTLEN, index, 0);
@@ -170,7 +184,7 @@ static void drawComboOption(const DRAWITEMSTRUCT &item) {
     float d = GetDpiForWindow(item.hwndItem) / 96.f;
     bounds.X += 8 * d;
     bounds.Width -= 12 * d;
-    drawUiText(g, label, bounds, 15 * d, vibrancy::ink);
+    drawUiText(g, label, bounds, 15 * d, colors.ink);
 }
 
 static void registerSettingsClass(const wchar_t *name, WNDPROC proc) {
@@ -207,13 +221,13 @@ SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
     if (!window)
         throw std::runtime_error("Cannot create settings window");
     viewport = CreateWindowExW(WS_EX_COMPOSITED, L"CodexQuotaBar.Native.Viewport", L"",
-                              WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_CLIPCHILDREN, 0, 0, 1, 1, window,
+                              WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0, 0, 1, 1, window,
                               nullptr, GetModuleHandleW(nullptr), this);
     content = CreateWindowExW(0, L"CodexQuotaBar.Native.Content", L"",
                               WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1, 1, viewport,
                               nullptr, GetModuleHandleW(nullptr), this);
     if (!viewport || !content) throw std::runtime_error("Cannot create settings viewport");
-    background = CreateSolidBrush(vibrancy::inputBrush);
+    applyAppearance();
     font = CreateFontW(-px(15), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
     createControls();
@@ -270,6 +284,10 @@ void SettingsWindow::createControls() {
     for (auto &n : StyleNames)
         SendMessageW(styles, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(n.c_str()));
     SendMessageW(styles, CB_SETCURSEL, draft.styleIndex(), 0);
+    auto appearance = control(L"COMBOBOX", L"", AppearanceMode, 0, CBS_DROPDOWNLIST);
+    SendMessageW(appearance, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"浅色模式"));
+    SendMessageW(appearance, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"深色模式"));
+    SendMessageW(appearance, CB_SETCURSEL, draft.darkAppearance ? 1 : 0, 0);
     scale = control(TRACKBAR_CLASSW, L"显示大小", Scale, 0, TBS_NOTICKS | TBS_HORZ);
     SendMessageW(scale, TBM_SETRANGE, TRUE, MAKELPARAM(60, 140));
     SendMessageW(scale, TBM_SETPOS, TRUE, int(std::round(draft.scale * 100)));
@@ -374,16 +392,10 @@ void SettingsWindow::layout() {
     GetClientRect(viewport, &c);
     contentWidth = int(c.right * 96. / dpi);
     contentHeight = int(c.bottom * 96. / dpi);
-    int needed = page == 0 ? 836 : page == 1 ? 620 : page == 3 ? 608 : 606;
+    int needed = pageHeight = page == 0 ? 836 : page == 1 ? 620 : page == 3 ? 608 : 606;
     scroll = std::clamp(scroll, 0, std::max(0, needed - contentHeight));
-    SCROLLINFO si{sizeof(si), SIF_RANGE | SIF_PAGE | SIF_POS,   0,
-                  needed - 1, UINT(std::max(1, contentHeight)), scroll,
-                  0};
-    SetScrollInfo(viewport, SB_VERT, &si, TRUE);
-    // Scrollbar visibility can change the usable width between pages.
-    GetClientRect(viewport, &c);
-    contentWidth = int(c.right * 96. / dpi);
-    SetWindowPos(content, nullptr, 0, -px(scroll), c.right, std::max<int>(c.bottom, px(needed)),
+    contentWidth = int(std::max(1, int(c.right) - px(14)) * 96. / dpi);
+    SetWindowPos(content, nullptr, 0, -px(scroll), std::max(1, int(c.right) - px(14)), std::max<int>(c.bottom, px(needed)),
                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
     struct Placement { HWND window; int x, y, width, height; };
     std::vector<Placement> placements;
@@ -400,6 +412,7 @@ void SettingsWindow::layout() {
                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
     SetWindowPos(GetDlgItem(window, Cancel), nullptr, w - px(256), h - px(58), px(96), px(36),
                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
+    place(AppearanceMode, right + 52, 8, 158, 110);
     place(Style, right, 89, 210, 280);
     place(Scale, right - 24, 153, 180, 32);
     place(HourColor, contentWidth - 292, 212, 80, 32);
@@ -442,14 +455,38 @@ void SettingsWindow::layout() {
         for (auto &p : placements) SetWindowPos(p.window, nullptr, p.x, p.y, p.width, p.height, flags);
     RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
+void SettingsWindow::applyAppearance() {
+    if (background) DeleteObject(background);
+    background = CreateSolidBrush(glassPalette(draft.darkAppearance).inputBrush());
+    BOOL dark = draft.darkAppearance;
+    DwmSetWindowAttribute(window, 20, &dark, sizeof(dark));
+    RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_FRAME);
+}
+
+void SettingsWindow::paintGlass(Graphics &g, HWND target, int width, int height) const {
+    RECT client{};
+    GetClientRect(window, &client);
+    POINT origin{};
+    MapWindowPoints(target, window, &origin, 1);
+    paintFrost(g, RectF(0, 0, float(width), float(height)), 0, glassPalette(draft.darkAppearance),
+               settingsFrost.get(), RectF(-float(origin.x), -float(origin.y), float(client.right), float(client.bottom)));
+}
+
+RECT SettingsWindow::scrollThumb() const {
+    RECT track{};
+    GetClientRect(viewport, &track);
+    int maxScroll = pageHeight - contentHeight;
+    int usable = track.bottom - px(12);
+    if (maxScroll <= 0 || usable < px(36)) return {};
+    int length = std::clamp(MulDiv(usable, contentHeight, pageHeight), px(28), usable - 1);
+    int top = px(6) + MulDiv(usable - length, scroll, maxScroll);
+    return {track.right - px(9), top, track.right - px(4), top + length};
+}
+
 void SettingsWindow::scrollTo(int value) {
-    SCROLLINFO si{sizeof(si), SIF_RANGE | SIF_PAGE};
-    GetScrollInfo(viewport, SB_VERT, &si);
-    value = std::clamp(value, 0, std::max(0, si.nMax - int(si.nPage) + 1));
+    value = std::clamp(value, 0, std::max(0, pageHeight - contentHeight));
     if (value == scroll) return;
     scroll = value;
-    SCROLLINFO position{sizeof(position), SIF_POS}; position.nPos = scroll;
-    SetScrollInfo(viewport, SB_VERT, &position, TRUE);
     // One coherent canvas moves inside a stationary composited viewport.
     // Native controls keep their own coordinates and full unclipped buffers.
     SetWindowPos(content, nullptr, 0, -px(scroll), 0, 0,
@@ -461,7 +498,7 @@ void SettingsWindow::selectPage(int index) {
     scroll = 0;
     wheelRemainder = 0;
     closePalette();
-    for (HWND combo : {styles, display, interval, deepSeekInterval}) SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
+    for (HWND combo : {styles, display, interval, deepSeekInterval, GetDlgItem(content, AppearanceMode)}) SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
     layout();
 }
 void SettingsWindow::reveal(HMONITOR requested) {
@@ -488,11 +525,13 @@ void SettingsWindow::reveal(HMONITOR requested) {
     int height = std::min(px(768), int(monitor.work.bottom - monitor.work.top) - px(24));
     int x = monitor.work.left + (monitor.work.right - monitor.work.left - width) / 2,
         y = monitor.work.top + (monitor.work.bottom - monitor.work.top - height) / 2;
+    if (!IsWindowVisible(window) || !settingsFrost)
+        settingsFrost = captureFrost({x, y, x + width, y + height}, app->testing || app->preview);
     // Explicit visibility avoids inheriting SW_HIDE from a background listener's
     // STARTUPINFO on the first ShowWindow call.
     SetWindowPos(window, HWND_TOP, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     layout();
-    BOOL dark = TRUE;
+    BOOL dark = draft.darkAppearance;
     DwmSetWindowAttribute(window, 20, &dark, sizeof(dark));
     SetForegroundWindow(window);
 }
@@ -505,17 +544,17 @@ void SettingsWindow::draw(HDC dc, bool inner) {
     {
         Graphics g(image.bitmap.get());
         g.SetSmoothingMode(SmoothingModeAntiAlias);
-        auto base = inner ? vibrancy::mid : vibrancy::surface;
-        auto ink = vibrancy::ink, muted = vibrancy::secondary, side = vibrancy::deep;
-        g.Clear(base);
+        const auto &colors = glassPalette(draft.darkAppearance);
+        auto ink = colors.ink, muted = colors.secondary;
+        paintGlass(g, inner ? content : window, image.width, image.height);
         float d = dpi / 96.f;
         g.ScaleTransform(d, d);
         if (!inner) {
-            SolidBrush b(side);
+            SolidBrush b(draft.darkAppearance ? Color(120, 18, 19, 23) : Color(125, 255, 255, 255));
             g.FillRectangle(&b, RectF(0, 0, 196, float(rect.bottom / d)));
-            drawHeading(g, L"设置", RectF(26, 22, 150, 44), 29);
+            drawHeading(g, L"设置", RectF(26, 22, 150, 44), 29, ink);
             drawUiText(g, L"Codex Quota Bar\n" + std::wstring(Version), RectF(24, rect.bottom / d - 80, 155, 58), 14, muted);
-            Pen line(vibrancy::border, 0);
+            Pen line(colors.border, 0);
             g.DrawLine(&line, 196.f, 0.f, 196.f, float(rect.bottom / d));
             g.DrawLine(&line, 218.f, rect.bottom / d - 78, rect.right / d - 28, rect.bottom / d - 78);
         } else {
@@ -524,12 +563,12 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                                           L"管理显示屏幕，以及应用的启动与退出。",
                                           L"配置额度读取来源，或手动刷新额度。",
                                           L"可随 Harness 启停，也可独立显示余额。"};
-            drawHeading(g, headings[page], RectF(0, 0, float(contentWidth), 40), 27);
+            drawHeading(g, headings[page], RectF(0, 0, float(contentWidth), 40), 27, ink);
             drawUiText(g, subtitles[page], RectF(0, 43, float(contentWidth), 26), 14, muted);
             auto row = [&](float y, const wchar_t *title, const wchar_t *description, float reserve = 240) {
                 drawUiText(g, title, RectF(0, y, float(contentWidth) - reserve, 25), 16, ink);
                 drawUiText(g, description, RectF(0, y + 25, float(contentWidth) - reserve, 25), 14, muted);
-                Pen p(vibrancy::border, 0);
+                Pen p(colors.border, 0);
                 g.DrawLine(&p, 0.f, y + 59, float(contentWidth) - 14, y + 59);
             };
             if (page == 0) {
@@ -544,7 +583,8 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 row(340, L"Codex 图标不透明度", L"调节额度图形和数字，最低 10%。");
                 drawUiText(g, std::to_wstring(draft.iconOpacity) + L"%",
                            RectF(contentWidth - 70.f, 343, 56, 32), 13, muted, false, true);
-                drawPanel(g, RectF(.5f, 418, contentWidth - 15.f, 62), 10, vibrancy::surface);
+                auto previewBackdrop = draft.darkAppearance ? colors.deep : Color(255, 230, 235, 243);
+                drawPanel(g, RectF(.5f, 418, contentWidth - 15.f, 62), 12, previewBackdrop, colors.border);
                 Quotas q;
                 q.hour = WindowQuota{68, 0};
                 q.week = WindowQuota{27, 0};
@@ -560,8 +600,8 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 else {
                     RectF bounds((contentWidth - 14 - layout.width) / 2.f, 418 + (62 - layout.height) / 2.f,
                                  float(layout.width), float(layout.height));
-                    drawWidgetBackground(g, bounds, preview, false, false);
-                    drawWidget(g, bounds, q, preview, false, false, progress, progress);
+                    drawWidgetBackground(g, bounds, preview, !draft.darkAppearance, false);
+                    drawWidget(g, bounds, q, preview, false, !draft.darkAppearance, progress, progress);
                 }
                 drawUiText(g, L"预览使用模拟数据", RectF(0, 482, float(contentWidth), 24), 12, muted);
                 row(512, L"仪表中间显示 H 和 W", L"H 表示 5 小时额度，W 表示周额度。", 110);
@@ -607,6 +647,7 @@ void SettingsWindow::draw(HDC dc, bool inner) {
 }
 void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
     int id = int(item.CtlID);
+    const auto &colors = glassPalette(draft.darkAppearance);
     Surface image(item.rcItem.right - item.rcItem.left, item.rcItem.bottom - item.rcItem.top);
     {
         Graphics g(image.bitmap.get());
@@ -615,8 +656,11 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
         bool pressed = (item.itemState & ODS_SELECTED) != 0;
         bool hot = (item.itemState & ODS_HOTLIGHT) != 0 || GetPropW(item.hwndItem, L"VibrancyHover");
         bool nav = id >= NavAppearance && id <= NavDeepSeek;
-        auto base = nav ? vibrancy::deep : (GetParent(item.hwndItem) == window ? vibrancy::surface : vibrancy::mid);
-        g.Clear(base);
+        paintGlass(g, item.hwndItem, image.width, image.height);
+        if (nav) {
+            SolidBrush sidebar(draft.darkAppearance ? Color(120, 18, 19, 23) : Color(125, 255, 255, 255));
+            g.FillRectangle(&sidebar, 0, 0, image.width, image.height);
+        }
         float d = dpi / 96.f;
         RectF area(1, 1, image.width - 2.f, image.height - 2.f);
         if (isToggle(id)) {
@@ -631,22 +675,20 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
                            : id == DeepSeekAlwaysShow ? draft.deepSeekAlwaysShow
                            : id == AvoidIcons ? draft.avoidIcons
                                              : startup;
-            drawPanel(g, area, 7 * d, enabled ? vibrancy::surface : vibrancy::deep);
+            drawPanel(g, area, area.Height / 2, enabled && !disabled ? colors.focus : colors.thumb, colors.border);
             float size = area.Height - 8 * d;
             float left = enabled ? area.GetRight() - size - 4 * d : area.X + 4 * d;
-            fillRound(g, RectF(left, area.Y + 4 * d, size, size), 4 * d,
-                      disabled ? vibrancy::muted : enabled ? vibrancy::ink : vibrancy::secondary);
+            fillRound(g, RectF(left, area.Y + 4 * d, size, size), size / 2, Color(255, 255, 255, 255));
         } else {
-            auto fill = nav ? base : id == Save ? vibrancy::surface : vibrancy::deep;
-            fillRound(g, area, 8 * d, fill);
+            if (!nav) fillRound(g, area, 8 * d, id == Save ? colors.surface : colors.deep);
             if (pressed || (nav && id - NavAppearance == page))
-                fillRound(g, area, 8 * d, vibrancy::active);
+                fillRound(g, area, 8 * d, colors.active);
             else if (hot && !disabled)
-                fillRound(g, area, 8 * d, vibrancy::hover);
+                fillRound(g, area, 8 * d, colors.hover);
             if (!nav) {
                 GraphicsPath p;
                 roundPath(p, area, 8 * d);
-                Pen border(vibrancy::border, 1);
+                Pen border(colors.border, 1);
                 g.DrawPath(&border, &p);
             }
             RectF textArea = area;
@@ -654,18 +696,18 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
                 textArea.X += 12 * d;
                 textArea.Width -= 18 * d;
             } else if (id == HourColor || id == WeekColor) {
-                auto color = parseColor(id == HourColor ? draft.hourColor : draft.weekColor, vibrancy::ink);
+                auto color = parseColor(id == HourColor ? draft.hourColor : draft.weekColor, colors.ink);
                 fillRound(g, RectF(9 * d, (image.height - 10 * d) / 2.f, 10 * d, 10 * d), 2 * d, color);
                 textArea.X += 13 * d;
                 textArea.Width -= 13 * d;
             }
             drawUiText(g, controlText(item.hwndItem), textArea, 15 * d,
-                       disabled ? vibrancy::muted : vibrancy::ink, id == Save, !nav);
+                       disabled ? colors.muted : colors.ink, id == Save, !nav);
         }
         if (item.itemState & ODS_FOCUS) {
             GraphicsPath p;
             roundPath(p, RectF(2, 2, image.width - 4.f, image.height - 4.f), 6 * d);
-            Pen focus(vibrancy::focus, 1);
+            Pen focus(colors.focus, 1);
             g.DrawPath(&focus, &p);
         }
     }
@@ -674,7 +716,7 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
 void SettingsWindow::command(int id, int notice) {
     if (loading)
         return;
-    if (id != Style && notice != BN_CLICKED)
+    if (id != Style && id != AppearanceMode && notice != BN_CLICKED)
         return;
     if (id >= NavAppearance && id <= NavDeepSeek) {
         selectPage(id - NavAppearance);
@@ -714,6 +756,12 @@ void SettingsWindow::command(int id, int notice) {
         if (save())
             SendMessageW(window, WM_CLOSE, 0, 0);
         break;
+    case AppearanceMode:
+        if (notice == CBN_SELCHANGE) {
+            draft.darkAppearance = SendDlgItemMessageW(content, AppearanceMode, CB_GETCURSEL, 0, 0) == 1;
+            applyAppearance();
+        }
+        return;
     case Style:
         if (notice == CBN_SELCHANGE) {
             int n = int(SendMessageW(styles, CB_GETCURSEL, 0, 0));
@@ -1057,8 +1105,9 @@ LRESULT CALLBACK SettingsWindow::paletteProcedure(HWND w, UINT msg, WPARAM wp, L
         Surface image(r.right, r.bottom);
         {
             Graphics g(image.bitmap.get());
-            auto ink = vibrancy::ink, header = vibrancy::surface;
-            g.Clear(vibrancy::mid);
+            const auto &colors = glassPalette(self->draft.darkAppearance);
+            auto ink = colors.ink, header = colors.surface;
+            g.Clear(colors.mid);
             g.ScaleTransform(self->dpi / 96.f, self->dpi / 96.f);
             g.SetSmoothingMode(SmoothingModeAntiAlias);
             fillRound(g, RectF(8, 8, 278, 30), 5, header);
@@ -1077,7 +1126,7 @@ LRESULT CALLBACK SettingsWindow::paletteProcedure(HWND w, UINT msg, WPARAM wp, L
                 SolidBrush b(c);
                 g.FillRectangle(&b, RectF(float(x), float(y), 21, 21));
                 Pen pen(hexColor(c) == hexColor(self->selectedColor) || selection == i
-                            ? vibrancy::focus : vibrancy::border, 0);
+                            ? colors.focus : colors.border, 0);
                 g.DrawRectangle(&pen, RectF(float(x), float(y), 21, 21));
             }
             drawUiText(g, L"其他颜色…", RectF(16, 278, 264, 28), 13, ink);
@@ -1097,12 +1146,49 @@ LRESULT CALLBACK SettingsWindow::viewportProcedure(HWND w, UINT msg, WPARAM wp, 
         if ((msg == WM_MOUSEWHEEL || msg == WM_VSCROLL) && self->content)
             return SendMessageW(self->content, msg, wp, lp);
         if (msg == WM_ERASEBKGND) return 1;
-        if (msg == WM_PAINT) {
+        if (msg == WM_PAINT || msg == WM_PRINTCLIENT) {
             PAINTSTRUCT paint{};
-            HDC dc = BeginPaint(w, &paint);
-            if (self->background) FillRect(dc, &paint.rcPaint, self->background);
-            EndPaint(w, &paint);
+            HDC dc = msg == WM_PAINT ? BeginPaint(w, &paint) : reinterpret_cast<HDC>(wp);
+            RECT client{};
+            GetClientRect(w, &client);
+            if (client.right && client.bottom) {
+                Surface image(client.right, client.bottom);
+                {
+                    Graphics g(image.bitmap.get());
+                    self->paintGlass(g, w, image.width, image.height);
+                    RECT thumb = self->scrollThumb();
+                    if (thumb.bottom > thumb.top) {
+                        g.SetSmoothingMode(SmoothingModeAntiAlias);
+                        RectF bar(float(thumb.left), float(thumb.top),
+                                  float(thumb.right - thumb.left), float(thumb.bottom - thumb.top));
+                        fillRound(g, bar, bar.Width / 2, glassPalette(self->draft.darkAppearance).thumb);
+                    }
+                }
+                BitBlt(dc, 0, 0, image.width, image.height, image.dc, 0, 0, SRCCOPY);
+            }
+            if (msg == WM_PAINT) EndPaint(w, &paint);
             return 0;
+        }
+        if (msg == WM_CAPTURECHANGED) self->thumbGrab = -1;
+        if (msg == WM_LBUTTONUP && self->thumbGrab >= 0) {
+            ReleaseCapture();
+            return 0;
+        }
+        if (msg == WM_LBUTTONDOWN || (msg == WM_MOUSEMOVE && self->thumbGrab >= 0)) {
+            RECT thumb = self->scrollThumb(), client{};
+            GetClientRect(w, &client);
+            int y = GET_Y_LPARAM(lp), length = thumb.bottom - thumb.top;
+            if (length > 0 && (msg == WM_MOUSEMOVE || GET_X_LPARAM(lp) >= client.right - self->px(14))) {
+                if (msg == WM_LBUTTONDOWN) {
+                    self->thumbGrab = y >= thumb.top && y < thumb.bottom ? y - thumb.top : length / 2;
+                    SetCapture(w);
+                }
+                int travel = client.bottom - self->px(12) - length;
+                if (travel > 0)
+                    self->scrollTo(MulDiv(y - self->px(6) - self->thumbGrab,
+                                          self->pageHeight - self->contentHeight, travel));
+                return 0;
+            }
         }
     }
     return DefWindowProcW(w, msg, wp, lp);
@@ -1150,8 +1236,6 @@ LRESULT CALLBACK SettingsWindow::contentProcedure(HWND w, UINT msg, WPARAM wp, L
         }
         return 0;
     case WM_VSCROLL: {
-        SCROLLINFO si{sizeof(si), SIF_ALL};
-        GetScrollInfo(self->viewport, SB_VERT, &si);
         int value = self->scroll;
         switch (LOWORD(wp)) {
         case SB_LINEUP:
@@ -1161,13 +1245,13 @@ LRESULT CALLBACK SettingsWindow::contentProcedure(HWND w, UINT msg, WPARAM wp, L
             value += 24;
             break;
         case SB_PAGEUP:
-            value -= int(si.nPage);
+            value -= self->contentHeight;
             break;
         case SB_PAGEDOWN:
-            value += int(si.nPage);
+            value += self->contentHeight;
             break;
         case SB_THUMBTRACK:
-            value = si.nTrackPos;
+            value = HIWORD(wp);
             break;
         }
         self->scrollTo(value);
@@ -1184,8 +1268,9 @@ LRESULT CALLBACK SettingsWindow::contentProcedure(HWND w, UINT msg, WPARAM wp, L
     case WM_CTLCOLORSTATIC:
     case WM_CTLCOLORLISTBOX: {
         HDC dc = reinterpret_cast<HDC>(wp);
-        SetTextColor(dc, RGB(244, 244, 245));
-        SetBkColor(dc, vibrancy::inputBrush);
+        const auto &colors = glassPalette(self->draft.darkAppearance);
+        SetTextColor(dc, RGB(colors.ink.GetR(), colors.ink.GetG(), colors.ink.GetB()));
+        SetBkColor(dc, colors.inputBrush());
         return reinterpret_cast<LRESULT>(self->background);
     }
     }
@@ -1265,7 +1350,7 @@ LRESULT CALLBACK SettingsWindow::procedure(HWND w, UINT msg, WPARAM wp, LPARAM l
         return 0;
     case WM_SETTINGCHANGE:
         {
-            BOOL dark = TRUE;
+            BOOL dark = self->draft.darkAppearance;
             DwmSetWindowAttribute(w, 20, &dark, sizeof(dark));
         }
         InvalidateRect(w, nullptr, TRUE);

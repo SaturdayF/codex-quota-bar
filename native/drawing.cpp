@@ -52,11 +52,95 @@ void fillRound(Graphics &g, RectF r, float radius, Color c) {
     SolidBrush brush(c);
     g.FillPath(&brush, &p);
 }
-void drawPanel(Graphics &g, RectF bounds, float radius, Color fill) {
+const GlassPalette &glassPalette(bool dark) {
+    static const GlassPalette light{
+        Color(255, 250, 251, 253), Color(255, 250, 251, 253), Color(255, 255, 255, 255),
+        Color(255, 28, 30, 36), Color(255, 76, 82, 95), Color(255, 104, 110, 123),
+        Color(30, 41, 53, 76), Color(12, 35, 55, 89), Color(23, 35, 55, 89),
+        Color(255, 41, 99, 196), Color(255, 153, 71, 20), Color(255, 204, 208, 215)};
+    static const GlassPalette night{vibrancy::deep, vibrancy::mid, vibrancy::surface,
+        vibrancy::ink, vibrancy::secondary, vibrancy::muted, vibrancy::border,
+        vibrancy::hover, vibrancy::active, vibrancy::focus, vibrancy::warning, Color(255, 108, 110, 117)};
+    return dark ? night : light;
+}
+
+std::unique_ptr<Surface> captureFrost(RECT bounds, bool simulated) {
+    int width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
+    if (width <= 0 || height <= 0) return {};
+    // Blur a small in-memory sample once. Never sample the already visible panel.
+    auto frost = std::make_unique<Surface>(std::max(1, width / 10), std::max(1, height / 10));
+    if (simulated) {
+        Graphics g(frost->bitmap.get());
+        g.Clear(Color(255, 194, 213, 232));
+        SolidBrush warm(Color(255, 244, 205, 185)), cool(Color(255, 171, 194, 231));
+        g.FillEllipse(&warm, 0, 0, frost->width / 2, frost->height);
+        g.FillEllipse(&cool, frost->width / 2, frost->height / 3, frost->width / 2, frost->height);
+    } else {
+        HDC screen = GetDC(nullptr);
+        if (!screen) return {};
+        SetStretchBltMode(frost->dc, HALFTONE);
+        SetBrushOrgEx(frost->dc, 0, 0, nullptr);
+        BOOL copied = StretchBlt(frost->dc, 0, 0, frost->width, frost->height, screen,
+                                bounds.left, bounds.top, width, height, SRCCOPY);
+        ReleaseDC(nullptr, screen);
+        if (!copied) return {};
+        GdiFlush();
+    }
+    size_t bytes = size_t(frost->width) * frost->height * 4;
+    std::vector<BYTE> pass(frost->pixels, frost->pixels + bytes);
+    for (bool horizontal : {true, false}) {
+        for (int y = 0; y < frost->height; ++y)
+            for (int x = 0; x < frost->width; ++x) {
+                int sum[3]{};
+                for (int offset = -4; offset <= 4; ++offset) {
+                    int sx = std::clamp(x + (horizontal ? offset : 0), 0, frost->width - 1);
+                    int sy = std::clamp(y + (horizontal ? 0 : offset), 0, frost->height - 1);
+                    auto pixel = &pass[(sy * frost->width + sx) * 4];
+                    for (int c = 0; c < 3; ++c) sum[c] += pixel[c];
+                }
+                auto dest = &frost->pixels[(y * frost->width + x) * 4];
+                for (int c = 0; c < 3; ++c) dest[c] = BYTE(sum[c] / 9);
+                dest[3] = 255;
+            }
+        if (horizontal) std::copy_n(frost->pixels, bytes, pass.data());
+    }
+    return frost;
+}
+
+void paintFrost(Graphics &g, RectF bounds, float radius, const GlassPalette &colors,
+                const Surface *frost, RectF sourcePlacement) {
+    if (radius > 0) {
+        GraphicsPath path;
+        roundPath(path, bounds, radius);
+        auto saved = g.Save();
+        g.SetClip(&path, CombineModeIntersect);
+        paintFrost(g, bounds, 0, colors, frost, sourcePlacement);
+        g.Restore(saved);
+        Pen edge(colors.border, 1);
+        g.DrawPath(&edge, &path);
+        return;
+    }
+    // Align the rectangular base and tint to device pixels. Each child paints
+    // a slice of the same backdrop, so antialiased rectangle edges would seam.
+    auto saved = g.Save();
+    g.SetSmoothingMode(SmoothingModeNone);
+    g.SetPixelOffsetMode(PixelOffsetModeHalf);
+    SolidBrush base(colors.mid);
+    g.FillRectangle(&base, bounds);
+    if (frost) {
+        g.SetInterpolationMode(InterpolationModeHighQualityBilinear);
+        g.DrawImage(frost->bitmap.get(), sourcePlacement);
+        SolidBrush tint(Color(218, colors.mid.GetR(), colors.mid.GetG(), colors.mid.GetB()));
+        g.FillRectangle(&tint, bounds);
+    }
+    g.Restore(saved);
+}
+
+void drawPanel(Graphics &g, RectF bounds, float radius, Color fill, Color border) {
     GraphicsPath path;
     roundPath(path, bounds, radius);
     SolidBrush background(fill);
-    Pen edge(vibrancy::border, 0); // Hairline in device pixels, independent of DPI.
+    Pen edge(border, 0); // Hairline in device pixels, independent of DPI.
     g.FillPath(&background, &path);
     g.DrawPath(&edge, &path);
 }
@@ -117,8 +201,8 @@ static void textImpl(Graphics &g, const std::wstring &text, RectF area, float si
         size -= .5f;
     }
 }
-void drawHeading(Graphics &g, const std::wstring &text, RectF bounds, float size) {
-    textImpl(g, text, bounds, size, vibrancy::ink, true, false, false, true, true);
+void drawHeading(Graphics &g, const std::wstring &text, RectF bounds, float size, Color ink) {
+    textImpl(g, text, bounds, size, ink, true, false, false, true, true);
 }
 void drawText(Graphics &g, const std::wstring &text, RectF area, float size, Color c, bool bold,
               bool centered, bool glyph) {
@@ -333,7 +417,7 @@ void drawWidgetBackground(Graphics &g, RectF bounds, const Settings &settings, b
     if (hover) alpha = std::max(alpha, light ? 112 : 75);
     if (!alpha) return;
     bounds.Inflate(-.5f, -.5f);
-    Color tint = light ? vibrancy::surface : vibrancy::mid;
+    Color tint = glassPalette(settings.darkAppearance).surface;
     fillRound(g, bounds, std::min(8.f, bounds.Height / 6),
               Color(BYTE(alpha), tint.GetR(), tint.GetG(), tint.GetB()));
 }
@@ -344,29 +428,30 @@ void paintWidget(Surface &image, const Layout &layout, const State &state, const
     g.SetSmoothingMode(SmoothingModeAntiAlias);
     bool light = lightTheme();
     drawWidgetBackground(g, RectF(0, 0, float(image.width), float(image.height)), s, light, hover);
-    drawWidget(g, layout.drawing, state.q, s, state.stale(), light && s.backgroundOpacity < 52, hp, wp);
+    drawWidget(g, layout.drawing, state.q, s, state.stale(), s.backgroundOpacity >= 52 ? !s.darkAppearance : light, hp, wp);
 }
 void renderPreviews(const fs::path &dir) {
     fs::create_directories(dir);
     Surface image(1080, 620);
     {
         Graphics g(image.bitmap.get());
-        g.Clear(vibrancy::mid);
-        drawHeading(g, L"原生版 · 七种任务栏样式", RectF(36, 18, 1000, 50), 25);
+        const auto &colors = glassPalette(false);
+        g.Clear(colors.mid);
+        drawHeading(g, L"原生版 · 七种任务栏样式", RectF(36, 18, 1000, 50), 25, colors.ink);
         drawText(g, L"模拟额度：5 小时 68%，每周 27%", RectF(36, 68, 1000, 30), 14,
-                 vibrancy::secondary);
+                 colors.secondary);
         for (int i = 0; i < 7; ++i) {
             int y = 120 + i * 65;
-            drawText(g, StyleNames[i], RectF(36, float(y), 240, 46), 16, vibrancy::ink);
+            drawText(g, StyleNames[i], RectF(36, float(y), 240, 46), 16, colors.ink);
             Settings s;
             s.style = StyleIds[i];
             Quotas q;
             q.hour = WindowQuota{68, 0};
             q.week = WindowQuota{27, 0};
             auto l = widgetLayout(s, s.visibility(q), 144, 48);
-            drawWidget(g, RectF(310, float(y + 3), float(l.width), float(l.height)), q, s, false, false);
+            drawWidget(g, RectF(310, float(y + 3), float(l.width), float(l.height)), q, s, false, true);
             s.preferences[i].percent = false;
-            drawWidget(g, RectF(700, float(y + 3), float(l.width), float(l.height)), q, s, false, false);
+            drawWidget(g, RectF(700, float(y + 3), float(l.width), float(l.height)), q, s, false, true);
         }
     }
     image.save(dir / L"native-styles.png");

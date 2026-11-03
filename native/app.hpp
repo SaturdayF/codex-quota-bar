@@ -17,6 +17,7 @@ struct Overlay {
     Settings settings;
     WidgetKind kind = WidgetKind::Codex;
     int detailPage = 0;
+    std::unique_ptr<Surface> detailFrost;
     bool hover = false, dragging = false;
     POINT dragStart{}, origin{};
     std::optional<int> dragPeerOrigin;
@@ -108,6 +109,8 @@ struct SettingsWindow {
     Monitor monitor;
     int dpi = 96, page = 0, scroll = 0;
     int wheelRemainder = 0;
+    int pageHeight = 0, thumbGrab = -1;
+    std::unique_ptr<Surface> settingsFrost;
     bool startup = false, closing = false;
     bool loading = false;
     bool layingOut = false;
@@ -130,6 +133,9 @@ struct SettingsWindow {
     void createControls();
     void layout();
     void scrollTo(int value);
+    RECT scrollThumb() const;
+    void applyAppearance();
+    void paintGlass(Graphics &g, HWND target, int width, int height) const;
     void reveal(HMONITOR monitor);
     void selectPage(int index);
     void command(int id, int notification);
