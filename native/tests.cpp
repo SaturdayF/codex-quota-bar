@@ -1,4 +1,5 @@
 #include "app.hpp"
+#include "uninstall.hpp"
 namespace quota {
 int selfTests(const fs::path &output) {
     std::ofstream log(output);
@@ -278,11 +279,16 @@ int selfTests(const fs::path &output) {
     WritePrivateProfileStringW(L"Installation", L"Product", L"CodexQuotaBar", marker.c_str());
     WritePrivateProfileStringW(L"Installation", L"Version", Version, marker.c_str());
     check(nativeInstalled(fixture), "native uninstall marker recognizes current version");
+    WritePrivateProfileStringW(L"Installation", L"Version", L"0.2.2", marker.c_str());
+    check(nativeInstalled(fixture), "native uninstall recognizes older installer after executable upgrade");
+    WritePrivateProfileStringW(L"Installation", L"Version", L"9.0.0", marker.c_str());
+    check(nativeInstalled(fixture), "native uninstall recognizes another installer version");
     WritePrivateProfileStringW(L"Installation", L"Product", L"OtherProduct", marker.c_str());
     check(!nativeInstalled(fixture), "native uninstall rejects unrelated marker");
     fs::remove(marker);
     fs::remove(fixture / L"unins000.exe");
     fs::remove(fixture);
+    checks += uninstallTests(log);
     checks += deepSeekTests(log);
     log << checks << " native checks passed.\n";
     return 0;
@@ -514,6 +520,7 @@ int uiTests(const fs::path &dir) {
     settings.selectPage(1);
     settings.capture(dir / L"settings-general.png");
     settings.selectPage(2);
+    check(IsWindowEnabled(GetDlgItem(settings.content, 245)), "uninstall button enabled in portable settings");
     settings.capture(dir / L"settings-advanced.png");
     settings.selectPage(0);
     settings.capture(dir / L"settings-appearance.png");

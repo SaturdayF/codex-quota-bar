@@ -192,8 +192,7 @@ void SettingsWindow::createControls() {
     }
     button(L"立即刷新", Refresh, 2);
     button(L"退出额度工具", Exit, 2);
-    auto un = button(L"卸载程序", Uninstall, 2);
-    EnableWindow(un, nativeInstalled(executable().parent_path()));
+    button(L"卸载程序", Uninstall, 2);
     styleChanged();
 }
 void SettingsWindow::styleChanged() {
@@ -440,9 +439,7 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 row(200, L"自动刷新间隔", L"保存后立即生效。");
                 row(266, L"额度读取", L"读取失败时自动退避重试。");
                 row(332, L"退出", L"停止显示与后台监听。");
-                row(398, L"卸载",
-                    nativeInstalled(executable().parent_path()) ? L"删除本工具及设置，卸载前会再次确认。"
-                                                                : L"便携版退出后删除解压目录即可。");
+                row(398, L"卸载", L"删除本工具及设置，保留目录中的其他文件。");
                 drawUiText(g, L"通过本机 Codex 读取，不保存登录信息。", RectF(0, 483, float(contentWidth), 32),
                          14, muted);
             } else {
@@ -663,15 +660,15 @@ void SettingsWindow::command(int id, int notice) {
         app->stop();
         break;
     case Uninstall:
-        if (nativeInstalled(executable().parent_path()) &&
-            MessageBoxW(
+        if (MessageBoxW(
                 window,
                 L"卸载本工具并删除设置、启动项和快捷方式？\n不会删除 ChatGPT、Codex 或它们的登录数据。",
                 L"卸载 Codex Quota Bar", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES) {
             if (launchUninstaller(window))
                 app->stop();
             else
-                MessageBoxW(window, L"无法启动卸载程序。", L"Codex Quota Bar", MB_OK | MB_ICONERROR);
+                MessageBoxW(window, L"无法启动卸载程序，请检查目录权限或系统 PowerShell 是否可用。",
+                            L"Codex Quota Bar", MB_OK | MB_ICONERROR);
         }
         break;
     }

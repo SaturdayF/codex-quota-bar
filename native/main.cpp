@@ -1,4 +1,5 @@
 #include "app.hpp"
+#include "uninstall.hpp"
 using namespace quota;
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     using DpiFn = BOOL(WINAPI *)(HANDLE);
@@ -31,7 +32,17 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     int result = 0;
     HANDLE singleton = nullptr;
     try {
-        if (has(L"--self-test"))
+        if (has(L"--uninstall-test-child"))
+            Sleep(100);
+        else if (has(L"--uninstall-plan")) {
+            auto plan = portableUninstallPlan(executable());
+            plan["userData"] = utf8(dataDirectory().wstring());
+            std::ofstream out(after(L"--output", L"uninstall-plan.json"));
+            out << plan.dump(2);
+        }
+        else if (has(L"--uninstall-user-data"))
+            result = removeUninstallUserData(has(L"-WhatIf")) ? 0 : 1;
+        else if (has(L"--self-test"))
             result = selfTests(after(L"--output", L"native-tests.txt"));
         else if (has(L"--ui-test"))
             result = uiTests(after(L"--output", L"native-ui-tests"));
@@ -116,7 +127,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                 file /= L"error.txt";
             std::ofstream out(file);
             out << "Error: " << e.what();
-        } else
+        } else if (!has(L"--uninstall-user-data"))
             MessageBoxW(nullptr, L"程序无法完成操作，请检查运行目录、Codex 路径和登录状态。",
                         L"Codex Quota Bar", MB_OK | MB_ICONERROR);
     }

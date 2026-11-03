@@ -12,7 +12,13 @@ if json.loads((payload / "version.json").read_text(encoding="utf-8-sig")).get("v
 release = ROOT / "artifacts/releases" / f"v{VERSION}"
 release.mkdir(parents=True, exist_ok=True)
 archive = release / f"CodexQuotaBar-v{VERSION}-Portable-win-x64.zip"
-allowed = {"CodexQuotaBar.exe", "version.json", "LICENSE", "LICENSE-json.txt", "README.md", "CHANGELOG.md"}
+allowed = {"CodexQuotaBar.exe", "version.json", "LICENSE", "LICENSE-json.txt", "README.md", "CHANGELOG.md", "uninstall-manifest.json"}
+manifest = json.loads((payload / "uninstall-manifest.json").read_text(encoding="utf-8-sig"))
+if manifest.get("product") != "CodexQuotaBar" or set(manifest.get("files", {})) != allowed - {"uninstall-manifest.json"}:
+    raise RuntimeError("Invalid uninstall manifest; rebuild the native payload")
+for name, digest in manifest["files"].items():
+    if hashlib.sha256((payload / name).read_bytes()).hexdigest() != digest:
+        raise RuntimeError(f"Uninstall manifest mismatch for {name}; rebuild the native payload")
 with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as output:
     for name in sorted(allowed):
         file = payload / name

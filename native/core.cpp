@@ -227,22 +227,6 @@ bool setStartup(bool enabled) {
     RegCloseKey(key);
     return status == ERROR_SUCCESS;
 }
-bool nativeInstalled(const fs::path &dir) {
-    wchar_t product[80]{}, version[80]{};
-    auto marker = dir / L"installer.ini";
-    GetPrivateProfileStringW(L"Installation", L"Product", L"", product, 80, marker.c_str());
-    GetPrivateProfileStringW(L"Installation", L"Version", L"", version, 80, marker.c_str());
-    return std::wstring(product) == L"CodexQuotaBar" && std::wstring(version) == Version &&
-           fs::is_regular_file(dir / L"unins000.exe");
-}
-bool launchUninstaller(HWND owner) {
-    auto dir = executable().parent_path();
-    if (!nativeInstalled(dir))
-        return false;
-    return reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open", (dir / L"unins000.exe").c_str(),
-                                                   L"/SILENT /NORESTART /RemoveSettings", dir.c_str(),
-                                                   SW_SHOWNORMAL)) > 32;
-}
 static std::string planKey(const std::string &plan) {
     auto p = plan;
     std::transform(p.begin(), p.end(), p.begin(), [](unsigned char c) { return char(std::tolower(c)); });
