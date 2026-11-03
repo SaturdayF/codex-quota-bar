@@ -52,12 +52,23 @@ void fillRound(Graphics &g, RectF r, float radius, Color c) {
     SolidBrush brush(c);
     g.FillPath(&brush, &p);
 }
+static bool usesCjkFont(const std::wstring &text) {
+    return std::any_of(text.begin(), text.end(), [](wchar_t c) { return c > 0x2fff; });
+}
+float uiTextWidth(Graphics &g, const std::wstring &text, float size, bool bold) {
+    Font font(usesCjkFont(text) ? L"Microsoft YaHei UI" : L"Segoe UI", size,
+              bold ? FontStyleBold : FontStyleRegular, UnitPixel);
+    RectF bounds;
+    g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
+    g.MeasureString(text.c_str(), -1, &font, PointF(0, 0), &bounds);
+    return bounds.Width;
+}
 static void textImpl(Graphics &g, const std::wstring &text, RectF area, float size, Color c, bool bold,
               bool centered, bool glyph, bool ui = false) {
     FontFamily family(L"Segoe UI");
     FontFamily chinese(L"Microsoft YaHei UI");
     FontFamily *f = &family;
-    if (std::any_of(text.begin(), text.end(), [](wchar_t x) { return x > 0x2fff; }))
+    if (usesCjkFont(text))
         f = &chinese;
     if (ui)
         g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
@@ -141,7 +152,7 @@ static void progressOutline(Graphics &g, GraphicsPath &path, Color track, Color 
         left -= segment;
     }
 }
-void drawWidget(Graphics &g, RectF b, const Quotas &q, const Settings &s, bool stale, bool light, double hp,
+static void drawWidgetInk(Graphics &g, RectF b, const Quotas &q, const Settings &s, bool stale, bool light, double hp,
                 double wp) {
     g.SetSmoothingMode(SmoothingModeAntiAlias);
     g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
@@ -225,6 +236,24 @@ void drawWidget(Graphics &g, RectF b, const Quotas &q, const Settings &s, bool s
                  stale || s.style == "plain" ? accent : ink, true, true, s.style == "outlined");
     }
 }
+void drawWidget(Graphics &g, RectF bounds, const Quotas &q, const Settings &s, bool stale, bool light,
+                double hp, double wp) {
+    if (s.iconOpacity == 100) {
+        drawWidgetInk(g, bounds, q, s, stale, light, hp, wp);
+        return;
+    }
+    Surface layer(int(std::ceil(bounds.Width)), int(std::ceil(bounds.Height)));
+    {
+        Graphics ink(layer.bitmap.get());
+        ink.Clear(Color(0, 0, 0, 0));
+        drawWidgetInk(ink, RectF(0, 0, bounds.Width, bounds.Height), q, s, stale, light, hp, wp);
+    }
+    ColorMatrix matrix{{{1, 0, 0, 0, 0}, {0, 1, 0, 0, 0}, {0, 0, 1, 0, 0},
+                        {0, 0, 0, s.iconOpacity / 100.f, 0}, {0, 0, 0, 0, 1}}};
+    ImageAttributes attributes;
+    attributes.SetColorMatrix(&matrix);
+    g.DrawImage(layer.bitmap.get(), bounds, 0, 0, bounds.Width, bounds.Height, UnitPixel, &attributes);
+}
 static RECT inkBounds(Surface &surface) {
     RECT bounds{surface.width, surface.height, -1, -1};
     for (int y = 0; y < surface.height; ++y)
@@ -254,6 +283,7 @@ Layout widgetLayout(const Settings &s, QuotaVisibility visible, int dpi, int ava
     RECT ink{};
     available = std::max(8, available);
     Settings measured = s;
+    measured.iconOpacity = 100;
     measured.showHour = visible.hour;
     measured.showWeek = visible.week;
     measured.preferences[measured.styleIndex()].animate = false;

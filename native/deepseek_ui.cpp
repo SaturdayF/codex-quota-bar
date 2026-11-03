@@ -1,8 +1,22 @@
 #include "app.hpp"
 namespace quota {
-Layout deepSeekLayout(const Settings &settings, int dpi, int available) {
+static std::pair<std::wstring, std::wstring> deepSeekLabels(const DeepSeekState &state) {
+    auto currency = state.currency();
+    std::optional<int64_t> balance;
+    for (auto &wallet : state.balances) if (wallet.currency == currency) balance = wallet.total;
+    std::string billing = state.costs.count(currency) ? currency : state.costs.empty() ? currency : state.costs.begin()->first;
+    return {L"余额 " + moneyLabel(balance, currency), L"今日 " + moneyLabel(state.todayCost(billing), billing)};
+}
+Layout deepSeekLayout(const DeepSeekState &state, const Settings &settings, int dpi, int available) {
     double scale = std::min(settings.scale * dpi / 96., std::max(8, available - 2) / 32.);
-    return {std::max(1, int(200 * scale)), std::max(1, int(32 * scale)), RectF()};
+    int height = std::max(1, int(32 * scale));
+    float d = height / 32.f;
+    Bitmap sample(1, 1);
+    Graphics graphics(&sample);
+    auto [balance, today] = deepSeekLabels(state);
+    float text = std::max(uiTextWidth(graphics, balance, 12 * d, true),
+                          uiTextWidth(graphics, today, 12 * d, false));
+    return {int(std::ceil(42 * d + text)), height, RectF()};
 }
 void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &settings, bool hover) {
     Graphics g(image.bitmap.get());
@@ -15,13 +29,10 @@ void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &s
     drawWidgetBackground(g, RectF(0, 0, float(image.width), float(image.height)), settings, light, hover);
     fillRound(g, RectF(5 * d, 5 * d, 24 * d, 22 * d), 5 * d, Color(255, 75, 106, 235));
     drawUiText(g, L"DSH", RectF(5 * d, 5 * d, 24 * d, 22 * d), 11 * d, Color(255, 255, 255, 255), true, true);
-    auto currency = state.currency();
-    std::optional<int64_t> balance;
-    for (auto &wallet : state.balances) if (wallet.currency == currency) balance = wallet.total;
-    std::string billing = state.costs.count(currency) ? currency : state.costs.empty() ? currency : state.costs.begin()->first;
-    drawUiText(g, L"余额 " + moneyLabel(balance, currency), RectF(37 * d, 0, image.width - 42 * d, 16 * d),
+    auto [balance, today] = deepSeekLabels(state);
+    drawUiText(g, balance, RectF(37 * d, 0, image.width - 42 * d, 16 * d),
                12 * d, state.balanceError.empty() ? ink : muted, true);
-    drawUiText(g, L"今日 " + moneyLabel(state.todayCost(billing), billing),
+    drawUiText(g, today,
                RectF(37 * d, 16 * d, image.width - 42 * d, 16 * d), 12 * d,
                state.costError.empty() ? ink : muted);
 }
@@ -106,7 +117,7 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
                  (data.costAt && today ? timeLabel(data.costAt, false) : L"尚无"), footer, 12, muted);
         std::wstring error = !data.balanceError.empty() ? data.balanceError : !data.costError.empty() ? data.costError : data.tokensError;
         if (!today && data.costAt) error = L"日期已切换，正在读取今日账单";
-        line(error.empty() ? L"平台账单可能延迟更新 · 右键打开 DeepSeekHarness 设置" : error,
+        line(error.empty() ? L"平台账单可能延迟更新 · 右键打开 DeepSeek 相关设置" : error,
              footer + 30, 12, error.empty() ? muted : Color(255, 170, 110, 55));
         line(L"平台账户账单 · 不按模型单价估算费用", footer + 56, 12, muted);
     }
@@ -137,6 +148,7 @@ void Application::checkHarness(bool force) {
 void Application::applyDeepSeek(const DeepSeekUpdate &update) {
     if (update.generation != generation || update.session != harnessSession || !harnessActive) return;
     deepseek = update.state;
+    layoutWidgets();
     for (auto &overlay : overlays)
         if (overlay->kind == WidgetKind::DeepSeek) {
             overlay->render();

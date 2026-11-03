@@ -6,6 +6,8 @@
 
 **最新发布：[0.3.2](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.3.2)** · Windows 10/11 x64 · C++ 原生程序
 
+**稳定版：[0.3.1](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.3.1)**
+
 [安装包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.2/CodexQuotaBar-v0.3.2-Setup.exe) · [便携包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.2/CodexQuotaBar-v0.3.2-Portable-win-x64.zip) · [版本记录](CHANGELOG.md)
 
 功能和设置入口见 [使用指南](native/USER_GUIDE.md)。

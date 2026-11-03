@@ -70,7 +70,7 @@ void Overlay::measure(bool reset) {
     if (auto barWindow = host ? host : app->taskbarProbe(monitor.handle); barWindow && GetWindowRect(barWindow, &bounds))
         bar = bounds;
     int available = bar ? bar->bottom - bar->top : int(40 * monitor.dpi / 96.);
-    layout = kind == WidgetKind::DeepSeek ? deepSeekLayout(settings, monitor.dpi, available)
+    layout = kind == WidgetKind::DeepSeek ? deepSeekLayout(app->deepseek, settings, monitor.dpi, available)
                                          : widgetLayout(settings, settings.visibility(state.q), monitor.dpi, available);
     if (reset || !placed) {
         x = monitor.bounds.left + 16 * monitor.dpi / 96;
@@ -583,22 +583,17 @@ void Application::layoutWidgets(Overlay *moving, bool animate) {
                 RECT intersection{};
                 bool overlaps = IntersectRect(&intersection, &dragged, &original);
                 auto area = [](RECT r) { return int64_t(r.right - r.left) * (r.bottom - r.top); };
-                bool swap = overlaps && area(intersection) * 2 >= std::min(area(original), area(dragged));
+                bool swap = overlaps && area(intersection) * 2 >= area(original);
                 std::optional<int> peerSlot, dropSlot;
                 if (swap) {
                     bool peerGoesLeft = moving->origin.x < anchor;
-                    int left = std::min<int>(moving->origin.x, anchor);
-                    int right = std::max<int>(moving->origin.x, anchor);
-                    int firstWidth = peerGoesLeft ? peer->layout.width : moving->layout.width;
-                    right = std::max(right, left + firstWidth + gap);
-                    auto slots = arrangeTaskbarWidgets(lane, {moving->layout.width, peer->layout.width},
-                        peerGoesLeft ? std::vector<int>{right, left} : std::vector<int>{left, right},
-                        occupied, gap);
-                    if (slots[0] && slots[1] && (peerGoesLeft
-                            ? *slots[1] + peer->layout.width + gap <= *slots[0]
-                            : *slots[0] + moving->layout.width + gap <= *slots[1])) {
-                        dropSlot = slots[0];
-                        peerSlot = slots[1];
+                    int offset = (peerGoesLeft ? peer->layout.width : moving->layout.width) + gap;
+                    int desiredLeft = peerGoesLeft ? anchor - offset : anchor;
+                    // Reserve one contiguous slot so the two components stay adjacent.
+                    if (auto left = freeTaskbarX(lane, moving->layout.width + peer->layout.width + gap,
+                                                  desiredLeft, occupied, gap)) {
+                        dropSlot = *left + (peerGoesLeft ? offset : 0);
+                        peerSlot = *left + (peerGoesLeft ? 0 : offset);
                     }
                 }
                 peer->place(peerSlot.value_or(anchor), !ready, true);

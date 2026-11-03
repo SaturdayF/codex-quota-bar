@@ -473,7 +473,7 @@ int uiTests(const fs::path &dir) {
         settings.draw(image.dc, true);
         GdiFlush();
         std::vector<BYTE> pixels;
-        for (int y = settings.px(352); y < settings.px(414); ++y)
+        for (int y = settings.px(418); y < settings.px(480); ++y)
             pixels.insert(pixels.end(), image.pixels + y * image.width * 4,
                           image.pixels + (y + 1) * image.width * 4);
         return pixels;
@@ -527,6 +527,12 @@ int uiTests(const fs::path &dir) {
           Settings::fromJson(settings.draft.toJson()).backgroundOpacity == 65,
           "background slider updates preview and persists through settings JSON");
     check(transparentPreview != previewPixels(-1), "opacity changes rendered preview pixels");
+    auto fullIcon = previewPixels(-1);
+    SendMessageW(settings.iconOpacitySlider, TBM_SETPOS, TRUE, 0);
+    SendMessageW(settings.content, WM_HSCROLL, TB_THUMBPOSITION, reinterpret_cast<LPARAM>(settings.iconOpacitySlider));
+    check(settings.draft.iconOpacity == 10 && settings.draft.backgroundOpacity == 65 &&
+              Settings::fromJson(settings.draft.toJson()).iconOpacity == 10 && fullIcon != previewPixels(-1),
+          "Codex icon fades independently and clamps to 10 percent");
     settings.capture(dir / L"settings-background.png");
     settings.selectPage(1);
     settings.capture(dir / L"settings-general.png");
@@ -786,6 +792,8 @@ int uiTests(const fs::path &dir) {
         fixture.taskbarSpaces = {space};
         auto &codexWidget = *fixture.overlays[0];
         auto &deepseekWidget = *fixture.overlays[1];
+        fixture.deepseek.balances = {{"CNY", 98765432100000000LL}};
+        fixture.checkTaskbars();
         int gap = std::max(1, 8 * monitor.dpi / 96);
         int startX = bar.left + 16 * monitor.dpi / 96;
         codexWidget.x = startX;
@@ -797,7 +805,7 @@ int uiTests(const fs::path &dir) {
         codexWidget.beginDrag(grab);
         codexWidget.dragTo(drop);
         codexWidget.finishDrag(drop);
-        check(deepseekWidget.x + deepseekWidget.layout.width + gap <= codexWidget.x &&
+        check(deepseekWidget.x + deepseekWidget.layout.width + gap == codexWidget.x &&
                   !deepseekWidget.blocked && !codexWidget.blocked,
               "dropping Codex onto DeepSeek swaps unequal-width widgets without overlap");
         int swappedCodex = codexWidget.x, swappedDeepseek = deepseekWidget.x;
@@ -808,9 +816,19 @@ int uiTests(const fs::path &dir) {
         grab = {deepseekWidget.x + deepseekWidget.layout.width / 2, deepseekWidget.y + deepseekWidget.layout.height / 2};
         drop = {codexWidget.x + codexWidget.layout.width / 2, codexWidget.y + codexWidget.layout.height / 2};
         deepseekWidget.beginDrag(grab);
+        int sharedHeight = std::min(codexWidget.y + codexWidget.layout.height,
+                                    deepseekWidget.y + deepseekWidget.layout.height) -
+                           std::max(codexWidget.y, deepseekWidget.y);
+        int stationaryArea = codexWidget.layout.width * codexWidget.layout.height;
+        int belowHalf = (stationaryArea - 1) / (2 * sharedHeight);
+        if (belowHalf < deepseekWidget.layout.width) {
+            int overlapX = codexWidget.x + codexWidget.layout.width - belowHalf;
+            deepseekWidget.dragTo({grab.x + overlapX - deepseekWidget.origin.x, grab.y});
+            check(codexWidget.x == swappedCodex, "a narrower dragged widget still needs half the stationary area");
+        }
         deepseekWidget.dragTo(drop);
         deepseekWidget.finishDrag(drop);
-        check(codexWidget.x + codexWidget.layout.width + gap <= deepseekWidget.x,
+        check(codexWidget.x + codexWidget.layout.width + gap == deepseekWidget.x,
               "dropping DeepSeek onto Codex swaps the providers back");
         int beforeCancel = codexWidget.x;
         codexWidget.beginDrag({codexWidget.x, codexWidget.y});
@@ -834,18 +852,25 @@ int uiTests(const fs::path &dir) {
         codexWidget.finishDrag(drop);
         check(codexWidget.x == targetBefore - codexWidget.layout.width - gap && deepseekWidget.x == targetBefore,
               "shallow overlap snaps beside a stationary peer");
-        int halfLeft = deepseekWidget.x - codexWidget.layout.width + (codexWidget.layout.width + 1) / 2;
+        int commonHeight = std::min(codexWidget.y + codexWidget.layout.height,
+                                    deepseekWidget.y + deepseekWidget.layout.height) -
+                           std::max(codexWidget.y, deepseekWidget.y);
+        int halfWidth = (deepseekWidget.layout.width * deepseekWidget.layout.height + 2 * commonHeight - 1) /
+                        (2 * commonHeight);
+        int halfLeft = deepseekWidget.x - codexWidget.layout.width + halfWidth;
         grab.x = codexWidget.x + codexWidget.layout.width / 2;
         drop = {grab.x + halfLeft - codexWidget.x, grab.y};
         codexWidget.beginDrag(grab);
+        codexWidget.dragTo({drop.x - 1, drop.y});
+        check(deepseekWidget.x == targetBefore, "below half of the stationary area does not preview a swap");
         codexWidget.dragTo(drop);
         check(deepseekWidget.x < targetBefore, "crossing the threshold moves the peer before release");
         codexWidget.dragTo(grab);
         check(deepseekWidget.x == targetBefore, "leaving the threshold restores the peer");
         codexWidget.dragTo(drop);
         codexWidget.finishDrag(drop);
-        check(deepseekWidget.x + deepseekWidget.layout.width + gap <= codexWidget.x,
-              "overlap reaching half of the smaller widget commits the swap");
+        check(deepseekWidget.x + deepseekWidget.layout.width + gap == codexWidget.x,
+              "overlap reaching half of the stationary widget commits an adjacent swap");
         RECT nativeIcons{bar.left + (bar.right - bar.left) / 3, bar.top,
                          bar.left + 2 * (bar.right - bar.left) / 3, bar.bottom};
         space.occupied = {nativeIcons};

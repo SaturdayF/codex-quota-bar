@@ -33,6 +33,7 @@ enum {
     Uninstall,
     OpenFolder,
     BackgroundOpacity,
+    IconOpacity,
     DeepSeekEnabled = 260,
     DeepSeekToken = 262,
     DeepSeekInterval,
@@ -122,7 +123,7 @@ void SettingsWindow::createControls() {
     button(L"外观", NavAppearance, -1);
     button(L"常规", NavGeneral, -1);
     button(L"高级", NavAdvanced, -1);
-    button(L"DeepSeekHarness", NavDeepSeek, -1);
+    button(L"DeepSeek 相关设置", NavDeepSeek, -1);
     button(L"保存更改", Save, -1);
     button(L"取消", Cancel, -1);
     auto control = [&](const wchar_t *cls, const wchar_t *text, int id, int p, DWORD style) {
@@ -144,6 +145,9 @@ void SettingsWindow::createControls() {
     opacitySlider = control(TRACKBAR_CLASSW, L"底色不透明度", BackgroundOpacity, 0, TBS_NOTICKS | TBS_HORZ);
     SendMessageW(opacitySlider, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
     SendMessageW(opacitySlider, TBM_SETPOS, TRUE, draft.backgroundOpacity);
+    iconOpacitySlider = control(TRACKBAR_CLASSW, L"Codex 图标不透明度", IconOpacity, 0, TBS_NOTICKS | TBS_HORZ);
+    SendMessageW(iconOpacitySlider, TBM_SETRANGE, TRUE, MAKELPARAM(10, 100));
+    SendMessageW(iconOpacitySlider, TBM_SETPOS, TRUE, draft.iconOpacity);
     button(L"5 小时", HourColor, 0);
     button(L"每周", WeekColor, 0);
     button(L"默认颜色", ResetColors, 0);
@@ -239,7 +243,7 @@ void SettingsWindow::layout() {
     GetClientRect(viewport, &c);
     contentWidth = int(c.right * 96. / dpi);
     contentHeight = int(c.bottom * 96. / dpi);
-    int needed = page == 0 ? 770 : page == 1 ? 620 : page == 3 ? 608 : 606;
+    int needed = page == 0 ? 836 : page == 1 ? 620 : page == 3 ? 608 : 606;
     scroll = std::clamp(scroll, 0, std::max(0, needed - contentHeight));
     SCROLLINFO si{sizeof(si), SIF_RANGE | SIF_PAGE | SIF_POS,   0,
                   needed - 1, UINT(std::max(1, contentHeight)), scroll,
@@ -270,12 +274,13 @@ void SettingsWindow::layout() {
     place(HourColor, contentWidth - 292, 212, 80, 32);
     place(WeekColor, contentWidth - 205, 212, 76, 32);
     place(ResetColors, contentWidth - 122, 212, 108, 32);
-    place(Letters, contentWidth - 60, 452, 44, 26);
-    place(Remaining, contentWidth - 60, 518, 44, 26);
-    place(Percent, contentWidth - 60, 584, 44, 26);
-    place(Animate, contentWidth - 60, 650, 44, 26);
+    place(Letters, contentWidth - 60, 518, 44, 26);
+    place(Remaining, contentWidth - 60, 584, 44, 26);
+    place(Percent, contentWidth - 60, 650, 44, 26);
+    place(Animate, contentWidth - 60, 716, 44, 26);
     place(BackgroundOpacity, right - 24, 279, 180, 32);
-    place(Demo, 0, 716, 122, 34);
+    place(IconOpacity, right - 24, 345, 180, 32);
+    place(Demo, 0, 782, 122, 34);
     place(Display, right - 20, 89, 230, 300);
     place(Startup, contentWidth - 60, 155, 44, 26);
     place(ShowHour, contentWidth - 60, 221, 44, 26);
@@ -385,7 +390,7 @@ void SettingsWindow::draw(HDC dc, bool inner) {
             Pen line(light ? Color(255, 235, 235, 235) : Color(255, 55, 55, 55));
             g.DrawLine(&line, 218.f, rect.bottom / d - 78, rect.right / d - 28, rect.bottom / d - 78);
         } else {
-            const wchar_t *headings[] = {L"外观", L"常规", L"高级", L"DeepSeekHarness"};
+            const wchar_t *headings[] = {L"外观", L"常规", L"高级", L"DeepSeek 相关设置"};
             const wchar_t *subtitles[] = {L"调整任务栏组件的显示方式。",
                                           L"管理显示屏幕，以及应用的启动与退出。",
                                           L"配置额度读取来源，或手动刷新额度。",
@@ -407,7 +412,10 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 row(274, L"底色不透明度", L"适用于两个组件，0% 为透明。");
                 drawUiText(g, std::to_wstring(draft.backgroundOpacity) + L"%",
                            RectF(contentWidth - 70.f, 277, 56, 32), 13, muted, false, true);
-                fillRound(g, RectF(0, 352, contentWidth - 14.f, 62), 6, side);
+                row(340, L"Codex 图标不透明度", L"调节额度图形和数字，最低 10%。");
+                drawUiText(g, std::to_wstring(draft.iconOpacity) + L"%",
+                           RectF(contentWidth - 70.f, 343, 56, 32), 13, muted, false, true);
+                fillRound(g, RectF(0, 418, contentWidth - 14.f, 62), 6, side);
                 Quotas q;
                 q.hour = WindowQuota{68, 0};
                 q.week = WindowQuota{27, 0};
@@ -418,19 +426,19 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                     previewStart < 0 ? 1 : std::clamp((GetTickCount64() - previewStart) / 1200., 0., 1.);
                 double progress = 1 - std::pow(1 - t, 3);
                 if (!visible.count())
-                    drawUiText(g, L"已隐藏所有额度", RectF(0, 364, contentWidth - 14.f, 36),
+                    drawUiText(g, L"已隐藏所有额度", RectF(0, 430, contentWidth - 14.f, 36),
                                14, muted, false, true);
                 else {
-                    RectF bounds((contentWidth - 14 - layout.width) / 2.f, 352 + (62 - layout.height) / 2.f,
+                    RectF bounds((contentWidth - 14 - layout.width) / 2.f, 418 + (62 - layout.height) / 2.f,
                                  float(layout.width), float(layout.height));
                     drawWidgetBackground(g, bounds, preview, light, false);
                     drawWidget(g, bounds, q, preview, false, light, progress, progress);
                 }
-                drawUiText(g, L"预览使用模拟数据", RectF(0, 416, float(contentWidth), 24), 12, muted);
-                row(446, L"仪表中间显示 H 和 W", L"H 表示 5 小时额度，W 表示周额度。", 110);
-                row(512, L"在图标上展示余量", L"关闭后保持完整纯色图形；按样式分别保存。", 110);
-                row(578, L"显示百分号", L"关闭后只显示数字；按样式分别保存。", 110);
-                row(644, L"启动与额度重置动画", L"图形渐满；纯数字从 0 递增至真实值。", 110);
+                drawUiText(g, L"预览使用模拟数据", RectF(0, 482, float(contentWidth), 24), 12, muted);
+                row(512, L"仪表中间显示 H 和 W", L"H 表示 5 小时额度，W 表示周额度。", 110);
+                row(578, L"在图标上展示余量", L"关闭后保持完整纯色图形；按样式分别保存。", 110);
+                row(644, L"显示百分号", L"关闭后只显示数字；按样式分别保存。", 110);
+                row(710, L"启动与额度重置动画", L"图形渐满；纯数字从 0 递增至真实值。", 110);
             } else if (page == 1) {
                 row(82, L"显示屏幕", L"选择任务栏组件出现的位置。");
                 row(148, L"随 Windows 登录启动", L"启动轻量监听器，自动跟随应用。", 110);
@@ -1022,6 +1030,9 @@ LRESULT CALLBACK SettingsWindow::contentProcedure(HWND w, UINT msg, WPARAM wp, L
             InvalidateRect(w, nullptr, FALSE);
         } else if (reinterpret_cast<HWND>(lp) == self->opacitySlider) {
             self->draft.backgroundOpacity = int(SendMessageW(self->opacitySlider, TBM_GETPOS, 0, 0));
+            InvalidateRect(w, nullptr, FALSE);
+        } else if (reinterpret_cast<HWND>(lp) == self->iconOpacitySlider) {
+            self->draft.iconOpacity = int(SendMessageW(self->iconOpacitySlider, TBM_GETPOS, 0, 0));
             InvalidateRect(w, nullptr, FALSE);
         }
         return 0;

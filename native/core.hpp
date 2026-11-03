@@ -33,8 +33,8 @@ namespace quota {
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 using namespace Gdiplus;
-constexpr wchar_t Version[] = L"0.3.2";
-constexpr char VersionUtf8[] = "0.3.2";
+constexpr wchar_t Version[] = L"0.3.3";
+constexpr char VersionUtf8[] = "0.3.3";
 constexpr UINT StateMessage = WM_APP + 1, SettingsMessage = WM_APP + 2, RebuildMessage = WM_APP + 3;
 constexpr UINT DeepSeekMessage = WM_APP + 5;
 constexpr UINT TaskbarMessage = WM_APP + 6;
@@ -81,7 +81,7 @@ struct Settings {
     int deepSeekInterval = 60;
     std::optional<bool> showHour, showWeek; // Unset follows the account's default.
     double scale = 1;
-    int backgroundOpacity = 0;
+    int backgroundOpacity = 0, iconOpacity = 100;
     int interval = 30;
     std::vector<Preference> preferences = std::vector<Preference>(7);
     json extra = json::object();

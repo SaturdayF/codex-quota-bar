@@ -23,7 +23,7 @@
 
 可通过 `-Compiler`、`-Windres` 指定工具路径，或通过 `-OutputDirectory` 选择独立构建目录。运行中的 EXE 不能直接覆盖。
 
-程序使用 C++17、Win32 和 GDI+，静态链接 C++ 运行库。输出位于 `artifacts/native-win-x64`，发布包位于 `artifacts/releases/v0.3.2`，包含 Setup EXE、Portable ZIP 和 SHA256SUMS.txt。
+程序使用 C++17、Win32 和 GDI+，静态链接 C++ 运行库。输出位于 `artifacts/native-win-x64`，发布包位于 `artifacts/releases/v<版本>`，包含 Setup EXE、Portable ZIP 和 SHA256SUMS.txt。
 
 ## 数据读取
 

@@ -241,6 +241,19 @@ int deepSeekUiTests(const fs::path &dir) {
     auto selected = selectedMonitors(app.settings);
     check(app.overlays.size() == selected.size() * 2, "Codex and DeepSeek coexist on each selected monitor");
     for (auto &overlay : app.overlays) if (overlay->kind == WidgetKind::DeepSeek) {
+        auto original = app.deepseek;
+        auto shortState = DeepSeekState{};
+        auto longState = original;
+        longState.balances = {{"CNY", 98765432100000000LL}};
+        app.applyDeepSeek({app.generation, shortState, app.harnessSession});
+        int shortWidth = overlay->layout.width;
+        app.applyDeepSeek({app.generation, longState, app.harnessSession});
+        RECT wideBounds{}; GetWindowRect(overlay->window, &wideBounds);
+        check(overlay->layout.width > shortWidth && wideBounds.right - wideBounds.left == overlay->layout.width,
+              "DeepSeek window grows immediately for longer content");
+        app.applyDeepSeek({app.generation, shortState, app.harnessSession});
+        check(overlay->layout.width == shortWidth, "DeepSeek window shrinks for shorter content");
+        app.applyDeepSeek({app.generation, original, app.harnessSession});
         RECT r{}; GetWindowRect(overlay->window, &r);
         check(GetParent(overlay->window) == taskbarWindow(overlay->monitor.handle) ||
               (!overlay->host && GetPropW(overlay->window, L"QuotaRejectedHost") == taskbarWindow(overlay->monitor.handle)),

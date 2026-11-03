@@ -117,6 +117,8 @@ Settings Settings::fromJson(const json &j) {
     s.codexPath = wide(string("CodexPath", ""));
     if (auto opacity = j.find("WidgetBackgroundOpacity"); opacity != j.end() && opacity->is_number_integer())
         s.backgroundOpacity = int(std::clamp(opacity->get<double>(), 0., 100.));
+    if (auto opacity = j.find("CodexIconOpacity"); opacity != j.end() && opacity->is_number_integer())
+        s.iconOpacity = int(std::clamp(opacity->get<double>(), 10., 100.));
     s.letters = boolean(j, "ShowDialLetters", true);
     s.deepSeekEnabled = boolean(j, "DeepSeekHarnessEnabled", true);
     s.deepSeekAlwaysShow = boolean(j, "DeepSeekShowWhenStopped", false);
@@ -173,6 +175,7 @@ json Settings::toJson() const {
     j["ShowWeekQuota"] = showWeek ? json(*showWeek) : json(nullptr);
     j["WidgetScale"] = scale;
     j["WidgetBackgroundOpacity"] = backgroundOpacity;
+    j["CodexIconOpacity"] = iconOpacity;
     j["HourColorHex"] = hourColor;
     j["WeekColorHex"] = weekColor;
     j["RefreshIntervalSeconds"] = interval;

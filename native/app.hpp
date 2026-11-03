@@ -4,7 +4,7 @@
 #include "taskbar.hpp"
 namespace quota {
 enum class WidgetKind { Codex, DeepSeek };
-Layout deepSeekLayout(const Settings &settings, int dpi, int available);
+Layout deepSeekLayout(const DeepSeekState &state, const Settings &settings, int dpi, int available);
 void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &settings, bool hover);
 struct Application;
 struct Overlay {
@@ -117,7 +117,7 @@ struct SettingsWindow {
     HFONT font = nullptr;
     HBRUSH background = nullptr, sidebar = nullptr;
     std::vector<HWND> controls;
-    HWND styles = nullptr, scale = nullptr, opacitySlider = nullptr, display = nullptr, path = nullptr, interval = nullptr;
+    HWND styles = nullptr, scale = nullptr, opacitySlider = nullptr, iconOpacitySlider = nullptr, display = nullptr, path = nullptr, interval = nullptr;
     HWND deepSeekToken = nullptr, deepSeekInterval = nullptr;
     Color selectedColor;
     bool colorHour = true;

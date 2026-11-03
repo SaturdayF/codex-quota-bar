@@ -18,6 +18,7 @@ void roundPath(GraphicsPath &path, RectF area, float radius);
 void fillRound(Graphics &g, RectF area, float radius, Color c);
 void drawText(Graphics &g, const std::wstring &text, RectF area, float size, Color c, bool bold = false,
               bool centered = false, bool glyph = false);
+float uiTextWidth(Graphics &g, const std::wstring &text, float size, bool bold);
 void drawUiText(Graphics &g, const std::wstring &text, RectF area, float size, Color c,
                 bool bold = false, bool centered = false);
 void drawWidget(Graphics &g, RectF area, const Quotas &q, const Settings &s, bool stale, bool light,
