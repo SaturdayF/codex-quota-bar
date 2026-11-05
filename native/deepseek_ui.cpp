@@ -70,12 +70,16 @@ void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &s
             drawUiText(g, newNumber, area, 12 * d, color, bold);
             return;
         }
-        // Fade-out shrinks and fade-in grows so the neighbouring line never collides.
+        // Fade-out slides down, shrinks and fades; fade-in rises from above,
+        // grows and fades in.
         float t = std::clamp(roll->progress, 0.f, 1.f);
+        float distance = 8 * d;
         Color oldColor(BYTE(color.GetA() * (1 - t)), color.GetR(), color.GetG(), color.GetB());
         Color newColor(BYTE(color.GetA() * t), color.GetR(), color.GetG(), color.GetB());
-        drawUiText(g, oldNumber, area, 12 * d * (1 - 0.28f * t), oldColor, bold);
-        drawUiText(g, newNumber, area, 12 * d * (0.72f + 0.28f * t), newColor, bold);
+        drawUiText(g, oldNumber, RectF(area.X, area.Y + t * distance, area.Width, area.Height),
+                   12 * d * (1 - 0.28f * t), oldColor, bold);
+        drawUiText(g, newNumber, RectF(area.X, area.Y - (1 - t) * distance, area.Width, area.Height),
+                   12 * d * (0.72f + 0.28f * t), newColor, bold);
     };
     line(L"余额 ", state.currency(), fromBalance, toBalance, state.balanceError.empty() ? ink : muted, 0, true);
     line(L"今日 ", state.billingCurrency(), fromToday, toToday, state.costError.empty() ? ink : muted, 18, false);
