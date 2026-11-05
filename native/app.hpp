@@ -8,7 +8,9 @@ constexpr UINT TrayMessage = WM_APP + 12;
 constexpr UINT TraySettings = 40001, TrayExit = 40002;
 enum class WidgetKind { Codex, DeepSeek };
 Layout deepSeekLayout(const DeepSeekState &state, const Settings &settings, int dpi, int available);
-void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &settings, bool hover);
+std::optional<int64_t> deepSeekPrimaryBalance(const DeepSeekState &state);
+void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &settings, bool hover,
+                   std::optional<int64_t> balanceOverride = std::nullopt);
 struct Application;
 struct Overlay {
     Application *app;
@@ -20,6 +22,18 @@ struct Overlay {
     Settings settings;
     WidgetKind kind = WidgetKind::Codex;
     int detailPage = 0;
+    // DeepSeek hourly-chart hit testing, filled while the details card renders.
+    int chartHover = -1;
+    bool chartVisible = false;
+    float chartLeftPx = 0, chartTopPx = 0, chartBaselinePx = 0, chartBarW = 0, chartBarGap = 0;
+    std::array<int64_t, 24> chartValues{};
+    std::string chartBilling;
+    bool detailsHoverTracked = false;
+    // Rolling balance animation for the taskbar widget.
+    int64_t balanceShown = -1;
+    int64_t balanceFrom = 0, balanceTo = 0;
+    int64_t balanceAnimStart = 0, balanceDuration = 700;
+    bool balanceAnimating = false;
     std::unique_ptr<Surface> detailFrost;
     std::unique_ptr<Surface> detailImage;
     BackdropMode detailBackdrop = BackdropMode::Solid;

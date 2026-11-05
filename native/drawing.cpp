@@ -207,16 +207,23 @@ void drawPanel(Graphics &g, RectF bounds, float radius, Color fill, Color border
 static bool usesCjkFont(const std::wstring &text) {
     return std::any_of(text.begin(), text.end(), [](wchar_t c) { return c > 0x2fff; });
 }
-float uiTextWidth(Graphics &g, const std::wstring &text, float size, bool bold) {
+float uiTextWidth(Graphics &g, const std::wstring &text, float size, bool bold, bool tight) {
     Font font(usesCjkFont(text) ? L"Microsoft YaHei UI" : L"Segoe UI", size,
               bold ? FontStyleBold : FontStyleRegular, UnitPixel);
     RectF bounds;
     g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
-    g.MeasureString(text.c_str(), -1, &font, PointF(0, 0), &bounds);
+    if (tight) {
+        // Typographic metrics drop the default 1/6-em padding, so mixed-size
+        // segments can be placed without a visible gap.
+        const StringFormat *format = StringFormat::GenericTypographic();
+        g.MeasureString(text.c_str(), -1, &font, PointF(0, 0), format, &bounds);
+    } else {
+        g.MeasureString(text.c_str(), -1, &font, PointF(0, 0), &bounds);
+    }
     return bounds.Width;
 }
 static void textImpl(Graphics &g, const std::wstring &text, RectF area, float size, Color c, bool bold,
-              bool centered, bool glyph, bool ui = false) {
+              bool centered, bool glyph, bool ui = false, bool bottom = false) {
     FontFamily family(L"Segoe UI");
     FontFamily chinese(L"Microsoft YaHei UI");
     FontFamily *f = &family;
@@ -228,7 +235,7 @@ static void textImpl(Graphics &g, const std::wstring &text, RectF area, float si
     SolidBrush brush(c);
     StringFormat format;
     format.SetFormatFlags(StringFormatFlagsNoWrap);
-    format.SetLineAlignment(StringAlignmentCenter);
+    format.SetLineAlignment(bottom ? StringAlignmentFar : StringAlignmentCenter);
     format.SetAlignment(centered ? StringAlignmentCenter : StringAlignmentNear);
     format.SetTrimming(StringTrimmingEllipsisCharacter);
     if (glyph) {
@@ -269,11 +276,11 @@ void drawText(Graphics &g, const std::wstring &text, RectF area, float size, Col
     textImpl(g, text, area, size, c, bold, centered, glyph);
 }
 void drawUiText(Graphics &g, const std::wstring &text, RectF area, float size, Color c, bool bold,
-                bool centered) {
+                bool centered, bool bottom) {
     // Codex desktop uses the system UI stack (Segoe UI on Windows).
     // Use Microsoft YaHei UI for CJK strings, avoiding the GDI+ serif fallback.
     auto previous = g.GetTextRenderingHint();
-    textImpl(g, text, area, size, c, bold, centered, false, true);
+    textImpl(g, text, area, size, c, bold, centered, false, true, bottom);
     g.SetTextRenderingHint(previous);
 }
 static void progressOutline(Graphics &g, GraphicsPath &path, Color track, Color accent, float width,

@@ -205,11 +205,43 @@ void Overlay::render() {
         return;
     Surface image(layout.width, layout.height);
     auto now = GetTickCount64();
-    if (kind == WidgetKind::DeepSeek)
-        paintDeepSeek(image, app->deepseek, settings, hover);
-    else
+    if (kind == WidgetKind::DeepSeek) {
+        // Roll the decimal part down from the previous balance to the new one.
+        auto primary = deepSeekPrimaryBalance(app->deepseek);
+        if (primary) {
+            if (balanceShown < 0) {
+                balanceShown = *primary;
+                balanceTo = *primary;
+                balanceAnimating = false;
+                KillTimer(window, 4);
+            } else if (*primary != balanceTo && !balanceAnimating) {
+                balanceFrom = balanceShown;
+                balanceTo = *primary;
+                balanceAnimStart = now;
+                // Longer rolls for bigger jumps so the integer digits count down too.
+                int64_t delta = balanceTo > balanceFrom ? balanceTo - balanceFrom : balanceFrom - balanceTo;
+                int64_t cents = delta / (MoneyScale / 100);
+                balanceDuration = std::clamp<int64_t>(400 + cents * 12, 500, 1600);
+                balanceAnimating = true;
+                SetTimer(window, 4, 16, nullptr);
+            }
+        }
+        if (balanceAnimating) {
+            double progress = double(now - balanceAnimStart) / double(balanceDuration);
+            if (progress >= 1.0) {
+                balanceAnimating = false;
+                balanceShown = balanceTo;
+                KillTimer(window, 4);
+            } else if (progress > 0) {
+                balanceShown = balanceFrom + int64_t(double(balanceTo - balanceFrom) * progress);
+            }
+        }
+        paintDeepSeek(image, app->deepseek, settings, hover,
+                      balanceShown >= 0 ? std::optional<int64_t>(balanceShown) : std::nullopt);
+    } else {
         paintWidget(image, layout, state, settings, hover, animation.progress(true, now),
                     animation.progress(false, now));
+    }
     // Child placement is already handled in parent coordinates by position().
     // Updating only the pixels avoids a second coordinate conversion by USER32.
     image.present(window, visualX, y, !host);
@@ -231,6 +263,9 @@ void Overlay::hideDetails() {
         ShowWindow(details, SW_HIDE);
     detailFrost.reset();
     detailImage.reset();
+    chartHover = -1;
+    chartVisible = false;
+    detailsHoverTracked = false;
 }
 void Overlay::presentDetails(std::unique_ptr<Surface> image, int left, int top) {
     detailImage = std::move(image);
@@ -372,6 +407,9 @@ LRESULT CALLBACK Overlay::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
             self->render();
             if (!self->animation.running(GetTickCount64()))
                 KillTimer(w, 2);
+        } else if (wp == 4) {
+            self->render();
+            if (!self->balanceAnimating) KillTimer(w, 4);
         } else
             self->tick();
         return 0;
@@ -435,6 +473,37 @@ LRESULT CALLBACK Overlay::detailProcedure(HWND w, UINT msg, WPARAM wp, LPARAM lp
     if (msg == WM_MOUSEWHEEL && self && self->kind == WidgetKind::DeepSeek) {
         self->detailPage = std::max(0, self->detailPage + (GET_WHEEL_DELTA_WPARAM(wp) < 0 ? 1 : -1));
         self->showDeepSeekDetails();
+        return 0;
+    }
+    if (msg == WM_MOUSEMOVE && self && self->kind == WidgetKind::DeepSeek) {
+        if (!self->detailsHoverTracked) {
+            TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, w, 0};
+            TrackMouseEvent(&track);
+            self->detailsHoverTracked = true;
+        }
+        int cx = int(short(LOWORD(lp))), cy = int(short(HIWORD(lp)));
+        float d = self->monitor.dpi / 96.f;
+        int hover = -1;
+        if (self->chartVisible && self->chartBarW > 0 && cy >= int(self->chartTopPx) - int(4 * d) &&
+            cy <= int(self->chartBaselinePx) + int(4 * d)) {
+            int h = int((cx - self->chartLeftPx) / (self->chartBarW + self->chartBarGap));
+            if (h >= 0 && h < 24) {
+                float bx = self->chartLeftPx + h * (self->chartBarW + self->chartBarGap);
+                if (cx >= bx && cx < bx + self->chartBarW) hover = h;
+            }
+        }
+        if (hover != self->chartHover) {
+            self->chartHover = hover;
+            self->showDeepSeekDetails();
+        }
+        return 0;
+    }
+    if (msg == WM_MOUSELEAVE && self && self->kind == WidgetKind::DeepSeek) {
+        self->detailsHoverTracked = false;
+        if (self->chartHover != -1) {
+            self->chartHover = -1;
+            self->showDeepSeekDetails();
+        }
         return 0;
     }
     if (msg == WM_MOUSEACTIVATE)

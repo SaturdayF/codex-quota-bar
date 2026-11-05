@@ -214,6 +214,7 @@ void parseDeepSeekTokens(DeepSeekState &state, const json &value) {
     if (!body.at("series").is_array()) throw std::runtime_error("Missing DeepSeek token series");
     auto models = state.models;
     for (auto &r : models) r.hit = r.miss = r.output = r.requests = 0;
+    std::array<DeepSeekHourUsage, 24> hourly{};
     for (auto &series : body["series"]) {
         auto &row = modelRow(models, series.at("model").get<std::string>());
         if (!series.at("buckets").is_array()) throw std::runtime_error("Invalid usage buckets");
@@ -224,10 +225,20 @@ void parseDeepSeekTokens(DeepSeekState &state, const json &value) {
             if (!usage.is_object()) throw std::runtime_error("Invalid DeepSeek usage");
             for (auto key : {"PROMPT_CACHE_HIT_TOKEN", "PROMPT_CACHE_MISS_TOKEN", "RESPONSE_TOKEN", "REQUEST"})
                 if (!usage.contains(key)) throw std::runtime_error("Incomplete DeepSeek usage counters");
-            row.hit = add(row.hit, tokenNumber(usage["PROMPT_CACHE_HIT_TOKEN"]));
-            row.miss = add(row.miss, tokenNumber(usage["PROMPT_CACHE_MISS_TOKEN"]));
-            row.output = add(row.output, tokenNumber(usage["RESPONSE_TOKEN"]));
-            row.requests = add(row.requests, tokenNumber(usage["REQUEST"]));
+            auto hit = tokenNumber(usage["PROMPT_CACHE_HIT_TOKEN"]);
+            auto miss = tokenNumber(usage["PROMPT_CACHE_MISS_TOKEN"]);
+            auto output = tokenNumber(usage["RESPONSE_TOKEN"]);
+            auto requests = tokenNumber(usage["REQUEST"]);
+            row.hit = add(row.hit, hit);
+            row.miss = add(row.miss, miss);
+            row.output = add(row.output, output);
+            row.requests = add(row.requests, requests);
+            // Bucket usage by Beijing hour so the chart can show per-hour tokens.
+            auto hour = size_t((time + 28800) % 86400 / 3600);
+            hourly[hour].hit = add(hourly[hour].hit, hit);
+            hourly[hour].miss = add(hourly[hour].miss, miss);
+            hourly[hour].output = add(hourly[hour].output, output);
+            hourly[hour].requests = add(hourly[hour].requests, requests);
         }
     }
     int64_t total = 0, requests = 0;
@@ -236,6 +247,7 @@ void parseDeepSeekTokens(DeepSeekState &state, const json &value) {
         requests = add(requests, row.requests);
     }
     state.models = std::move(models);
+    state.hourlyTokens = hourly;
 }
 struct InternetHandle {
     HINTERNET value = nullptr;

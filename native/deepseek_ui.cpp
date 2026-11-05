@@ -1,9 +1,15 @@
 #include "app.hpp"
 namespace quota {
-static std::pair<std::wstring, std::wstring> deepSeekLabels(const DeepSeekState &state) {
+std::optional<int64_t> deepSeekPrimaryBalance(const DeepSeekState &state) {
     auto currency = state.currency();
-    std::optional<int64_t> balance;
-    for (auto &wallet : state.balances) if (wallet.currency == currency) balance = wallet.total;
+    for (auto &wallet : state.balances)
+        if (wallet.currency == currency) return wallet.total;
+    return {};
+}
+static std::pair<std::wstring, std::wstring> deepSeekLabels(const DeepSeekState &state,
+                                                            std::optional<int64_t> balanceOverride = std::nullopt) {
+    auto currency = state.currency();
+    auto balance = balanceOverride ? balanceOverride : deepSeekPrimaryBalance(state);
     std::string billing = state.costs.count(currency) ? currency : state.costs.empty() ? currency : state.costs.begin()->first;
     return {L"余额 " + moneyLabel(balance, currency), L"今日 " + moneyLabel(state.todayCost(billing), billing)};
 }
@@ -18,7 +24,8 @@ Layout deepSeekLayout(const DeepSeekState &state, const Settings &settings, int 
                           uiTextWidth(graphics, today, 12 * d, false));
     return {int(std::ceil((settings.deepSeekShowBadge ? 42 : 10) * d + text)), height, RectF()};
 }
-void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &settings, bool hover) {
+void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &settings, bool hover,
+                   std::optional<int64_t> balanceOverride) {
     Graphics g(image.bitmap.get());
     g.Clear(Color(1, 0, 0, 0));
     g.SetSmoothingMode(SmoothingModeAntiAlias);
@@ -33,12 +40,62 @@ void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &s
         drawUiText(g, L"DSH", RectF(5 * d, 5 * d, 24 * d, 22 * d), 11 * d, Color(255, 255, 255, 255), true, true);
     }
     float left = (settings.deepSeekShowBadge ? 37 : 5) * d;
-    auto [balance, today] = deepSeekLabels(state);
+    auto [balance, today] = deepSeekLabels(state, balanceOverride);
     drawUiText(g, balance, RectF(left, 0, image.width - left - 5 * d, 16 * d),
                12 * d, state.balanceError.empty() ? ink : muted, true);
     drawUiText(g, today,
                RectF(left, 16 * d, image.width - left - 5 * d, 16 * d), 12 * d,
                state.costError.empty() ? ink : muted);
+}
+// Renders a money value with a larger integer part while the decimals keep the
+// body size, e.g. a big "3" before ".2521095" in the account summary.
+static void moneyLine(Graphics &g, const std::wstring &prefix, const std::wstring &label,
+                      const std::wstring &suffix, float y, float d, int width, float normal, float big,
+                      Color color) {
+    struct Segment {
+        std::wstring text;
+        float size;
+    };
+    std::vector<Segment> segments;
+    segments.push_back({prefix, normal});
+    auto digit = label.find_first_of(L"0123456789");
+    if (digit == std::wstring::npos || label.find(L'<') != std::wstring::npos ||
+        label.find(L'>') != std::wstring::npos) {
+        segments.push_back({label, normal});
+    } else {
+        std::wstring number = label.substr(digit);
+        auto dot = number.find(L'.');
+        segments.push_back({label.substr(0, digit), normal});
+        segments.push_back({dot == std::wstring::npos ? number : number.substr(0, dot), big});
+        if (dot != std::wstring::npos) segments.push_back({number.substr(dot), normal});
+    }
+    segments.push_back({suffix, normal});
+    float x = 20 * d;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        const auto &seg = segments[i];
+        if (seg.text.empty()) continue;
+        // Bottom aligned so every baseline matches the large integer's.
+        float inset = 0.21f * (big - seg.size) * d;
+        drawUiText(g, seg.text, RectF(x, y * d, std::max(1.f, width - 20 * d - x), 28 * d - inset), seg.size,
+                   color, true, false, true);
+        // Advance by the tight typographic width so the decimals sit next to the
+        // integer instead of a padded 1/6-em gap away.
+        x += uiTextWidth(g, seg.text, seg.size, true, true) + 0.5f;
+    }
+}
+// Three-digit grouping for full token counts, e.g. 2,766,081.
+static std::wstring groupDigits(int64_t value) {
+    std::wstring text = std::to_wstring(value);
+    std::wstring out;
+    out.reserve(text.size() + text.size() / 3);
+    int count = 0;
+    for (auto it = text.rbegin(); it != text.rend(); ++it) {
+        if (count && count % 3 == 0) out += L',';
+        out += *it;
+        ++count;
+    }
+    std::reverse(out.begin(), out.end());
+    return out;
 }
 void Overlay::showDeepSeekDetails(const fs::path &capture) {
     auto &data = app->deepseek;
@@ -80,18 +137,21 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
         auto line = [&](const std::wstring &text, float y, float size, Color color, bool bold = false) {
             drawUiText(g, text, RectF(20 * d, y * d, width - 40 * d, 28 * d), size * d, color, bold);
         };
-        drawHeading(g, L"DeepSeekHarness · 当日消耗", RectF(20 * d, 14 * d, width - 40 * d, 28 * d), 20 * d, ink);
+        drawHeading(g, L"DeepSeek · 当日消耗", RectF(20 * d, 14 * d, width - 40 * d, 28 * d), 20 * d, ink);
         line(beijingDate(utcNow()) + L" · 北京时间 00:00 起 · 账户汇总", 49, 13, muted);
         float yy = 88;
         for (int i = 0; i < balanceRows; ++i) {
-            line(i < int(data.balances.size())
-                     ? L"账户余额 " + moneyLabel(data.balances[i].total, data.balances[i].currency, 8) + L" " + wide(data.balances[i].currency)
-                     : L"账户余额 --", yy, 16, ink, true);
+            if (i < int(data.balances.size()))
+                moneyLine(g, L"账户余额 ", moneyLabel(data.balances[i].total, data.balances[i].currency, 8),
+                          L" " + wide(data.balances[i].currency), yy, d, width, 16, 24, ink);
+            else
+                line(L"账户余额 --", yy, 16, ink, true);
             yy += 28;
         }
         if (today && data.costAt && !data.costs.empty()) {
             for (auto &cost : data.costs) {
-                line(L"今日费用 " + moneyLabel(cost.second, cost.first, 8) + L" " + wide(cost.first), yy, 16, accent, true);
+                moneyLine(g, L"今日费用 ", moneyLabel(cost.second, cost.first, 2), L" " + wide(cost.first),
+                          yy, d, width, 16, 24, accent);
                 yy += 28;
             }
         } else { line(L"今日费用 --", yy, 16, accent, true); yy += 28; }
@@ -101,7 +161,8 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
                 hit += row.hit; miss += row.miss; output += row.output; requests += row.requests;
             }
         line(today && data.tokensAt
-                 ? L"输入 " + std::to_wstring(hit + miss) + L" · 输出 " + std::to_wstring(output) + L" · 请求 " + std::to_wstring(requests)
+                 ? L"输入命中 " + groupDigits(hit) + L" / 未命中 " + groupDigits(miss) + L" · 输出 " +
+                       groupDigits(output) + L" · 请求 " + groupDigits(requests)
                  : L"Token 与请求明细尚不可用", yy + 8, 13, muted);
         yy += 50;
         for (int i = 0; i < rows; ++i) {
@@ -110,12 +171,12 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
             std::wstring costs;
             for (auto &cost : row.costs) {
                 if (!costs.empty()) costs += L" / ";
-                costs += moneyLabel(cost.second, cost.first, 8) + L" " + wide(cost.first);
+                costs += moneyLabel(cost.second, cost.first, 2) + L" " + wide(cost.first);
             }
             line(L"费用 " + (costs.empty() ? L"--" : costs) + L"   ·   请求 " +
-                     (data.tokensAt ? std::to_wstring(row.requests) : L"--"), yy + 27, 13, muted);
-            line(data.tokensAt ? L"输入命中 " + std::to_wstring(row.hit) + L" / 未命中 " + std::to_wstring(row.miss) +
-                                     L" · 输出 " + std::to_wstring(row.output)
+                     (data.tokensAt ? groupDigits(row.requests) : L"--"), yy + 27, 13, muted);
+            line(data.tokensAt ? L"输入命中 " + groupDigits(row.hit) + L" / 未命中 " + groupDigits(row.miss) +
+                                     L" · 输出 " + groupDigits(row.output)
                                : L"Token 明细尚不可用", yy + 52, 12, muted);
             yy += 100;
         }
@@ -149,6 +210,15 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
             float barGap = 3 * d;
             float barW = std::max(1.f, (chartRight - chartLeft - 23 * barGap) / 24);
             float barTop = (yy + 2) * d;
+            chartVisible = true;
+            chartBilling = billing;
+            chartLeftPx = chartLeft;
+            chartTopPx = barTop;
+            chartBaselinePx = baseline;
+            chartBarW = barW;
+            chartBarGap = barGap;
+            if (hours) chartValues = *hours;
+            else chartValues.fill(0);
             Pen rule(dark ? Color(56, 255, 255, 255) : Color(56, 40, 70, 120), 1);
             g.DrawLine(&rule, chartLeft, baseline, chartRight, baseline);
             if (peak > 0 && hours) {
@@ -187,8 +257,33 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
                 drawUiText(g, label, RectF(chartLeft + h * (barW + barGap) - 4 * d, (yy + 71) * d, 22 * d, 13 * d),
                            11 * d, muted);
             }
-            drawUiText(g, peak > 0 ? L"每小时消耗 · 峰值 " + moneyLabel(peak, billing, 8) : L"今日暂无分时消耗",
+            drawUiText(g, peak > 0 ? L"每小时消耗 · 峰值 " + moneyLabel(peak, billing, 2) : L"今日暂无分时消耗",
                        RectF(20 * d, (yy + 86) * d, width - 40 * d, 14 * d), 11 * d, muted);
+            if (peak > 0 && chartHover >= 0 && chartHover < 24) {
+                // Hovering a bar reveals that hour's spend and token usage.
+                int h = chartHover;
+                float slotX = chartLeft + h * (barW + barGap);
+                SolidBrush light(dark ? Color(44, 255, 255, 255) : Color(24, 60, 120, 220));
+                g.FillRectangle(&light, RectF(slotX - 1 * d, barTop, barW + 2 * d, baseline - barTop));
+                std::wstring caption = std::to_wstring(h) + L":00–" + std::to_wstring(h + 1) + L":00";
+                auto &usage = data.hourlyTokens[size_t(h)];
+                float tw = 200 * d, th = 74 * d;
+                float tx = std::clamp(slotX + barW / 2 - tw / 2, 6 * d, width - tw - 6 * d);
+                float ty = std::max(6 * d, barTop - th - 8 * d);
+                fillRound(g, RectF(tx, ty, tw, th), 9 * d, dark ? Color(240, 38, 42, 50) : Color(240, 252, 253, 255));
+                GraphicsPath border;
+                roundPath(border, RectF(tx, ty, tw, th), 9 * d);
+                Pen edge(colors.border, 1);
+                g.DrawPath(&edge, &border);
+                drawUiText(g, caption, RectF(tx, ty + 4 * d, tw, 18 * d), 11 * d, muted, false, true);
+                drawUiText(g, moneyLabel(chartValues[size_t(h)], billing, 2), RectF(tx, ty + 21 * d, tw, 24 * d),
+                           14 * d, ink, true, true);
+                drawUiText(g, L"输入命中 " + groupDigits(usage.hit) + L" / 未命中 " + groupDigits(usage.miss),
+                           RectF(tx, ty + 48 * d, tw, 20 * d), 10 * d, muted, false, true);
+            }
+        } else {
+            chartVisible = false;
+            chartHover = -1;
         }
         auto footer = height / d - 70;
         line(L"余额更新 " + (data.balanceAt ? timeLabel(data.balanceAt, false) : L"尚无") + L" · 账单更新 " +
@@ -259,6 +354,7 @@ void Application::runDeepSeekWorker() {
             previous.day = day;
             previous.costAt = previous.tokensAt = 0;
             previous.costs.clear(); previous.hourly.clear(); previous.models.clear();
+            previous.hourlyTokens.fill(DeepSeekHourUsage{});
             previous.costError = L"正在读取今日账单";
             emit(previous);
             next = 0;
@@ -274,6 +370,7 @@ void Application::runDeepSeekWorker() {
             if (*cancel) continue;
             if (current.day == previous.day) {
                 if (!current.balanceAt) { current.balances = previous.balances; current.balanceAt = previous.balanceAt; }
+                if (!current.tokensAt && previous.tokensAt) current.hourlyTokens = previous.hourlyTokens;
                 if (!current.costAt && previous.costAt) {
                     current.costs = previous.costs; current.hourly = previous.hourly; current.costAt = previous.costAt;
                     for (auto &old : previous.models) {

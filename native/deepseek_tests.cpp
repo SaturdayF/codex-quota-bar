@@ -139,6 +139,12 @@ int deepSeekTests(std::ostream &log) {
     int64_t hourlySum = 0;
     for (auto value : hourly.hourly["CNY"]) hourlySum += value;
     check(hourlySum == 72000000, "hourly chart buckets sum to the daily bill");
+    int64_t hourlyHit = 0, hourlyMiss = 0;
+    for (auto &usage : hourly.hourlyTokens) {
+        hourlyHit += usage.hit;
+        hourlyMiss += usage.miss;
+    }
+    check(hourlyHit == 72 && hourlyMiss == 144, "hourly token usage aggregates hit and miss per hour");
     hourlyCost["data"]["biz_data"]["bucket"] = "1h";
     parseDeepSeekCosts(hourly, hourlyCost);
     check(hourly.costs["CNY"] == 72000000, "text hourly intervals remain compatible without double counting");
@@ -288,6 +294,28 @@ int deepSeekUiTests(const fs::path &dir) {
         app.applyDeepSeek({app.generation, shortState, app.harnessSession});
         check(overlay->layout.width == shortWidth, "DeepSeek window shrinks for shorter content");
         app.applyDeepSeek({app.generation, original, app.harnessSession});
+        // Balance roll: a changed total animates through intermediate values,
+        // including the integer digits, then settles on the new total.
+        overlay->balanceShown = -1;
+        app.deepseek.balances = {{"CNY", 944000000}};
+        overlay->render();
+        check(overlay->balanceShown == 944000000 && !overlay->balanceAnimating,
+              "initial balance renders without animating");
+        app.deepseek.balances = {{"CNY", 810000000}};
+        overlay->render();
+        KillTimer(overlay->window, 4);
+        check(overlay->balanceAnimating && overlay->balanceFrom == 944000000 && overlay->balanceTo == 810000000,
+              "balance change starts a roll from the old total");
+        overlay->balanceAnimStart = GetTickCount64() - 400;
+        overlay->render();
+        check(overlay->balanceShown > 810000000 && overlay->balanceShown < 944000000,
+              "balance roll passes through intermediate integer values");
+        overlay->balanceAnimStart = GetTickCount64() - 2000;
+        overlay->render();
+        check(!overlay->balanceAnimating && overlay->balanceShown == 810000000,
+              "balance roll settles on the new total");
+        app.deepseek.balances = original.balances;
+        overlay->render();
         RECT r{}; GetWindowRect(overlay->window, &r);
         check(GetParent(overlay->window) == taskbarWindow(overlay->monitor.handle) ||
               (!overlay->host && GetPropW(overlay->window, L"QuotaRejectedHost") == taskbarWindow(overlay->monitor.handle)),

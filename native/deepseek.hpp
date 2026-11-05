@@ -13,11 +13,15 @@ struct DeepSeekModel {
     std::map<std::string, int64_t> costs;
     int64_t hit = 0, miss = 0, output = 0, requests = 0;
 };
+struct DeepSeekHourUsage {
+    int64_t hit = 0, miss = 0, output = 0, requests = 0;
+};
 struct DeepSeekState {
     std::vector<DeepSeekBalance> balances;
     std::vector<DeepSeekModel> models;
     std::map<std::string, int64_t> costs;
     std::map<std::string, std::array<int64_t, 24>> hourly;  // Beijing hour-of-day spend per currency
+    std::array<DeepSeekHourUsage, 24> hourlyTokens{};        // Beijing hour-of-day token usage
     int64_t day = 0, balanceAt = 0, costAt = 0, tokensAt = 0;
     std::wstring balanceError = L"等待读取", costError = L"等待读取", tokensError;
     bool available = false;
