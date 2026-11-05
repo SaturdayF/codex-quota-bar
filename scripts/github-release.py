@@ -1,6 +1,6 @@
 """Publish a frozen tag and assets via existing Git credential helper; never logs credentials.
 
-Usage: python scripts/github-release.py v0.3.6 <commit> <setup> <zip> <sha256-file>
+Usage: python scripts/github-release.py v0.3.7 <commit> <setup> <zip> <sha256-file>
 The tag must already exist on origin. Does not overwrite a published release.
 """
 import json
@@ -16,7 +16,7 @@ REPO = "SaturdayF/codex-quota-bar"
 
 def main():
     tag, commit, *paths = sys.argv[1:]
-    if tag not in {"v0.3.5", "v0.3.6"}:
+    if tag not in {"v0.3.5", "v0.3.7"}:
         raise RuntimeError("Only the current native version can be published")
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
     credential = subprocess.run(["git", "-c", f"safe.directory={ROOT.as_posix()}", "credential", "fill"],
@@ -34,7 +34,7 @@ def main():
         with request.urlopen(request.Request(url, data=body, headers=headers, method=method), timeout=180) as response:
             payload = response.read()
             return json.loads(payload) if payload else None
-    if tag in {"v0.3.5", "v0.3.6"}:
+    if tag in {"v0.3.5", "v0.3.7"}:
         tagged = api(f"/repos/{REPO}/git/ref/tags/{tag}")["object"]
         while tagged["type"] == "tag":
             tagged = api(f"/repos/{REPO}/git/tags/{tagged['sha']}")["object"]

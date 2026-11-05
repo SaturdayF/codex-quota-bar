@@ -294,8 +294,18 @@ std::string browserProfileName(const fs::path &userData) {
     auto state = json::parse(readShared(userData / L"Local State", budget), nullptr, false);
     require(state.is_object() && state.contains("profile") && state["profile"].is_object());
     auto &profiles = state["profile"];
-    require(profiles.contains("last_used") && profiles["last_used"].is_string());
-    auto name = profiles["last_used"].get<std::string>();
+    std::string name;
+    if (profiles.contains("last_used")) {
+        require(profiles["last_used"].is_string());
+        name = profiles["last_used"].get<std::string>();
+    } else if (profiles.contains("last_active_profiles") && profiles["last_active_profiles"].is_array() &&
+               profiles["last_active_profiles"].size() == 1) {
+        require(profiles["last_active_profiles"][0].is_string());
+        name = profiles["last_active_profiles"][0].get<std::string>();
+    } else if (profiles.contains("info_cache") && profiles["info_cache"].is_object() &&
+               profiles["info_cache"].size() == 1) {
+        name = profiles["info_cache"].begin().key();
+    } else require(false);
     require(name == "Default" || (name.rfind("Profile ", 0) == 0 && digits(View(name).substr(8))));
     return name;
 }
@@ -422,6 +432,14 @@ int browserTokenTests(std::ostream &log) {
     check(browserProfileName(fixture) == "Profile 2", "Edge acquisition uses the last-used profile without scanning other accounts");
     write(L"Local State", "{\"profile\":{\"last_used\":\"../outside\"}}");
     check(rejects([&] { browserProfileName(fixture); }), "Edge profile paths reject directory traversal");
+    write(L"Local State", R"({"profile":{"last_active_profiles":["Default"],"info_cache":{"Default":{}}}})");
+    check(browserProfileName(fixture) == "Default", "Chrome active profile works without legacy last_used metadata");
+    write(L"Local State", R"({"profile":{"info_cache":{"Profile 3":{}}}})");
+    check(browserProfileName(fixture) == "Profile 3", "single Chromium profile is selected without legacy metadata");
+    write(L"Local State", R"({"profile":{"last_active_profiles":["Default","Profile 1"],"info_cache":{"Default":{},"Profile 1":{}}}})");
+    check(rejects([&] { browserProfileName(fixture); }), "ambiguous browser profiles are not silently selected");
+    write(L"Local State", R"({"profile":{"last_active_profiles":["../outside"]}})");
+    check(rejects([&] { browserProfileName(fixture); }), "active profile metadata rejects directory traversal");
     stop = true;
     check(readBrowserPlatformToken(fixture, stop).empty(), "cancelled browser acquisition returns no credential");
     return checks;

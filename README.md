@@ -4,11 +4,11 @@
 
 在 Windows 任务栏显示 Codex 额度和 DeepSeek 账户余额，支持多屏、拖动布局、悬浮详情和自动刷新。
 
-**最新发布：[0.3.6](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.3.6)** · Windows 10/11 x64 · C++ 原生程序
+**最新发布：[0.3.7](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.3.7)** · Windows 10/11 x64 · C++ 原生程序
 
-**稳定版：[0.3.5](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.3.5)**
+**稳定版：[0.3.7](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.3.7)**
 
-[安装包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.6/CodexQuotaBar-v0.3.6-Setup.exe) · [便携包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.6/CodexQuotaBar-v0.3.6-Portable-win-x64.zip) · [SHA-256 校验](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.6/SHA256SUMS.txt) · [版本记录](CHANGELOG.md)
+[安装包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.7/CodexQuotaBar-v0.3.7-Setup.exe) · [便携包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.7/CodexQuotaBar-v0.3.7-Portable-win-x64.zip) · [SHA-256 校验](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.7/SHA256SUMS.txt) · [版本记录](CHANGELOG.md)
 
 ## 界面预览
 
@@ -37,11 +37,11 @@
 显示账户余额和北京时间当日消费，悬浮查看模型费用、请求数及 Token 明细。组件可随 Harness 启停，也可独立常驻；DSH 标识可单独隐藏，组件宽度随内容缩短。
 
 <img src="docs/deepseek-widget-preview.png" alt="DeepSeek 余额与当日消费组件" />
-<img src="docs/deepseek-settings-preview.png" width="900" alt="0.3.6 DeepSeek 相关设置：自动跟随、独立显示、DSH 图标和平台凭证" />
-<img src="docs/deepseek-details-preview.png" width="450" alt="0.3.6 DeepSeek 模型用量详情：含当日每小时消耗柱状图" />
-<img src="docs/deepseek-help-preview.png" width="450" alt="0.3.6 DeepSeek 凭证填写说明毛玻璃弹窗" />
-<img src="docs/deepseek-token-success-preview.png" width="400" alt="0.3.6 获取 Token 成功并自动保存的紧凑弹窗" />
-<img src="docs/deepseek-token-error-preview.png" width="480" alt="0.3.6 获取失败弹窗：按内容调整高度并提醒检查网页登录" />
+<img src="docs/deepseek-settings-preview.png" width="900" alt="0.3.7 DeepSeek 相关设置：自动跟随、独立显示、DSH 图标和平台凭证" />
+<img src="docs/deepseek-details-preview.png" width="450" alt="0.3.7 DeepSeek 模型用量详情：含当日每小时消耗柱状图" />
+<img src="docs/deepseek-help-preview.png" width="450" alt="0.3.7 DeepSeek 凭证填写说明毛玻璃弹窗" />
+<img src="docs/deepseek-token-success-preview.png" width="400" alt="0.3.7 获取 Token 成功并自动保存的紧凑弹窗" />
+<img src="docs/deepseek-token-error-preview.png" width="480" alt="0.3.7 获取失败弹窗：按内容调整高度并提醒检查网页登录" />
 
 以上预览中的额度、余额、用量和背景均为模拟数据。运行时的毛玻璃背景由系统实时合成，实际效果随桌面内容与系统设置变化；省电模式下毛玻璃不可用。
 
@@ -100,6 +100,6 @@ Windows 11 22H2 及以上使用 Desktop Acrylic，较早系统使用兼容模糊
 
 ## 开发
 
-0.3.6 已通过 472 项核心检查与 54 项 DeepSeek UI 检查。发布包附带 SHA-256 校验文件，已发布标签和附件保持固定。
+0.3.7 已通过 476 项核心检查与 54 项 DeepSeek UI 检查。发布包附带 SHA-256 校验文件，已发布标签和附件保持固定。
 
 [构建与测试](docs/DEVELOPMENT.md) · [安装器](installer/README.md) · [MIT 许可证](LICENSE)
