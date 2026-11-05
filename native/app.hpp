@@ -9,8 +9,16 @@ constexpr UINT TraySettings = 40001, TrayExit = 40002;
 enum class WidgetKind { Codex, DeepSeek };
 Layout deepSeekLayout(const DeepSeekState &state, const Settings &settings, int dpi, int available);
 std::optional<int64_t> deepSeekPrimaryBalance(const DeepSeekState &state);
+// Downward slide transition for the widget's balance and spend numbers: the old
+// value fades out moving down while the new value fades in from above.
+struct DeepSeekRoll {
+    float progress = 1;
+    std::optional<int64_t> fromBalance, toBalance;
+    std::optional<int64_t> fromToday, toToday;
+    float flash = 0;
+};
 void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &settings, bool hover,
-                   std::optional<int64_t> balanceOverride = std::nullopt);
+                   const DeepSeekRoll *roll = nullptr);
 struct Application;
 struct Overlay {
     Application *app;
@@ -35,6 +43,9 @@ struct Overlay {
     int64_t balanceAnimStart = 0, balanceDuration = 700;
     int64_t balanceRevealAt = 0;
     bool balanceAnimating = false;
+    int64_t todayShown = -1;
+    int64_t todayFrom = 0, todayTo = 0;
+    int64_t flashStart = 0;
     // API-key filter dropdown in the details card.
     int keyMenuOpen = 0;
     bool ddVisible = false;

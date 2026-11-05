@@ -45,6 +45,7 @@ enum {
     DeepSeekHelp,
     DeepSeekAlwaysShow,
     DeepSeekBadge,
+    DeepSeekFlash = 271,
     DeepSeekLogin = PlatformLoginButton
 };
 static std::wstring controlText(HWND w) {
@@ -322,7 +323,7 @@ static void registerSettingsClass(const wchar_t *name, WNDPROC proc) {
 }
 static bool isToggle(int id) {
     return id == Letters || id == Remaining || id == Percent || id == Animate || id == Startup ||
-           id == ShowHour || id == ShowWeek || id == DeepSeekEnabled || id == DeepSeekAlwaysShow || id == DeepSeekBadge || id == AvoidIcons;
+           id == ShowHour || id == ShowWeek || id == DeepSeekEnabled || id == DeepSeekAlwaysShow || id == DeepSeekBadge || id == DeepSeekFlash || id == AvoidIcons;
 }
 SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
     : app(a), draft(a->settings), startup(startupEnabled()) {
@@ -463,6 +464,7 @@ void SettingsWindow::createControls() {
     button(L"自动跟随 DeepSeekHarness", DeepSeekEnabled, 3);
     button(L"未启动时也显示余额", DeepSeekAlwaysShow, 3);
     button(L"显示 DSH 图标", DeepSeekBadge, 3);
+    button(L"更新时闪烁提示", DeepSeekFlash, 3);
     deepSeekToken = control(L"EDIT", L"", DeepSeekToken, 3, ES_PASSWORD | ES_AUTOHSCROLL);
     SendMessageW(deepSeekToken, EM_SETLIMITTEXT, 2560, 0);
     bool hasToken = !app->testing && !deepSeekCredential().empty();
@@ -531,7 +533,7 @@ void SettingsWindow::layout() {
     GetClientRect(viewport, &c);
     contentWidth = int(c.right * 96. / dpi);
     contentHeight = int(c.bottom * 96. / dpi);
-    int needed = pageHeight = page == 0 ? 836 : page == 1 ? 620 : page == 3 ? 674 : 606;
+    int needed = pageHeight = page == 0 ? 836 : page == 1 ? 620 : page == 3 ? 748 : 606;
     scroll = std::clamp(scroll, 0, std::max(0, needed - contentHeight));
     contentWidth = int(std::max(1, int(c.right) - px(14)) * 96. / dpi);
     SetWindowPos(content, nullptr, 0, -px(scroll), std::max(1, int(c.right) - px(14)), std::max<int>(c.bottom, px(needed)),
@@ -580,6 +582,7 @@ void SettingsWindow::layout() {
     place(DeepSeekEnabled, contentWidth - 60, 89, 44, 26);
     place(DeepSeekAlwaysShow, contentWidth - 60, 155, 44, 26);
     place(DeepSeekBadge, contentWidth - 60, 221, 44, 26);
+    place(DeepSeekFlash, contentWidth - 60, 669, 44, 26);
     place(DeepSeekToken, 0, 337, contentWidth - 176, 30);
     place(DeepSeekLogin, contentWidth - 166, 337, 152, 30);
     place(DeepSeekInterval, contentWidth - 164, 395, 150, 220);
@@ -779,6 +782,7 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 row(82, L"自动跟随 DeepSeekHarness", L"Harness 运行时自动显示并刷新。", 110);
                 row(148, L"未启动时也显示余额", L"默认关闭；开启后独立显示并刷新余额和账单。", 110);
                 row(214, L"显示 DSH 图标", L"关闭后仅显示余额和当日消费，组件自动缩短。", 110);
+                row(662, L"更新时闪烁提示", L"数字变化时组件短暂闪烁一次，便于注意。", 110);
                 drawUiText(g, L"平台登录凭证 userToken", RectF(0, 280, contentWidth - 210.f, 26), 16, ink);
                 drawUiText(g, tokenStatus.empty() ? L"同一平台账户的余额、费用和 Token 明细。" : tokenStatus.c_str(),
                            RectF(0, 306, contentWidth - 175.f, 26), 14, muted);
@@ -825,6 +829,7 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
                            : id == DeepSeekEnabled ? draft.deepSeekEnabled
                            : id == DeepSeekAlwaysShow ? draft.deepSeekAlwaysShow
                            : id == DeepSeekBadge ? draft.deepSeekShowBadge
+                           : id == DeepSeekFlash ? draft.deepSeekFlash
                            : id == AvoidIcons ? draft.avoidIcons
                                              : startup;
             drawPanel(g, area, area.Height / 2, enabled && !disabled ? colors.focus : colors.thumb, colors.border);
@@ -877,6 +882,9 @@ void SettingsWindow::command(int id, int notice) {
         break;
     case DeepSeekBadge:
         draft.deepSeekShowBadge = !draft.deepSeekShowBadge;
+        break;
+    case DeepSeekFlash:
+        draft.deepSeekFlash = !draft.deepSeekFlash;
         break;
     case DeepSeekRefresh:
         app->refreshDeepSeek(true);

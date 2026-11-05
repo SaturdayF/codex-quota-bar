@@ -79,6 +79,7 @@ struct Settings {
     bool deepSeekEnabled = true; // Automatic follow mode; idle until Harness runs.
     bool deepSeekAlwaysShow = false;
     bool deepSeekShowBadge = true;
+    bool deepSeekFlash = true; // Briefly flash the widget when its numbers animate.
     bool avoidIcons = true;
     int deepSeekInterval = 60;
     std::optional<bool> showHour, showWeek; // Unset follows the account's default.

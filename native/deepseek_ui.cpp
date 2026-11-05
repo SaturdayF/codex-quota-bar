@@ -24,8 +24,14 @@ Layout deepSeekLayout(const DeepSeekState &state, const Settings &settings, int 
                           uiTextWidth(graphics, today, 12 * d, false));
     return {int(std::ceil((settings.deepSeekShowBadge ? 42 : 10) * d + text)), height, RectF()};
 }
+static std::wstring balanceText(const DeepSeekState &state, std::optional<int64_t> value) {
+    return L"余额 " + moneyLabel(value, state.currency());
+}
+static std::wstring todayText(const DeepSeekState &state, std::optional<int64_t> value) {
+    return L"今日 " + moneyLabel(value, state.billingCurrency());
+}
 void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &settings, bool hover,
-                   std::optional<int64_t> balanceOverride) {
+                   const DeepSeekRoll *roll) {
     Graphics g(image.bitmap.get());
     g.Clear(Color(1, 0, 0, 0));
     g.SetSmoothingMode(SmoothingModeAntiAlias);
@@ -40,12 +46,35 @@ void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &s
         drawUiText(g, L"DSH", RectF(5 * d, 5 * d, 24 * d, 22 * d), 11 * d, Color(255, 255, 255, 255), true, true);
     }
     float left = (settings.deepSeekShowBadge ? 37 : 5) * d;
-    auto [balance, today] = deepSeekLabels(state, balanceOverride);
-    drawUiText(g, balance, RectF(left, 0, image.width - left - 5 * d, 16 * d),
-               12 * d, state.balanceError.empty() ? ink : muted, true);
-    drawUiText(g, today,
-               RectF(left, 16 * d, image.width - left - 5 * d, 16 * d), 12 * d,
-               state.costError.empty() ? ink : muted);
+    float width = image.width - left - 5 * d;
+    auto slide = [&](const std::wstring &oldText, const std::wstring &newText, RectF area, Color color,
+                     bool bold) {
+        if (!roll || roll->progress >= 1.0f) {
+            drawUiText(g, newText, area, 12 * d, color, bold);
+            return;
+        }
+        // Old value leaves downward while the new one enters from above.
+        float t = std::clamp(roll->progress, 0.f, 1.f);
+        float distance = 11 * d;
+        Color oldColor(BYTE(color.GetA() * (1 - t)), color.GetR(), color.GetG(), color.GetB());
+        Color newColor(BYTE(color.GetA() * t), color.GetR(), color.GetG(), color.GetB());
+        drawUiText(g, oldText, RectF(area.X, area.Y + t * distance, area.Width, area.Height), 12 * d,
+                   oldColor, bold);
+        drawUiText(g, newText, RectF(area.X, area.Y - (1 - t) * distance, area.Width, area.Height), 12 * d,
+                   newColor, bold);
+    };
+    auto fromBalance = roll && roll->fromBalance ? roll->fromBalance : deepSeekPrimaryBalance(state);
+    auto toBalance = roll && roll->toBalance ? roll->toBalance : deepSeekPrimaryBalance(state);
+    auto fromToday = roll && roll->fromToday ? roll->fromToday : state.todayCost(state.billingCurrency());
+    auto toToday = roll && roll->toToday ? roll->toToday : state.todayCost(state.billingCurrency());
+    slide(balanceText(state, fromBalance), balanceText(state, toBalance), RectF(left, 0, width, 16 * d),
+          state.balanceError.empty() ? ink : muted, true);
+    slide(todayText(state, fromToday), todayText(state, toToday), RectF(left, 16 * d, width, 16 * d),
+          state.costError.empty() ? ink : muted, false);
+    if (roll && roll->flash > 0) {
+        BYTE alpha = BYTE(std::clamp(roll->flash, 0.f, 1.f) * 90);
+        fillRound(g, RectF(1, 1, image.width - 2.f, image.height - 2.f), 8 * d, Color(alpha, 96, 170, 246));
+    }
 }
 // Renders a money value with a larger integer part while the decimals keep the
 // body size, e.g. a big "3" before ".2521095" in the account summary.
@@ -105,11 +134,17 @@ static std::wstring compactCount(int64_t value) {
     if (value >= 1000LL) return std::to_wstring(value / 1000LL) + L"K";
     return std::to_wstring(value);
 }
-// Short label for an API-key tracking id.
+// Short label for an API-key tracking id or name.
 static std::wstring shortKey(const std::string &key) {
     auto text = wide(key);
     if (text.size() > 14) text = text.substr(0, 13) + L"…";
     return text;
+}
+// Prefer the platform-provided key name over the opaque tracking id.
+static std::wstring keyLabel(const DeepSeekState &data, const std::string &id) {
+    auto it = data.byKey.find(id);
+    if (it != data.byKey.end() && !it->second.name.empty()) return shortKey(it->second.name);
+    return shortKey(id);
 }
 void Overlay::showDeepSeekDetails(const fs::path &capture) {
     auto &data = app->deepseek;
@@ -335,7 +370,7 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
             roundPath(button, RectF(ddX, ddY, ddW, ddH), 8 * d);
             g.DrawPath(&edge, &button);
             std::wstring label = app->deepSeekKeyFilter.empty() ? L"全部 API Key"
-                                                               : shortKey(app->deepSeekKeyFilter);
+                                                               : keyLabel(data, app->deepSeekKeyFilter);
             drawUiText(g, label, RectF(ddX + 10 * d, ddY, ddW - 34 * d, ddH), 11 * d, ink, false, false);
             drawUiText(g, L"▾", RectF(ddX + ddW - 24 * d, ddY, 18 * d, ddH), 12 * d, muted, false, true);
             if (keyMenuOpen) {
@@ -347,7 +382,7 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
                 roundPath(menu, RectF(ddX, menuY, ddW, menuH), 8 * d);
                 g.DrawPath(&edge, &menu);
                 for (int i = 0; i < ddCount; ++i) {
-                    std::wstring text = i == 0 ? L"全部 API Key" : shortKey(keys[size_t(i - 1)]);
+                    std::wstring text = i == 0 ? L"全部 API Key" : keyLabel(data, keys[size_t(i - 1)]);
                     bool current = i == 0 ? app->deepSeekKeyFilter.empty()
                                           : (!app->deepSeekKeyFilter.empty() &&
                                              keys[size_t(i - 1)] == app->deepSeekKeyFilter);

@@ -79,6 +79,9 @@ int deepSeekTests(std::ostream &log) {
     check(Settings{}.deepSeekShowBadge && Settings::fromJson({{"DeepSeekShowBadge", "invalid"}}).deepSeekShowBadge &&
               !Settings::fromJson(Settings::fromJson({{"DeepSeekShowBadge", false}}).toJson()).deepSeekShowBadge,
           "DSH badge defaults on and explicit off survives serialization");
+    check(Settings{}.deepSeekFlash && Settings::fromJson({{"DeepSeekFlash", "invalid"}}).deepSeekFlash &&
+              !Settings::fromJson(Settings::fromJson({{"DeepSeekFlash", false}}).toJson()).deepSeekFlash,
+          "update flash defaults on and explicit off survives serialization");
     check(Settings{}.deepSeekEnabled && Settings::fromJson({{"DeepSeekRefreshSeconds", 3}}).deepSeekInterval == 60,
           "Harness automatic follow defaults on while refresh interval is normalized");
     check(!Settings::fromJson({{"DeepSeekHarnessEnabled", false}}).deepSeekEnabled &&
@@ -308,8 +311,8 @@ int deepSeekUiTests(const fs::path &dir) {
         app.applyDeepSeek({app.generation, shortState, app.harnessSession});
         check(overlay->layout.width == shortWidth, "DeepSeek window shrinks for shorter content");
         app.applyDeepSeek({app.generation, original, app.harnessSession});
-        // Balance roll: a changed total animates through intermediate values,
-        // including the integer digits, then settles on the new total.
+        // Balance slide: a changed total transitions from the old to the new
+        // value, then settles on the new total.
         overlay->balanceShown = -1;
         app.deepseek.balances = {{"CNY", 944000000}};
         overlay->render();
@@ -319,15 +322,11 @@ int deepSeekUiTests(const fs::path &dir) {
         overlay->render();
         KillTimer(overlay->window, 4);
         check(overlay->balanceAnimating && overlay->balanceFrom == 944000000 && overlay->balanceTo == 810000000,
-              "balance change starts a roll from the old total");
-        overlay->balanceAnimStart = GetTickCount64() - 1500;
-        overlay->render();
-        check(overlay->balanceShown > 810000000 && overlay->balanceShown < 944000000,
-              "balance roll passes through intermediate integer values");
+              "balance change starts a downward slide from the old total");
         overlay->balanceAnimStart = GetTickCount64() - 4000;
         overlay->render();
         check(!overlay->balanceAnimating && overlay->balanceShown == 810000000,
-              "balance roll settles on the new total");
+              "balance slide settles on the new total");
         // A manual refresh replays the balance from 0.00 up to the current value.
         app.deepSeekRevealAt = int64_t(GetTickCount64());
         overlay->render();

@@ -124,6 +124,7 @@ Settings Settings::fromJson(const json &j) {
     s.deepSeekEnabled = boolean(j, "DeepSeekHarnessEnabled", true);
     s.deepSeekAlwaysShow = boolean(j, "DeepSeekShowWhenStopped", false);
     s.deepSeekShowBadge = boolean(j, "DeepSeekShowBadge", true);
+    s.deepSeekFlash = boolean(j, "DeepSeekFlash", true);
     s.avoidIcons = boolean(j, "AvoidTaskbarIcons", true);
     if (j.contains("DeepSeekRefreshSeconds") && j["DeepSeekRefreshSeconds"].is_number_integer()) {
         auto interval = j["DeepSeekRefreshSeconds"].get<int64_t>();
@@ -173,6 +174,7 @@ json Settings::toJson() const {
     j["DeepSeekHarnessEnabled"] = deepSeekEnabled;
     j["DeepSeekShowWhenStopped"] = deepSeekAlwaysShow;
     j["DeepSeekShowBadge"] = deepSeekShowBadge;
+    j["DeepSeekFlash"] = deepSeekFlash;
     j["AvoidTaskbarIcons"] = avoidIcons;
     j["DeepSeekRefreshSeconds"] = deepSeekInterval;
     j["ShowHourQuota"] = showHour ? json(*showHour) : json(nullptr);

@@ -18,6 +18,7 @@ struct DeepSeekHourUsage {
 };
 // Per-API-key aggregate (tracking_id) so the detail card can filter spending.
 struct DeepSeekKeyStats {
+    std::string name;  // human-readable key name when the platform provides one
     std::map<std::string, int64_t> costs;
     std::vector<DeepSeekModel> models;
     std::map<std::string, std::array<int64_t, 24>> hourly;

@@ -161,6 +161,16 @@ static std::string seriesKey(const json &series) {
     }
     return {};
 }
+static std::string seriesKeyName(const json &series) {
+    auto it = series.find("api_key");
+    if (it == series.end() || !it->is_object()) return {};
+    for (auto field : {"name", "display_name", "alias"}) {
+        auto value = it->find(field);
+        if (value != it->end() && value->is_string() && !value->get<std::string>().empty())
+            return value->get<std::string>();
+    }
+    return {};
+}
 void parseDeepSeekCosts(DeepSeekState &state, const json &value) {
     auto &body = platformData(value);
     checkWindow(body, state.day);
@@ -183,6 +193,7 @@ void parseDeepSeekCosts(DeepSeekState &state, const json &value) {
             auto key = seriesKey(series);
             auto &row = modelRow(models, model);
             auto &keyStats = byKey[key];
+            if (keyStats.name.empty()) keyStats.name = seriesKeyName(series);
             auto &keyRow = modelRow(keyStats.models, model);
             if (!series.at("buckets").is_array()) throw std::runtime_error("Invalid cost buckets");
             for (auto &bucket : series["buckets"]) {
@@ -241,6 +252,7 @@ void parseDeepSeekTokens(DeepSeekState &state, const json &value) {
         auto key = seriesKey(series);
         auto &row = modelRow(models, model);
         auto &keyStats = byKey[key];
+        if (keyStats.name.empty()) keyStats.name = seriesKeyName(series);
         auto &keyRow = modelRow(keyStats.models, model);
         if (!series.at("buckets").is_array()) throw std::runtime_error("Invalid usage buckets");
         for (auto &bucket : series["buckets"]) {

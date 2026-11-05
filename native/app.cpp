@@ -206,49 +206,58 @@ void Overlay::render() {
     Surface image(layout.width, layout.height);
     auto now = GetTickCount64();
     if (kind == WidgetKind::DeepSeek) {
-        // Roll the balance down from the previous value, or replay it from 0.00
-        // when the user manually refreshes.
         auto primary = deepSeekPrimaryBalance(app->deepseek);
+        auto billing = app->deepseek.billingCurrency();
+        auto today = app->deepseek.todayCost(billing);
         int64_t revealAt = app->deepSeekRevealAt.load();
-        if (revealAt > 0 && revealAt != balanceRevealAt && primary) {
-            balanceRevealAt = revealAt;
-            balanceFrom = 0;
+        bool reveal = revealAt > 0 && revealAt != balanceRevealAt;
+        if (reveal) balanceRevealAt = revealAt;
+        if (primary && balanceShown < 0) {
+            balanceShown = *primary;
             balanceTo = *primary;
-            balanceAnimStart = now;
-            balanceDuration = 1400;
-            balanceAnimating = true;
-            balanceShown = 0;
-            SetTimer(window, 4, 16, nullptr);
-        } else if (primary) {
-            if (balanceShown < 0) {
-                balanceShown = *primary;
-                balanceTo = *primary;
-                balanceAnimating = false;
-                KillTimer(window, 4);
-            } else if (*primary != balanceTo && !balanceAnimating) {
-                balanceFrom = balanceShown;
-                balanceTo = *primary;
-                balanceAnimStart = now;
-                // Longer rolls for bigger jumps so the digits count down visibly.
-                int64_t delta = balanceTo > balanceFrom ? balanceTo - balanceFrom : balanceFrom - balanceTo;
-                int64_t cents = delta / (MoneyScale / 100);
-                balanceDuration = std::clamp<int64_t>(800 + cents * 24, 1000, 3000);
-                balanceAnimating = true;
-                SetTimer(window, 4, 16, nullptr);
-            }
+            balanceAnimating = false;
+            KillTimer(window, 4);
         }
+        if (today && todayShown < 0) {
+            todayShown = *today;
+            todayTo = *today;
+        }
+        bool balanceChanged = primary && *primary != balanceTo;
+        bool todayChanged = today && *today != todayTo;
+        if (primary && (reveal || balanceChanged || todayChanged) && !balanceAnimating) {
+            // A manual refresh replays both numbers from zero; ordinary updates
+            // slide from the currently displayed value.
+            balanceFrom = reveal ? 0 : balanceShown;
+            balanceTo = *primary;
+            todayFrom = reveal ? 0 : (todayShown >= 0 ? todayShown : today.value_or(0));
+            todayTo = today.value_or(0);
+            balanceAnimStart = now;
+            balanceDuration = 420;
+            balanceAnimating = true;
+            flashStart = now;
+            SetTimer(window, 4, 16, nullptr);
+        }
+        float progress = 1;
         if (balanceAnimating) {
-            double progress = double(now - balanceAnimStart) / double(balanceDuration);
-            if (progress >= 1.0) {
+            progress = float(double(now - balanceAnimStart) / double(balanceDuration));
+            if (progress >= 1.0f) {
+                progress = 1;
                 balanceAnimating = false;
                 balanceShown = balanceTo;
+                todayShown = todayTo;
                 KillTimer(window, 4);
-            } else if (progress > 0) {
-                balanceShown = balanceFrom + int64_t(double(balanceTo - balanceFrom) * progress);
             }
         }
-        paintDeepSeek(image, app->deepseek, settings, hover,
-                      balanceShown >= 0 ? std::optional<int64_t>(balanceShown) : std::nullopt);
+        DeepSeekRoll roll;
+        roll.progress = progress;
+        roll.fromBalance = balanceAnimating ? std::optional<int64_t>(balanceFrom) : primary;
+        roll.toBalance = balanceAnimating ? std::optional<int64_t>(balanceTo) : primary;
+        roll.fromToday = balanceAnimating ? std::optional<int64_t>(todayFrom) : today;
+        roll.toToday = balanceAnimating ? std::optional<int64_t>(todayTo) : today;
+        roll.flash = settings.deepSeekFlash && flashStart > 0 && now - flashStart < 400
+                         ? std::sin(3.14159265f * float(now - flashStart) / 400.f)
+                         : 0.f;
+        paintDeepSeek(image, app->deepseek, settings, hover, &roll);
     } else {
         paintWidget(image, layout, state, settings, hover, animation.progress(true, now),
                     animation.progress(false, now));
