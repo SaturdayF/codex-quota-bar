@@ -105,12 +105,27 @@ static std::wstring compactCount(int64_t value) {
     if (value >= 1000LL) return std::to_wstring(value / 1000LL) + L"K";
     return std::to_wstring(value);
 }
+// Short label for an API-key tracking id.
+static std::wstring shortKey(const std::string &key) {
+    auto text = wide(key);
+    if (text.size() > 14) text = text.substr(0, 13) + L"…";
+    return text;
+}
 void Overlay::showDeepSeekDetails(const fs::path &capture) {
     auto &data = app->deepseek;
+    const DeepSeekKeyStats *keyStats = nullptr;
+    if (!app->deepSeekKeyFilter.empty()) {
+        auto it = data.byKey.find(app->deepSeekKeyFilter);
+        if (it != data.byKey.end()) keyStats = &it->second;
+    }
+    const auto &models = keyStats ? keyStats->models : data.models;
+    const auto &costs = keyStats ? keyStats->costs : data.costs;
+    const auto &hourly = keyStats ? keyStats->hourly : data.hourly;
+    const auto &hourlyTokens = keyStats ? keyStats->hourlyTokens : data.hourlyTokens;
     float d = monitor.dpi / 96.f;
     int balanceRows = std::max(1, int(data.balances.size()));
     bool today = data.day == beijingDay(utcNow());
-    int costRows = today && data.costAt ? std::max(1, int(data.costs.size())) : 1;
+    int costRows = today && data.costAt ? std::max(1, int(costs.size())) : 1;
     bool showChart = today && data.costAt;
     float chartSpace = showChart ? 100.f : 0.f;
     // Header, balances, cost lines and the token summary are fixed; the hourly
@@ -118,7 +133,7 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
     float contentTop = 138.f + 28 * (balanceRows + costRows);
     float available = (monitor.work.bottom - monitor.work.top) / d - 24;
     int visibleRows = std::max(0, int((available - contentTop - chartSpace - 110) / 100));
-    int totalRows = today ? int(data.models.size()) : 0;
+    int totalRows = today ? int(models.size()) : 0;
     detailPage = std::clamp(detailPage, 0, std::max(0, totalRows - visibleRows));
     int rows = std::min(visibleRows, totalRows);
     bool statusLine = !totalRows || rows < totalRows;
@@ -156,8 +171,8 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
                 line(L"账户余额 --", yy, 16, ink, true);
             yy += 28;
         }
-        if (today && data.costAt && !data.costs.empty()) {
-            for (auto &cost : data.costs) {
+        if (today && data.costAt && !costs.empty()) {
+            for (auto &cost : costs) {
                 moneyLine(g, L"今日费用 ", moneyLabel(cost.second, cost.first, 2), L" " + wide(cost.first),
                           yy, d, width, 16, 24, accent);
                 yy += 28;
@@ -165,7 +180,7 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
         } else { line(L"今日费用 --", yy, 16, accent, true); yy += 28; }
         int64_t hit = 0, miss = 0, output = 0, requests = 0;
         if (today && data.tokensAt)
-            for (auto &row : data.models) {
+            for (auto &row : models) {
                 hit += row.hit; miss += row.miss; output += row.output; requests += row.requests;
             }
         line(today && data.tokensAt
@@ -174,7 +189,7 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
                  : L"Token 与请求明细尚不可用", yy + 8, 13, muted);
         yy += 50;
         for (int i = 0; i < rows; ++i) {
-            auto &row = data.models[detailPage + i];
+            auto &row = models[detailPage + i];
             line(wide(row.name), yy, 15, ink, true);
             std::wstring costs;
             for (auto &cost : row.costs) {
@@ -204,8 +219,8 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
             // 24-hour Beijing spend bars drawn last so they fill the space above
             // the footer instead of leaving a large empty strip.
             auto billing = data.billingCurrency();
-            auto found = data.hourly.find(billing);
-            const std::array<int64_t, 24> *hours = found == data.hourly.end() ? nullptr : &found->second;
+            auto found = hourly.find(billing);
+            const std::array<int64_t, 24> *hours = found == hourly.end() ? nullptr : &found->second;
             int64_t peak = 0;
             if (hours)
                 for (auto value : *hours) peak = std::max(peak, value);
@@ -274,7 +289,7 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
                 SolidBrush light(dark ? Color(44, 255, 255, 255) : Color(24, 60, 120, 220));
                 g.FillRectangle(&light, RectF(slotX - 1 * d, barTop, barW + 2 * d, baseline - barTop));
                 std::wstring caption = std::to_wstring(h) + L":00–" + std::to_wstring(h + 1) + L":00";
-                auto &usage = data.hourlyTokens[size_t(h)];
+                auto &usage = hourlyTokens[size_t(h)];
                 float tw = 200 * d, th = 74 * d;
                 float tx = std::clamp(slotX + barW / 2 - tw / 2, 6 * d, width - tw - 6 * d);
                 float ty = std::max(6 * d, barTop - th - 8 * d);
@@ -300,12 +315,56 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
         if (!today && data.costAt) error = L"日期已切换，正在读取今日账单";
         line(error.empty() ? L"平台账单可能延迟更新 · 右键打开 DeepSeek 相关设置" : error,
              footer + 30, 12, error.empty() ? muted : colors.warning);
+        // API-key filter dropdown, drawn last so its menu overlays the content.
+        std::vector<std::string> keys;
+        for (auto &entry : data.byKey) keys.push_back(entry.first);
+        ddVisible = keys.size() > 1;
+        if (ddVisible) {
+            bool dark = colors.ink.GetR() > 128;
+            ddX = width - 20 * d - 150 * d;
+            ddY = 14 * d;
+            ddW = 150 * d;
+            ddH = 26 * d;
+            ddItemH = 24 * d;
+            ddKeys = keys;
+            ddCount = int(keys.size()) + 1;
+            fillRound(g, RectF(ddX, ddY, ddW, ddH), 8 * d,
+                      dark ? Color(220, 48, 52, 60) : Color(220, 246, 248, 252));
+            Pen edge(colors.border, 1);
+            GraphicsPath button;
+            roundPath(button, RectF(ddX, ddY, ddW, ddH), 8 * d);
+            g.DrawPath(&edge, &button);
+            std::wstring label = app->deepSeekKeyFilter.empty() ? L"全部 API Key"
+                                                               : shortKey(app->deepSeekKeyFilter);
+            drawUiText(g, label, RectF(ddX + 10 * d, ddY, ddW - 34 * d, ddH), 11 * d, ink, false, false);
+            drawUiText(g, L"▾", RectF(ddX + ddW - 24 * d, ddY, 18 * d, ddH), 12 * d, muted, false, true);
+            if (keyMenuOpen) {
+                float menuY = ddY + ddH + 2 * d;
+                float menuH = ddItemH * float(ddCount);
+                fillRound(g, RectF(ddX, menuY, ddW, menuH), 8 * d,
+                          dark ? Color(245, 40, 44, 52) : Color(245, 252, 253, 255));
+                GraphicsPath menu;
+                roundPath(menu, RectF(ddX, menuY, ddW, menuH), 8 * d);
+                g.DrawPath(&edge, &menu);
+                for (int i = 0; i < ddCount; ++i) {
+                    std::wstring text = i == 0 ? L"全部 API Key" : shortKey(keys[size_t(i - 1)]);
+                    bool current = i == 0 ? app->deepSeekKeyFilter.empty()
+                                          : (!app->deepSeekKeyFilter.empty() &&
+                                             keys[size_t(i - 1)] == app->deepSeekKeyFilter);
+                    drawUiText(g, text, RectF(ddX + 10 * d, menuY + i * ddItemH, ddW - 20 * d, ddItemH), 10.5f * d,
+                               current ? accent : muted, current, false);
+                }
+            }
+        } else {
+            keyMenuOpen = 0;
+        }
     }
     if (!capture.empty()) image.save(capture);
     presentDetails(std::move(rendered), left, top);
 }
-void Application::refreshDeepSeek() {
+void Application::refreshDeepSeek(bool reveal) {
     { std::lock_guard<std::mutex> guard(mutex); deepSeekRefreshRequested = true; }
+    if (reveal) deepSeekRevealAt = int64_t(GetTickCount64());
     wake.notify_all();
 }
 void Application::checkHarness(bool force) {
@@ -363,6 +422,7 @@ void Application::runDeepSeekWorker() {
             previous.costAt = previous.tokensAt = 0;
             previous.costs.clear(); previous.hourly.clear(); previous.models.clear();
             previous.hourlyTokens.fill(DeepSeekHourUsage{});
+            previous.byKey.clear();
             previous.costError = L"正在读取今日账单";
             emit(previous);
             next = 0;
@@ -379,6 +439,8 @@ void Application::runDeepSeekWorker() {
             if (current.day == previous.day) {
                 if (!current.balanceAt) { current.balances = previous.balances; current.balanceAt = previous.balanceAt; }
                 if (!current.tokensAt && previous.tokensAt) current.hourlyTokens = previous.hourlyTokens;
+                if ((!current.costAt && previous.costAt) || (!current.tokensAt && previous.tokensAt))
+                    current.byKey = previous.byKey;
                 if (!current.costAt && previous.costAt) {
                     current.costs = previous.costs; current.hourly = previous.hourly; current.costAt = previous.costAt;
                     for (auto &old : previous.models) {

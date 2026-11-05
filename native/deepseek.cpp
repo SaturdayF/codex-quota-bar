@@ -151,6 +151,16 @@ static void checkWindow(const json &body, int64_t day) {
     if (seconds <= 0 || seconds > 86400 || 86400 % seconds != 0)
         throw std::runtime_error("Unsupported DeepSeek bucket");
 }
+static std::string seriesKey(const json &series) {
+    auto it = series.find("api_key");
+    if (it == series.end() || !it->is_object()) return {};
+    for (auto field : {"tracking_id", "id", "name"}) {
+        auto value = it->find(field);
+        if (value != it->end() && value->is_string() && !value->get<std::string>().empty())
+            return value->get<std::string>();
+    }
+    return {};
+}
 void parseDeepSeekCosts(DeepSeekState &state, const json &value) {
     auto &body = platformData(value);
     checkWindow(body, state.day);
@@ -158,6 +168,7 @@ void parseDeepSeekCosts(DeepSeekState &state, const json &value) {
     if (!currencies.is_array()) throw std::runtime_error("Missing DeepSeek cost series");
     std::map<std::string, int64_t> totals;
     std::map<std::string, std::array<int64_t, 24>> hourly;
+    std::map<std::string, DeepSeekKeyStats> byKey;
     auto models = state.models;
     for (auto &r : models) r.costs.clear();
     for (auto &data : currencies) {
@@ -168,18 +179,26 @@ void parseDeepSeekCosts(DeepSeekState &state, const json &value) {
         totals[currency] = 0;
         auto &hours = hourly[currency];
         for (auto &series : data["series"]) {
-            auto &row = modelRow(models, series.at("model").get<std::string>());
+            auto model = series.at("model").get<std::string>();
+            auto key = seriesKey(series);
+            auto &row = modelRow(models, model);
+            auto &keyStats = byKey[key];
+            auto &keyRow = modelRow(keyStats.models, model);
             if (!series.at("buckets").is_array()) throw std::runtime_error("Invalid cost buckets");
             for (auto &bucket : series["buckets"]) {
                 auto time = bucket.at("time").get<int64_t>();
                 if (time < state.day || time >= state.day + 86400) continue;
                 auto cost = decimalMoney(bucket.at("cost"));
                 row.costs[currency] = add(row.costs[currency], cost);
+                keyRow.costs[currency] = add(keyRow.costs[currency], cost);
+                keyStats.costs[currency] = add(keyStats.costs[currency], cost);
                 totals[currency] = add(totals[currency], cost);
                 // Bucket each in-day timestamp by Beijing hour (UTC+8) so the
                 // detail card can chart the day's spend shape.
                 auto hour = size_t((time + 28800) % 86400 / 3600);
                 hours[hour] = add(hours[hour], cost);
+                auto &keyHours = keyStats.hourly[currency];
+                keyHours[hour] = add(keyHours[hour], cost);
             }
         }
     }
@@ -188,6 +207,7 @@ void parseDeepSeekCosts(DeepSeekState &state, const json &value) {
     state.costs = std::move(totals);
     state.hourly = std::move(hourly);
     state.models = std::move(models);
+    state.byKey = std::move(byKey);
 }
 static int64_t tokenNumber(const json &value) {
     if (value.is_number_integer()) {
@@ -215,8 +235,13 @@ void parseDeepSeekTokens(DeepSeekState &state, const json &value) {
     auto models = state.models;
     for (auto &r : models) r.hit = r.miss = r.output = r.requests = 0;
     std::array<DeepSeekHourUsage, 24> hourly{};
+    auto byKey = state.byKey;
     for (auto &series : body["series"]) {
-        auto &row = modelRow(models, series.at("model").get<std::string>());
+        auto model = series.at("model").get<std::string>();
+        auto key = seriesKey(series);
+        auto &row = modelRow(models, model);
+        auto &keyStats = byKey[key];
+        auto &keyRow = modelRow(keyStats.models, model);
         if (!series.at("buckets").is_array()) throw std::runtime_error("Invalid usage buckets");
         for (auto &bucket : series["buckets"]) {
             auto time = bucket.at("time").get<int64_t>();
@@ -233,12 +258,20 @@ void parseDeepSeekTokens(DeepSeekState &state, const json &value) {
             row.miss = add(row.miss, miss);
             row.output = add(row.output, output);
             row.requests = add(row.requests, requests);
+            keyRow.hit = add(keyRow.hit, hit);
+            keyRow.miss = add(keyRow.miss, miss);
+            keyRow.output = add(keyRow.output, output);
+            keyRow.requests = add(keyRow.requests, requests);
             // Bucket usage by Beijing hour so the chart can show per-hour tokens.
             auto hour = size_t((time + 28800) % 86400 / 3600);
             hourly[hour].hit = add(hourly[hour].hit, hit);
             hourly[hour].miss = add(hourly[hour].miss, miss);
             hourly[hour].output = add(hourly[hour].output, output);
             hourly[hour].requests = add(hourly[hour].requests, requests);
+            keyStats.hourlyTokens[hour].hit = add(keyStats.hourlyTokens[hour].hit, hit);
+            keyStats.hourlyTokens[hour].miss = add(keyStats.hourlyTokens[hour].miss, miss);
+            keyStats.hourlyTokens[hour].output = add(keyStats.hourlyTokens[hour].output, output);
+            keyStats.hourlyTokens[hour].requests = add(keyStats.hourlyTokens[hour].requests, requests);
         }
     }
     int64_t total = 0, requests = 0;
@@ -248,6 +281,7 @@ void parseDeepSeekTokens(DeepSeekState &state, const json &value) {
     }
     state.models = std::move(models);
     state.hourlyTokens = hourly;
+    state.byKey = std::move(byKey);
 }
 struct InternetHandle {
     HINTERNET value = nullptr;

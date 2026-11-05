@@ -879,7 +879,7 @@ void SettingsWindow::command(int id, int notice) {
         draft.deepSeekShowBadge = !draft.deepSeekShowBadge;
         break;
     case DeepSeekRefresh:
-        app->refreshDeepSeek();
+        app->refreshDeepSeek(true);
         break;
     case DeepSeekToken:
         if (notice == EN_CHANGE) tokenStatus.clear();

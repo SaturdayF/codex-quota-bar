@@ -113,6 +113,20 @@ int deepSeekTests(std::ostream &log) {
     check(data.models.size() == 2 && data.models[0].hit == 11 && data.models[0].miss == 22 &&
               data.models[0].output == 33 && data.models[0].requests == 7,
           "daily token counts aggregate per model and keep requests separate");
+    // Two API keys stay separable while still folding into the account total.
+    auto twoKeys = envelope(json{{"start", day}, {"end", day + 86400}, {"bucket", "1d"}, {"data", json::array()}});
+    auto seriesA = json{{"model", "m1"}, {"api_key", {{"tracking_id", "key-a"}}},
+                        {"buckets", json::array({json{{"time", day}, {"cost", "1.00"}}})}};
+    auto seriesB = json{{"model", "m2"}, {"api_key", {{"tracking_id", "key-b"}}},
+                        {"buckets", json::array({json{{"time", day}, {"cost", "2.00"}}})}};
+    twoKeys["data"]["biz_data"]["data"].push_back(
+        json{{"currency", "CNY"}, {"series", json::array({seriesA, seriesB})}});
+    DeepSeekState keyed;
+    keyed.day = day;
+    parseDeepSeekCosts(keyed, twoKeys);
+    check(keyed.byKey.size() == 2 && keyed.byKey["key-a"].costs["CNY"] == 100000000 &&
+              keyed.byKey["key-b"].costs["CNY"] == 200000000 && keyed.costs["CNY"] == 300000000,
+          "cost series aggregate per API key and in total");
     // Live one-day responses use numeric bucket seconds and 24 hourly rows.
     // Keep these fixtures synthetic; never commit a real account response.
     auto hourlyCost = costFixture(day), hourlyTokens = tokenFixture(day);
@@ -314,6 +328,23 @@ int deepSeekUiTests(const fs::path &dir) {
         overlay->render();
         check(!overlay->balanceAnimating && overlay->balanceShown == 810000000,
               "balance roll settles on the new total");
+        // A manual refresh replays the balance from 0.00 up to the current value.
+        app.deepSeekRevealAt = int64_t(GetTickCount64());
+        overlay->render();
+        KillTimer(overlay->window, 4);
+        check(overlay->balanceAnimating && overlay->balanceFrom == 0 && overlay->balanceTo == 810000000,
+              "manual refresh replays the balance from zero");
+        // API-key dropdown appears once more than one key is present.
+        app.deepseek.byKey.clear();
+        app.deepseek.byKey["key-a"] = DeepSeekKeyStats{};
+        app.deepseek.byKey["key-b"] = DeepSeekKeyStats{};
+        overlay->showDeepSeekDetails(dir / L"deepseek-keys.png");
+        check(overlay->ddVisible && overlay->ddCount == 3, "API-key dropdown lists every key plus the total");
+        overlay->keyMenuOpen = 1;
+        overlay->showDeepSeekDetails(dir / L"deepseek-keys-open.png");
+        overlay->keyMenuOpen = 0;
+        app.deepseek.byKey = original.byKey;
+        overlay->showDeepSeekDetails();
         app.deepseek.balances = original.balances;
         overlay->render();
         RECT r{}; GetWindowRect(overlay->window, &r);

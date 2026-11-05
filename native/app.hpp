@@ -33,7 +33,14 @@ struct Overlay {
     int64_t balanceShown = -1;
     int64_t balanceFrom = 0, balanceTo = 0;
     int64_t balanceAnimStart = 0, balanceDuration = 700;
+    int64_t balanceRevealAt = 0;
     bool balanceAnimating = false;
+    // API-key filter dropdown in the details card.
+    int keyMenuOpen = 0;
+    bool ddVisible = false;
+    float ddX = 0, ddY = 0, ddW = 0, ddH = 0, ddItemH = 0;
+    int ddCount = 0;
+    std::vector<std::string> ddKeys;
     std::unique_ptr<Surface> detailFrost;
     std::unique_ptr<Surface> detailImage;
     BackdropMode detailBackdrop = BackdropMode::Solid;
@@ -91,6 +98,8 @@ struct Application {
     std::atomic<bool> stopping{false};
     bool refreshRequested = false;
     bool deepSeekRefreshRequested = false;
+    std::atomic<int64_t> deepSeekRevealAt{0};
+    std::string deepSeekKeyFilter;  // empty = all API keys
     bool harnessActive = false; // Component active: running Harness or standalone balance mode.
     int harnessSession = 0;
     std::shared_ptr<std::atomic<bool>> deepSeekSessionStop = std::make_shared<std::atomic<bool>>(true);
@@ -112,7 +121,7 @@ struct Application {
     void runWorker();
     void runDeepSeekWorker();
     void checkHarness(bool force = false);
-    void refreshDeepSeek();
+    void refreshDeepSeek(bool reveal = false);
     void applyDeepSeek(const DeepSeekUpdate &update);
     void apply(const State &value);
     void rebuild();

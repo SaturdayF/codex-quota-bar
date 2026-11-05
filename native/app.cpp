@@ -206,9 +206,20 @@ void Overlay::render() {
     Surface image(layout.width, layout.height);
     auto now = GetTickCount64();
     if (kind == WidgetKind::DeepSeek) {
-        // Roll the decimal part down from the previous balance to the new one.
+        // Roll the balance down from the previous value, or replay it from 0.00
+        // when the user manually refreshes.
         auto primary = deepSeekPrimaryBalance(app->deepseek);
-        if (primary) {
+        int64_t revealAt = app->deepSeekRevealAt.load();
+        if (revealAt > 0 && revealAt != balanceRevealAt && primary) {
+            balanceRevealAt = revealAt;
+            balanceFrom = 0;
+            balanceTo = *primary;
+            balanceAnimStart = now;
+            balanceDuration = 1400;
+            balanceAnimating = true;
+            balanceShown = 0;
+            SetTimer(window, 4, 16, nullptr);
+        } else if (primary) {
             if (balanceShown < 0) {
                 balanceShown = *primary;
                 balanceTo = *primary;
@@ -503,6 +514,30 @@ LRESULT CALLBACK Overlay::detailProcedure(HWND w, UINT msg, WPARAM wp, LPARAM lp
         if (self->chartHover != -1) {
             self->chartHover = -1;
             self->showDeepSeekDetails();
+        }
+        return 0;
+    }
+    if (msg == WM_LBUTTONUP && self && self->kind == WidgetKind::DeepSeek && self->ddVisible) {
+        float d = self->monitor.dpi / 96.f;
+        int cx = int(short(LOWORD(lp))), cy = int(short(HIWORD(lp)));
+        if (cx >= self->ddX && cx < self->ddX + self->ddW && cy >= self->ddY && cy < self->ddY + self->ddH) {
+            self->keyMenuOpen = !self->keyMenuOpen;
+            self->showDeepSeekDetails();
+            return 0;
+        }
+        if (self->keyMenuOpen) {
+            float menuY = self->ddY + self->ddH + 2 * d;
+            int index = int((cy - menuY) / self->ddItemH);
+            if (cy >= menuY && index >= 0 && index < self->ddCount) {
+                self->app->deepSeekKeyFilter =
+                    index == 0 ? std::string() : self->ddKeys[size_t(index - 1)];
+                self->keyMenuOpen = 0;
+                self->showDeepSeekDetails();
+                return 0;
+            }
+            self->keyMenuOpen = 0;
+            self->showDeepSeekDetails();
+            return 0;
         }
         return 0;
     }
