@@ -1,6 +1,7 @@
 #pragma once
 #include "drawing.hpp"
 #include "deepseek.hpp"
+#include "browser_token.hpp"
 #include "taskbar.hpp"
 namespace quota {
 constexpr UINT TrayMessage = WM_APP + 12;
@@ -116,14 +117,17 @@ struct Application {
 };
 struct SettingsWindow {
     Application *app;
-    HWND window = nullptr, viewport = nullptr, content = nullptr, palette = nullptr;
+    HWND window = nullptr, viewport = nullptr, content = nullptr, palette = nullptr, helpDialog = nullptr;
     Settings draft;
     Monitor monitor;
     int dpi = 96, page = 0, scroll = 0;
     int wheelRemainder = 0;
     int pageHeight = 0, thumbGrab = -1;
     std::unique_ptr<Surface> settingsFrost;
+    std::unique_ptr<Surface> helpFrost;
+    std::wstring helpTitle, helpMessage;
     BackdropMode backdrop = BackdropMode::Solid;
+    BackdropMode helpBackdrop = BackdropMode::Solid;
     bool simulatedGlass = false;
     bool startup = false, closing = false;
     bool loading = false;
@@ -136,6 +140,13 @@ struct SettingsWindow {
     std::vector<HWND> controls;
     HWND styles = nullptr, scale = nullptr, opacitySlider = nullptr, iconOpacitySlider = nullptr, display = nullptr, path = nullptr, interval = nullptr;
     HWND deepSeekToken = nullptr, deepSeekInterval = nullptr;
+    std::thread tokenWorker;
+    std::atomic<bool> tokenStop{false}, tokenDone{false};
+    PlatformTokenResult tokenResult;
+    std::wstring tokenInputAtStart;
+    std::wstring tokenStatus;
+    std::function<PlatformTokenResult(std::atomic<bool> &)> tokenProbe;
+    std::function<void(const std::string &)> tokenStore = saveDeepSeekCredential;
     Color selectedColor;
     bool colorHour = true;
     SettingsWindow(Application *owner, HMONITOR requested);
@@ -153,18 +164,27 @@ struct SettingsWindow {
     void reveal(HMONITOR monitor);
     void selectPage(int index);
     void command(int id, int notification);
+    void startPlatformToken();
+    void finishPlatformToken();
     void styleChanged();
     Settings previewSettings() const;
     void draw(HDC dc, bool inner);
     void drawButton(const DRAWITEMSTRUCT &item);
     void openPalette(bool hour);
     void closePalette();
+    void openHelp(const std::wstring &title = L"DeepSeek 凭证填写说明", const std::wstring &message = {});
+    void openTokenFailure(const std::wstring &title, const std::wstring &message);
+    SIZE helpSize() const;
+    void closeHelp();
+    void renderHelp(Surface &image);
+    void captureHelp(const fs::path &file);
     bool save();
     void capture(const fs::path &file);
     static LRESULT CALLBACK procedure(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK contentProcedure(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK viewportProcedure(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK paletteProcedure(HWND, UINT, WPARAM, LPARAM);
+    static LRESULT CALLBACK helpProcedure(HWND, UINT, WPARAM, LPARAM);
 };
 int uiTests(const fs::path &dir);
 } // namespace quota

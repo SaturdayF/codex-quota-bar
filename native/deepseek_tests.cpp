@@ -6,16 +6,23 @@ static json balanceFixture() {
                                          {{"currency", "USD"}, {"balance", "2.55"}}}}});
 }
 static json costFixture(int64_t day) {
-    auto series = [&](const char *model, const char *cost) {
-        return json{{"model", model}, {"api_key", {{"tracking_id", "fixture-only"}}},
-                    {"buckets", {{{"time", day - 86400}, {"cost", "999"}},
-                                 {{"time", day}, {"cost", cost}}, {{"time", day + 86400}, {"cost", "999"}}}}};
+    // Spread the synthetic daily spend across Beijing hours so the details card
+    // charts a realistic day shape; the per-currency totals stay unchanged.
+    auto bucket = [&](int64_t hour, const char *cost) {
+        return json{{"time", day + hour * 3600}, {"cost", cost}};
+    };
+    auto series = [&](const char *model, json buckets) {
+        buckets.push_back({{"time", day - 86400}, {"cost", "999"}});
+        buckets.push_back({{"time", day + 86400}, {"cost", "999"}});
+        return json{{"model", model}, {"api_key", {{"tracking_id", "fixture-only"}}}, {"buckets", buckets}};
     };
     return envelope({{"start", day}, {"end", day + 86400}, {"bucket", "1d"},
-                     {"data", {{{"currency", "CNY"}, {"series", {series("deepseek-v4-pro", "0.12"),
-                                                                    series("deepseek-v4-pro", "0.23"),
-                                                                    series("deepseek-v4-flash", "0.00001")}}},
-                               {{"currency", "USD"}, {"series", {series("deepseek-v4-pro", "0.05")}}}}}});
+                     {"data", {{{"currency", "CNY"}, {"series", {
+                        series("deepseek-v4-pro", json::array({bucket(9, "0.03"), bucket(10, "0.04"), bucket(15, "0.05")})),
+                        series("deepseek-v4-pro", json::array({bucket(13, "0.08"), bucket(14, "0.10"), bucket(16, "0.05")})),
+                        series("deepseek-v4-flash", json::array({bucket(20, "0.00001")}))}}},
+                        {{"currency", "USD"}, {"series", {
+                        series("deepseek-v4-pro", json::array({bucket(11, "0.02"), bucket(12, "0.03")}))}}}}}});
 }
 static json tokenFixture(int64_t day) {
     auto series = [&](const char *model, int hit, int miss, int output, int requests) {
@@ -129,6 +136,9 @@ int deepSeekTests(std::ostream &log) {
           "numeric hourly cost buckets aggregate all 24 hours into today's bill");
     check(hourly.models[0].hit == 48 && hourly.models[0].miss == 96 && hourly.models[0].output == 144 &&
               hourly.models[0].requests == 48, "numeric hourly token buckets preserve integer usage counters");
+    int64_t hourlySum = 0;
+    for (auto value : hourly.hourly["CNY"]) hourlySum += value;
+    check(hourlySum == 72000000, "hourly chart buckets sum to the daily bill");
     hourlyCost["data"]["biz_data"]["bucket"] = "1h";
     parseDeepSeekCosts(hourly, hourlyCost);
     check(hourly.costs["CNY"] == 72000000, "text hourly intervals remain compatible without double counting");
@@ -202,9 +212,19 @@ int deepSeekTests(std::ostream &log) {
         }, now);
     check(httpFailure.costError.find(L"HTTP 500") != std::wstring::npos,
           "billing HTTP errors expose status without raw response or credential data");
+    check(validateDeepSeekCredential("platform-fixture", stop, transport).empty(),
+          "browser token validation accepts a successful platform balance response");
+    auto expiredBrowser = validateDeepSeekCredential("platform-fixture", stop,
+        [](auto &, auto &, auto &, auto &) -> json { throw std::runtime_error("DeepSeek session expired"); });
+    check(expiredBrowser.find(L"登录已失效") != std::wstring::npos, "expired browser token requests platform login and retry");
+    auto offline = validateDeepSeekCredential("platform-fixture", stop,
+        [](auto &, auto &, auto &, auto &) -> json { throw std::runtime_error("DeepSeek network error"); });
+    check(offline.find(L"网络") != std::wstring::npos && offline.find(L"登录已失效") == std::wstring::npos,
+          "network failure is not misreported as a signed-out browser");
     calls = 0; stop = true;
     readDeepSeek("platform-fixture", stop, [&](auto &, auto &, auto &, auto &) -> json { ++calls; return {}; }, now);
     check(calls == 0, "cancelled DeepSeek refresh performs no requests");
+    checks += browserTokenTests(log);
     return checks;
 }
 int deepSeekUiTests(const fs::path &dir) {
@@ -306,6 +326,95 @@ int deepSeekUiTests(const fs::path &dir) {
     check(GetDlgItem(settings.content, 261) == nullptr, "DeepSeek has no API-key input control");
     check(GetWindowLongPtrW(settings.deepSeekToken, GWL_STYLE) & ES_PASSWORD, "platform session input is masked");
     settings.capture(dir / L"deepseek-settings.png");
+    settings.openHelp();
+    check(settings.helpDialog && IsWindowVisible(settings.helpDialog),
+          "DeepSeek credential help opens as a custom glass sheet");
+    settings.captureHelp(dir / L"deepseek-help.png");
+    settings.closeHelp();
+    check(!settings.helpDialog, "credential help sheet closes cleanly");
+    auto acquisitionState = app.deepseek;
+    std::string savedAcquisition;
+    int credentialWrites = 0;
+    settings.tokenStore = [&](const std::string &token) { savedAcquisition = token; ++credentialWrites; };
+    int previousSession = app.harnessSession;
+    auto previousDraftInterval = settings.draft.deepSeekInterval;
+    settings.draft.deepSeekInterval = 300;
+    settings.selectPage(0);
+    settings.clearDeepSeekCredentials = true;
+    settings.tokenProbe = [](std::atomic<bool> &) { return PlatformTokenResult{"fixture-acquired", {}}; };
+    settings.startPlatformToken();
+    check(pump([&] { return !settings.tokenWorker.joinable(); }), "browser acquisition completes through the UI timer");
+    wchar_t acquired[128]{};
+    GetWindowTextW(settings.deepSeekToken, acquired, 128);
+    check(savedAcquisition == "fixture-acquired" && credentialWrites == 1 && !settings.clearDeepSeekCredentials,
+          "browser token automatically persists once and clears staged credential deletion");
+    check(std::wstring(acquired).empty() && settings.tokenStatus == L"凭证已自动保存。" && settings.page == 3,
+          "successful acquisition returns to DeepSeek settings with saved status and empty keep-existing field");
+    check(app.harnessSession > previousSession && settings.draft.deepSeekInterval == 300 &&
+              app.settings.deepSeekInterval != 300,
+          "credential save refreshes its query session without applying unrelated setting drafts");
+    settings.draft.deepSeekInterval = previousDraftInterval;
+    auto successSize = settings.helpSize();
+    check(settings.helpDialog && settings.helpTitle == L"获取 Token 成功" && successSize.cy < settings.px(260),
+          "successful token acquisition shows a compact confirmation sheet");
+    settings.captureHelp(dir / L"token-success.png");
+    settings.closeHelp();
+    settings.capture(dir / L"deepseek-autosaved.png");
+    SetWindowTextW(settings.deepSeekToken, L"fixture-existing-input");
+    settings.tokenProbe = [](std::atomic<bool> &) { return PlatformTokenResult{{}, L"fixture-not-signed-in"}; };
+    settings.startPlatformToken();
+    check(pump([&] { return !settings.tokenWorker.joinable(); }), "missing browser login finishes without hanging settings");
+    GetWindowTextW(settings.deepSeekToken, acquired, 128);
+    check(std::wstring(acquired) == L"fixture-existing-input" && credentialWrites == 1,
+          "failed acquisition preserves existing input and does not save a credential");
+    check(settings.helpDialog && !IsWindowEnabled(settings.window) && settings.helpTitle == L"获取凭证失败",
+          "acquisition failure uses the shared glass dialog with modal ownership");
+    check(settings.helpMessage.find(L"网页版登录 DeepSeek") != std::wstring::npos && settings.helpSize().cy > successSize.cy,
+          "failure reminds users to check web login and sizes itself to message length");
+    settings.openTokenFailure(L"获取凭证失败", L"未找到 Edge 最近使用配置中的 DeepSeek 登录凭证。请在打开的平台网页登录，等待几秒后再次点击“一键获取凭证”。\n\n不支持 InPrivate 或自定义用户数据目录；也可按“凭证填写说明”手动填写。");
+    settings.captureHelp(dir / L"token-error-light.png");
+    auto originalTheme = settings.draft.darkAppearance;
+    settings.draft.darkAppearance = true;
+    settings.helpFrost.reset();
+    settings.captureHelp(dir / L"token-error-dark.png");
+    settings.draft.darkAppearance = originalTheme;
+    SendMessageW(settings.helpDialog, WM_KEYDOWN, VK_ESCAPE, 0);
+    check(!settings.helpDialog && IsWindowEnabled(settings.window), "Escape dismisses failure sheet and restores settings input");
+    settings.tokenStore = [](const std::string &) { throw std::runtime_error("fixture credential write failure"); };
+    settings.tokenProbe = [](std::atomic<bool> &) { return PlatformTokenResult{"fixture-save-failure", {}}; };
+    previousSession = app.harnessSession;
+    settings.startPlatformToken();
+    check(pump([&] { return !settings.tokenWorker.joinable(); }), "credential store failure completes without hanging");
+    GetWindowTextW(settings.deepSeekToken, acquired, 128);
+    check(settings.tokenStatus.find(L"自动保存失败") != std::wstring::npos && credentialWrites == 1 &&
+              app.harnessSession == previousSession && std::wstring(acquired) == L"fixture-existing-input",
+          "failed persistence never reports saved or refreshes the account and preserves input");
+    check(settings.helpDialog && settings.helpTitle == L"凭证保存失败",
+          "credential write failure uses the same themed glass dialog");
+    SendMessageW(settings.helpDialog, WM_KEYDOWN, VK_RETURN, 0);
+    check(!settings.helpDialog && IsWindowEnabled(settings.window), "Enter dismisses credential failure sheet");
+    settings.tokenStore = [&](const std::string &token) { savedAcquisition = token; ++credentialWrites; };
+    std::atomic<bool> releaseToken{false};
+    settings.tokenProbe = [&](std::atomic<bool> &cancel) {
+        while (!cancel && !releaseToken) Sleep(1);
+        return PlatformTokenResult{"fixture-late", {}};
+    };
+    settings.startPlatformToken();
+    check(!IsWindowEnabled(GetDlgItem(settings.content, PlatformLoginButton)), "duplicate acquisition clicks are disabled");
+    SetWindowTextW(settings.deepSeekToken, L"fixture-manual"); releaseToken = true;
+    check(pump([&] { return !settings.tokenWorker.joinable(); }), "acquisition finishes after a manual edit");
+    GetWindowTextW(settings.deepSeekToken, acquired, 128);
+    check(std::wstring(acquired) == L"fixture-manual" && credentialWrites == 1,
+          "late browser result neither overwrites manual edits nor saves the acquired token");
+    releaseToken = false;
+    settings.startPlatformToken();
+    settings.command(265, BN_CLICKED);
+    check(pump([&] { return !settings.tokenWorker.joinable(); }) && GetWindowTextLengthW(settings.deepSeekToken) == 0 &&
+              settings.clearDeepSeekCredentials && credentialWrites == 1, "clear credential cancels pending acquisition without saving");
+    settings.clearDeepSeekCredentials = false;
+    settings.tokenProbe = {};
+    settings.tokenStore = saveDeepSeekCredential;
+    app.applyDeepSeek({app.generation, acquisitionState, app.harnessSession});
     settings.command(269, BN_CLICKED);
     check(!settings.draft.deepSeekShowBadge && app.settings.deepSeekShowBadge,
           "DSH badge switch stages changes without hiding the balance component");

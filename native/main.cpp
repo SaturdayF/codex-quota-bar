@@ -53,8 +53,26 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         }
         else if (has(L"--ui-test"))
             result = uiTests(after(L"--output", L"native-ui-tests"));
+        else if (has(L"--deepseek-ui-test")) {
+            deepSeekUiTests(after(L"--output", L"deepseek-ui-tests"));
+            result = 0;
+        }
         else if (has(L"--render-ui"))
             renderPreviews(after(L"--render-ui", L"native-previews"));
+        else if (has(L"--edge-token-probe")) {
+            // Status only: never persist or print browser credentials.
+            std::atomic<bool> cancel{false};
+            json report;
+            try {
+                auto root = edgeUserData();
+                auto profile = edgeProfileName(root);
+                auto acquired = acquireEdgePlatformToken(root, profile, cancel);
+                report = {{"profileAvailable", true}, {"validated", !acquired.token.empty()}, {"error", utf8(acquired.error)}};
+            } catch (...) { report = {{"profileAvailable", false}, {"validated", false}, {"error", "Edge profile unavailable"}}; }
+            std::ofstream out(after(L"--output", L"edge-token-probe.json"));
+            out << report.dump(2);
+            result = report["validated"].get<bool>() ? 0 : 1;
+        }
         else if (has(L"--deepseek-probe")) {
             // Status-only diagnostics: never serialize credentials, raw API
             // responses, account identifiers, balances or individual usage.

@@ -44,7 +44,8 @@ enum {
     DeepSeekPlatform,
     DeepSeekHelp,
     DeepSeekAlwaysShow,
-    DeepSeekBadge
+    DeepSeekBadge,
+    DeepSeekLogin = PlatformLoginButton
 };
 static std::wstring controlText(HWND w) {
     int n = GetWindowTextLengthW(w);
@@ -337,6 +338,7 @@ SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
     registerSettingsClass(L"CodexQuotaBar.Native.Content", contentProcedure);
     registerSettingsClass(L"CodexQuotaBar.Native.Viewport", viewportProcedure);
     registerSettingsClass(L"CodexQuotaBar.Native.Palette", paletteProcedure);
+    registerSettingsClass(L"CodexQuotaBar.Native.Help", helpProcedure);
     window =
         CreateWindowExW(WS_EX_APPWINDOW, L"CodexQuotaBar.Native.Settings", L"Codex Quota Bar 设置",
                         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, monitor.work.left + 40, monitor.work.top + 40,
@@ -359,6 +361,9 @@ SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
     SetTimer(window, 1, 16, nullptr);
 }
 SettingsWindow::~SettingsWindow() {
+    tokenStop = true;
+    if (tokenWorker.joinable()) tokenWorker.join();
+    closeHelp();
     closePalette();
     if (window)
         DestroyWindow(window);
@@ -470,6 +475,7 @@ void SettingsWindow::createControls() {
     button(L"清除凭证", DeepSeekClear, 3);
     button(L"打开 DeepSeek 平台", DeepSeekPlatform, 3);
     button(L"凭证填写说明", DeepSeekHelp, 3);
+    button(L"一键获取凭证", DeepSeekLogin, 3);
     path = control(L"EDIT", draft.codexPath.c_str(), Path, 2, ES_AUTOHSCROLL);
     SendMessageW(path, EM_SETCUEBANNER, 0, reinterpret_cast<LPARAM>(L"自动查找 Codex CLI"));
     button(L"浏览…", Browse, 2);
@@ -574,7 +580,8 @@ void SettingsWindow::layout() {
     place(DeepSeekEnabled, contentWidth - 60, 89, 44, 26);
     place(DeepSeekAlwaysShow, contentWidth - 60, 155, 44, 26);
     place(DeepSeekBadge, contentWidth - 60, 221, 44, 26);
-    place(DeepSeekToken, 0, 337, contentWidth - 14, 30);
+    place(DeepSeekToken, 0, 337, contentWidth - 176, 30);
+    place(DeepSeekLogin, contentWidth - 166, 337, 152, 30);
     place(DeepSeekInterval, contentWidth - 164, 395, 150, 220);
     place(DeepSeekRefresh, contentWidth - 124, 461, 110, 34);
     place(DeepSeekClear, contentWidth - 124, 527, 110, 34);
@@ -773,7 +780,8 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 row(148, L"未启动时也显示余额", L"默认关闭；开启后独立显示并刷新余额和账单。", 110);
                 row(214, L"显示 DSH 图标", L"关闭后仅显示余额和当日消费，组件自动缩短。", 110);
                 drawUiText(g, L"平台登录凭证 userToken", RectF(0, 280, contentWidth - 210.f, 26), 16, ink);
-                drawUiText(g, L"同一平台账户的余额、费用和 Token 明细。", RectF(0, 306, contentWidth - 175.f, 26), 14, muted);
+                drawUiText(g, tokenStatus.empty() ? L"同一平台账户的余额、费用和 Token 明细。" : tokenStatus.c_str(),
+                           RectF(0, 306, contentWidth - 175.f, 26), 14, muted);
                 row(388, L"自动刷新间隔", L"失败时保留旧数据并退避重试。", 190);
                 row(454, L"读取最新数据", L"先保存凭证；组件显示期间可刷新。", 150);
                 row(520, L"本机登录态", clearDeepSeekCredentials ? L"保存后将清除原凭证，可填写新凭证替换。" : L"留空保留原凭证，清除在保存后生效。", 150);
@@ -873,7 +881,12 @@ void SettingsWindow::command(int id, int notice) {
     case DeepSeekRefresh:
         app->refreshDeepSeek();
         break;
+    case DeepSeekToken:
+        if (notice == EN_CHANGE) tokenStatus.clear();
+        break;
     case DeepSeekClear:
+        tokenStop = true;
+        tokenStatus.clear();
         clearDeepSeekCredentials = true;
         SetWindowTextW(deepSeekToken, L"");
         SendMessageW(deepSeekToken, EM_SETCUEBANNER, 0, reinterpret_cast<LPARAM>(L"保存后清除；或输入新平台凭证"));
@@ -882,13 +895,10 @@ void SettingsWindow::command(int id, int notice) {
         ShellExecuteW(window, L"open", L"https://platform.deepseek.com/usage", nullptr, nullptr, SW_SHOWNORMAL);
         break;
     case DeepSeekHelp:
-        MessageBoxW(window,
-                    L"1. 点击“打开 DeepSeek 平台”，在浏览器中自行登录。\n"
-                    L"2. 按 F12，在 Application / 应用 → Local Storage / 本地存储中选择 https://platform.deepseek.com。\n"
-                    L"3. 找到 userToken，将令牌或含 value 的 JSON 填入“平台登录凭证”，点击“保存更改”。\n\n"
-                    L"平台凭证同时用于同一账户的余额与账单。\n"
-                    L"userToken 属于平台登录凭证，请仅保存在本机。无需填写 API Key 或账号密码。",
-                    L"DeepSeek 凭证填写说明", MB_OK | MB_ICONINFORMATION);
+        openHelp();
+        break;
+    case DeepSeekLogin:
+        startPlatformToken();
         break;
     case Cancel:
         SendMessageW(window, WM_CLOSE, 0, 0);
@@ -1105,6 +1115,178 @@ void SettingsWindow::closePalette() {
         palette = nullptr;
         DestroyWindow(old);
     }
+}
+// Borderless frosted-glass help sheet for the DeepSeek credential walkthrough.
+static RectF helpOkRect(float width, float height) {
+    return RectF(width - 28 - 100, height - 24 - 38, 100, 38);
+}
+void SettingsWindow::closeHelp() {
+    if (helpDialog) {
+        HWND old = helpDialog;
+        helpDialog = nullptr;
+        DestroyWindow(old);
+    }
+    if (window) {
+        EnableWindow(window, TRUE);
+        SetForegroundWindow(window);
+    }
+}
+SIZE SettingsWindow::helpSize() const {
+    if (helpMessage.empty()) return {px(580), px(372)};
+    float width = helpMessage.size() < 55 ? 400.f : 480.f;
+    Surface measurement(1, 1);
+    Graphics graphics(measurement.bitmap.get());
+    Font body(L"Microsoft YaHei UI", 14.5f, FontStyleRegular, UnitPixel);
+    StringFormat format;
+    RectF bounds;
+    graphics.MeasureString(helpMessage.c_str(), -1, &body, RectF(0, 0, width - 56, 2000), &format, &bounds);
+    return {px(width), px(std::max(188.f, std::ceil(bounds.Height) + 166.f))};
+}
+void SettingsWindow::openTokenFailure(const std::wstring &title, const std::wstring &message) {
+    openHelp(title, message + L"\n\n请确认已在 Edge 网页版登录 DeepSeek 平台，登录后再试。");
+}
+void SettingsWindow::openHelp(const std::wstring &title, const std::wstring &message) {
+    closeHelp();
+    helpTitle = title;
+    helpMessage = message;
+    auto size = helpSize();
+    int width = size.cx, height = size.cy;
+    RECT frame{};
+    GetWindowRect(window, &frame);
+    MONITORINFO info{sizeof(info)};
+    GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &info);
+    int x = frame.left + (frame.right - frame.left - width) / 2;
+    int y = frame.top + (frame.bottom - frame.top - height) / 2;
+    x = std::clamp(x, int(info.rcWork.left), std::max(int(info.rcWork.left), int(info.rcWork.right) - width));
+    y = std::clamp(y, int(info.rcWork.top), std::max(int(info.rcWork.top), int(info.rcWork.bottom) - height));
+    helpFrost.reset();
+    helpDialog = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"CodexQuotaBar.Native.Help",
+                                 helpTitle.c_str(), WS_POPUP | WS_CLIPCHILDREN, x, y, width, height,
+                                 window, nullptr, GetModuleHandleW(nullptr), this);
+    if (!helpDialog) return;
+    EnableWindow(window, FALSE);
+    helpBackdrop = configureBackdrop(helpDialog, draft.darkAppearance);
+    SetWindowPos(helpDialog, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    InvalidateRect(helpDialog, nullptr, FALSE);
+    if (!app->testing) {
+        SetForegroundWindow(helpDialog);
+        SetFocus(helpDialog);
+    }
+}
+void SettingsWindow::renderHelp(Surface &image) {
+    Graphics g(image.bitmap.get());
+    g.SetSmoothingMode(SmoothingModeAntiAlias);
+    const auto &colors = glassPalette(draft.darkAppearance);
+    if (simulatedGlass) {
+        if (!helpFrost) helpFrost = previewFrost(image.width, image.height);
+        paintFrost(g, RectF(0, 0, float(image.width), float(image.height)), 0, colors, helpFrost.get(),
+                   RectF(0, 0, float(image.width), float(image.height)));
+    } else {
+        paintBackdrop(g, colors, helpBackdrop);
+    }
+    float d = dpi / 96.f;
+    g.ScaleTransform(d, d);
+    float width = image.width / d, height = image.height / d;
+    GraphicsPath edgePath;
+    roundPath(edgePath, RectF(0.5f, 0.5f, width - 1, height - 1), 14);
+    Pen edge(colors.border, 1);
+    g.DrawPath(&edge, &edgePath);
+    drawHeading(g, helpTitle.empty() ? L"DeepSeek 凭证填写说明" : helpTitle,
+                RectF(28, 18, width - 56, 34), 19, colors.ink);
+    if (!helpMessage.empty()) {
+        Font body(L"Microsoft YaHei UI", 14.5f, FontStyleRegular, UnitPixel);
+        SolidBrush ink(colors.secondary);
+        StringFormat format;
+        format.SetTrimming(StringTrimmingWord);
+        g.DrawString(helpMessage.c_str(), -1, &body, RectF(28, 76, width - 56, height - 158), &format, &ink);
+    } else {
+    const wchar_t *lines[] = {
+        L"1. 点击“一键获取凭证”，将在 Edge 打开平台网页。",
+        L"2. 已登录时自动读取凭证；未登录请先登录，",
+        L"   等待几秒后再次获取，成功后自动返回并保存。",
+        L"",
+        L"也可手动获取：在浏览器登录后按 F12，",
+        L"在 Application → Local Storage 中找到 userToken，",
+        L"复制令牌或含 value 的 JSON 粘贴到“平台登录凭证”。",
+        L"",
+        L"读取 Edge 最近使用的配置；不支持 InPrivate 登录。",
+    };
+    float y = 62;
+    for (auto line : lines) {
+        if (*line) drawUiText(g, line, RectF(28, y, width - 56, 24), 14.5f, colors.secondary);
+        y += 24;
+    }
+    }
+    RectF ok = helpOkRect(width, height);
+    glassControl(g, ok, 1.f, colors, false, false, true);
+    drawUiText(g, L"确定", ok, 15, colors.ink, true, true);
+}
+void SettingsWindow::captureHelp(const fs::path &file) {
+    auto size = helpSize();
+    int width = size.cx, height = size.cy;
+    Surface image(width, height);
+    renderHelp(image);
+    for (int i = 0; i < image.width * image.height; ++i) image.pixels[i * 4 + 3] = 255;
+    image.save(file);
+}
+LRESULT CALLBACK SettingsWindow::helpProcedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+    auto self = reinterpret_cast<SettingsWindow *>(GetWindowLongPtrW(w, GWLP_USERDATA));
+    if (msg == WM_NCCREATE) {
+        self = static_cast<SettingsWindow *>(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams);
+        SetWindowLongPtrW(w, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+    }
+    if (!self)
+        return DefWindowProcW(w, msg, wp, lp);
+    switch (msg) {
+    case WM_NCHITTEST: {
+        POINT p{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        ScreenToClient(w, &p);
+        return p.y < int(52 * self->dpi / 96.) ? HTCAPTION : HTCLIENT;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_SETCURSOR:
+        if (LOWORD(lp) == HTCLIENT) {
+            SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+            return TRUE;
+        }
+        break;
+    case WM_KEYDOWN:
+        if (wp == VK_ESCAPE || wp == VK_RETURN || wp == VK_SPACE) {
+            self->closeHelp();
+            return 0;
+        }
+        break;
+    case WM_LBUTTONUP: {
+        float d = self->dpi / 96.f;
+        RECT client{};
+        GetClientRect(w, &client);
+        RectF ok = helpOkRect(client.right / d, client.bottom / d);
+        float px = float(GET_X_LPARAM(lp)) / d, py = float(GET_Y_LPARAM(lp)) / d;
+        if (px >= ok.X && px < ok.GetRight() && py >= ok.Y && py < ok.GetBottom()) {
+            self->closeHelp();
+            return 0;
+        }
+        break;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC dc = BeginPaint(w, &ps);
+        RECT client{};
+        GetClientRect(w, &client);
+        if (client.right > 0 && client.bottom > 0) {
+            Surface image(client.right, client.bottom);
+            self->renderHelp(image);
+            BitBlt(dc, 0, 0, image.width, image.height, image.dc, 0, 0, SRCCOPY);
+        }
+        EndPaint(w, &ps);
+        return 0;
+    }
+    case WM_NCDESTROY:
+        if (self->helpDialog == w) self->helpDialog = nullptr;
+        return DefWindowProcW(w, msg, wp, lp);
+    }
+    return DefWindowProcW(w, msg, wp, lp);
 }
 static const char *themes[] = {"#FFFFFF", "#000000", "#E7E6E6", "#44546A", "#4472C4",
                                "#ED7D31", "#FFC000", "#70AD47", "#2BBBAD", "#E74765"};
@@ -1498,6 +1680,7 @@ LRESULT CALLBACK SettingsWindow::procedure(HWND w, UINT msg, WPARAM wp, LPARAM l
         return 0;
     }
     case WM_TIMER:
+        if (self->tokenDone) self->finishPlatformToken();
         if (self->previewStart >= 0) {
             if (GetTickCount64() - self->previewStart >= 1200)
                 self->previewStart = -1;
@@ -1515,6 +1698,7 @@ LRESULT CALLBACK SettingsWindow::procedure(HWND w, UINT msg, WPARAM wp, LPARAM l
         self->command(LOWORD(wp), HIWORD(wp));
         return 0;
     case WM_CLOSE:
+        self->tokenStop = true;
         self->closePalette();
         ShowWindow(w, SW_HIDE);
         self->draft = self->app->settings;

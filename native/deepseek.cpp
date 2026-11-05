@@ -76,6 +76,11 @@ std::string DeepSeekState::currency() const {
     if (costs.count("CNY")) return "CNY";
     return costs.empty() ? "CNY" : costs.begin()->first;
 }
+std::string DeepSeekState::billingCurrency() const {
+    auto unit = currency();
+    if (costs.count(unit)) return unit;
+    return costs.empty() ? unit : costs.begin()->first;
+}
 std::optional<int64_t> DeepSeekState::todayCost(const std::string &unit, int64_t now) const {
     if (!costAt || day != beijingDay(now)) return {};
     auto found = costs.find(unit);
@@ -152,6 +157,7 @@ void parseDeepSeekCosts(DeepSeekState &state, const json &value) {
     auto &currencies = body.at("data");
     if (!currencies.is_array()) throw std::runtime_error("Missing DeepSeek cost series");
     std::map<std::string, int64_t> totals;
+    std::map<std::string, std::array<int64_t, 24>> hourly;
     auto models = state.models;
     for (auto &r : models) r.costs.clear();
     for (auto &data : currencies) {
@@ -160,6 +166,7 @@ void parseDeepSeekCosts(DeepSeekState &state, const json &value) {
         if (!data.at("series").is_array() || totals.count(currency))
             throw std::runtime_error("Invalid DeepSeek cost series");
         totals[currency] = 0;
+        auto &hours = hourly[currency];
         for (auto &series : data["series"]) {
             auto &row = modelRow(models, series.at("model").get<std::string>());
             if (!series.at("buckets").is_array()) throw std::runtime_error("Invalid cost buckets");
@@ -169,12 +176,17 @@ void parseDeepSeekCosts(DeepSeekState &state, const json &value) {
                 auto cost = decimalMoney(bucket.at("cost"));
                 row.costs[currency] = add(row.costs[currency], cost);
                 totals[currency] = add(totals[currency], cost);
+                // Bucket each in-day timestamp by Beijing hour (UTC+8) so the
+                // detail card can chart the day's spend shape.
+                auto hour = size_t((time + 28800) % 86400 / 3600);
+                hours[hour] = add(hours[hour], cost);
             }
         }
     }
     // A valid empty daily result means no billed usage, not a failed request.
     if (totals.empty()) totals[state.currency()] = 0;
     state.costs = std::move(totals);
+    state.hourly = std::move(hourly);
     state.models = std::move(models);
 }
 static int64_t tokenNumber(const json &value) {
@@ -238,7 +250,7 @@ static json get(const std::wstring &host, const std::wstring &path, const std::s
     if (host != L"platform.deepseek.com")
         throw std::runtime_error("Invalid DeepSeek host");
     if (!validDeepSeekCredential(token)) throw std::runtime_error("Invalid DeepSeek credential");
-    InternetHandle session(WinHttpOpen(L"CodexQuotaBar/0.3.4", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    InternetHandle session(WinHttpOpen(L"CodexQuotaBar/0.3.5", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     if (!WinHttpSetTimeouts(session.value, 3000, 3000, 3000, 5000)) throw std::runtime_error("DeepSeek network error");
     InternetHandle connection(WinHttpConnect(session.value, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0));
@@ -287,6 +299,21 @@ static std::wstring failure(const std::exception &e) {
             return L"平台请求失败（HTTP " + wide(code) + L"）";
     }
     return L"读取失败：网络异常或平台数据格式变化";
+}
+std::wstring validateDeepSeekCredential(const std::string &token, std::atomic<bool> &stop,
+                                      DeepSeekTransport transport) {
+    if (stop) return L"已取消获取";
+    if (token.empty() || !validDeepSeekCredential(token)) return L"未找到有效的平台登录凭证";
+    try {
+        if (!transport) transport = get;
+        DeepSeekState state;
+        parseDeepSeekBalance(state, transport(L"platform.deepseek.com", L"/api/v0/users/get_user_summary", token, stop));
+        return stop ? L"已取消获取" : L"";
+    } catch (const std::exception &e) {
+        if (std::string(e.what()) == "DeepSeek session expired")
+            return L"Edge 中的 DeepSeek 登录已失效，请在打开的平台网页登录，等待几秒后再次点击“一键获取凭证”。";
+        return failure(e);
+    }
 }
 DeepSeekState readDeepSeek(const std::string &sessionText,
                           std::atomic<bool> &stop, DeepSeekTransport transport, int64_t now) {

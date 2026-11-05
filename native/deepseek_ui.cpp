@@ -46,14 +46,20 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
     int balanceRows = std::max(1, int(data.balances.size()));
     bool today = data.day == beijingDay(utcNow());
     int costRows = today && data.costAt ? std::max(1, int(data.costs.size())) : 1;
-    float base = 172.f + 28 * (balanceRows + costRows);
+    bool showChart = today && data.costAt;
+    float chartSpace = showChart ? 100.f : 0.f;
+    // Header, balances, cost lines and the token summary are fixed; the hourly
+    // chart now sits at the bottom so it absorbs the former empty gap.
+    float contentTop = 138.f + 28 * (balanceRows + costRows);
     float available = (monitor.work.bottom - monitor.work.top) / d - 24;
-    int visibleRows = std::max(0, int((available - base - 110) / 100));
+    int visibleRows = std::max(0, int((available - contentTop - chartSpace - 110) / 100));
     int totalRows = today ? int(data.models.size()) : 0;
     detailPage = std::clamp(detailPage, 0, std::max(0, totalRows - visibleRows));
     int rows = std::min(visibleRows, totalRows);
+    bool statusLine = !totalRows || rows < totalRows;
     int width = std::min(int(500 * d), int(monitor.work.right - monitor.work.left));
-    int height = std::min(int((base + rows * 100 + 110) * d), int(monitor.work.bottom - monitor.work.top) - int(12 * d));
+    int height = std::min(int((contentTop + rows * 100 + (statusLine ? 28 : 0) + chartSpace + 82) * d),
+                          int(monitor.work.bottom - monitor.work.top) - int(12 * d));
     int left = std::clamp<LONG>(x, monitor.work.left, std::max(monitor.work.left, monitor.work.right - width));
     int top = std::max(int(monitor.work.top), y - height - int(12 * d));
     bool simulated = app->testing || app->preview || !capture.empty();
@@ -113,21 +119,84 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
                                : L"Token 明细尚不可用", yy + 52, 12, muted);
             yy += 100;
         }
-        if (!totalRows)
+        bool drewStatus = false;
+        if (!totalRows) {
             line(data.costAt && today ? L"今天暂无模型消耗明细" :
                  !data.costError.empty() || !data.tokensError.empty() ? L"明细暂不可用，详见下方读取状态" :
                  L"正在读取模型费用与 Token 明细", yy, 13, muted);
-        else if (rows < totalRows)
+            drewStatus = true;
+        } else if (rows < totalRows) {
             line(L"模型 " + std::to_wstring(detailPage + 1) + L"–" + std::to_wstring(detailPage + rows) +
                      L" / " + std::to_wstring(totalRows) + L" · 滚轮查看更多", yy, 12, muted);
-        auto footer = height / d - 96;
+            drewStatus = true;
+        }
+        if (drewStatus) yy += 28;
+        if (showChart) {
+            // 24-hour Beijing spend bars drawn last so they fill the space above
+            // the footer instead of leaving a large empty strip.
+            auto billing = data.billingCurrency();
+            auto found = data.hourly.find(billing);
+            const std::array<int64_t, 24> *hours = found == data.hourly.end() ? nullptr : &found->second;
+            int64_t peak = 0;
+            if (hours)
+                for (auto value : *hours) peak = std::max(peak, value);
+            bool dark = colors.ink.GetR() > 128;
+            // Cohesive blue gradient plus a soft top gloss; every bar shares it.
+            Color topColor = dark ? Color(255, 146, 188, 246) : Color(255, 124, 170, 238);
+            Color bottomColor = dark ? Color(255, 84, 132, 216) : Color(255, 66, 116, 204);
+            float chartLeft = 20 * d, chartRight = width - 20 * d;
+            float baseline = (yy + 70) * d;
+            float barGap = 3 * d;
+            float barW = std::max(1.f, (chartRight - chartLeft - 23 * barGap) / 24);
+            float barTop = (yy + 2) * d;
+            Pen rule(dark ? Color(56, 255, 255, 255) : Color(56, 40, 70, 120), 1);
+            g.DrawLine(&rule, chartLeft, baseline, chartRight, baseline);
+            if (peak > 0 && hours) {
+                for (int h = 0; h < 24; ++h) {
+                    auto value = (*hours)[size_t(h)];
+                    if (value <= 0) continue;
+                    float barHeight = std::max(2 * d, float(value) / peak * (baseline - barTop));
+                    RectF bar(chartLeft + h * (barW + barGap), baseline - barHeight, barW, barHeight);
+                    float radius = std::min(bar.Width * .5f, 4 * d);
+                    GraphicsPath path;
+                    path.StartFigure();
+                    path.AddLine(bar.X, bar.GetBottom(), bar.X, bar.Y + radius);
+                    path.AddArc(RectF(bar.X, bar.Y, 2 * radius, 2 * radius), 180, 90);
+                    path.AddLine(bar.X + radius, bar.Y, bar.GetRight() - radius, bar.Y);
+                    path.AddArc(RectF(bar.GetRight() - 2 * radius, bar.Y, 2 * radius, 2 * radius), 270, 90);
+                    path.AddLine(bar.GetRight(), bar.Y + radius, bar.GetRight(), bar.GetBottom());
+                    path.CloseFigure();
+                    // Vertical gradient stays within one blue hue for every bar.
+                    LinearGradientBrush fill(PointF(bar.X, bar.Y), PointF(bar.X, bar.GetBottom()),
+                                             topColor, bottomColor);
+                    g.FillPath(&fill, &path);
+                    // Smooth full-height gloss fade so there is no hard colour
+                    // seam where a half-height highlight band would end.
+                    auto saved = g.Save();
+                    g.SetClip(&path);
+                    LinearGradientBrush gloss(PointF(bar.X, bar.Y), PointF(bar.X, bar.GetBottom()),
+                                              Color(66, 255, 255, 255), Color(0, 255, 255, 255));
+                    g.FillRectangle(&gloss, bar);
+                    g.Restore(saved);
+                    Pen rim(Color(72, 255, 255, 255), 1);
+                    g.DrawPath(&rim, &path);
+                }
+            }
+            for (int h : {0, 6, 12, 18, 23}) {
+                std::wstring label = std::to_wstring(h) + L"h";
+                drawUiText(g, label, RectF(chartLeft + h * (barW + barGap) - 4 * d, (yy + 71) * d, 22 * d, 13 * d),
+                           11 * d, muted);
+            }
+            drawUiText(g, peak > 0 ? L"每小时消耗 · 峰值 " + moneyLabel(peak, billing, 8) : L"今日暂无分时消耗",
+                       RectF(20 * d, (yy + 86) * d, width - 40 * d, 14 * d), 11 * d, muted);
+        }
+        auto footer = height / d - 70;
         line(L"余额更新 " + (data.balanceAt ? timeLabel(data.balanceAt, false) : L"尚无") + L" · 账单更新 " +
                  (data.costAt && today ? timeLabel(data.costAt, false) : L"尚无"), footer, 12, muted);
         std::wstring error = !data.balanceError.empty() ? data.balanceError : !data.costError.empty() ? data.costError : data.tokensError;
         if (!today && data.costAt) error = L"日期已切换，正在读取今日账单";
         line(error.empty() ? L"平台账单可能延迟更新 · 右键打开 DeepSeek 相关设置" : error,
              footer + 30, 12, error.empty() ? muted : colors.warning);
-        line(L"平台账户账单 · 不按模型单价估算费用", footer + 56, 12, muted);
     }
     if (!capture.empty()) image.save(capture);
     presentDetails(std::move(rendered), left, top);
@@ -189,7 +258,7 @@ void Application::runDeepSeekWorker() {
         if (active && previous.day != day) {
             previous.day = day;
             previous.costAt = previous.tokensAt = 0;
-            previous.costs.clear(); previous.models.clear();
+            previous.costs.clear(); previous.hourly.clear(); previous.models.clear();
             previous.costError = L"正在读取今日账单";
             emit(previous);
             next = 0;
@@ -206,7 +275,7 @@ void Application::runDeepSeekWorker() {
             if (current.day == previous.day) {
                 if (!current.balanceAt) { current.balances = previous.balances; current.balanceAt = previous.balanceAt; }
                 if (!current.costAt && previous.costAt) {
-                    current.costs = previous.costs; current.costAt = previous.costAt;
+                    current.costs = previous.costs; current.hourly = previous.hourly; current.costAt = previous.costAt;
                     for (auto &old : previous.models) {
                         auto found = std::find_if(current.models.begin(), current.models.end(), [&](auto &r) { return r.name == old.name; });
                         if (found == current.models.end()) {

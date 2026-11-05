@@ -1,5 +1,6 @@
 #pragma once
 #include "core.hpp"
+#include <array>
 #include <map>
 namespace quota {
 constexpr int64_t MoneyScale = 100000000;
@@ -16,10 +17,12 @@ struct DeepSeekState {
     std::vector<DeepSeekBalance> balances;
     std::vector<DeepSeekModel> models;
     std::map<std::string, int64_t> costs;
+    std::map<std::string, std::array<int64_t, 24>> hourly;  // Beijing hour-of-day spend per currency
     int64_t day = 0, balanceAt = 0, costAt = 0, tokensAt = 0;
     std::wstring balanceError = L"等待读取", costError = L"等待读取", tokensError;
     bool available = false;
     std::string currency() const;
+    std::string billingCurrency() const;
     std::optional<int64_t> todayCost(const std::string &currency, int64_t now = utcNow()) const;
 };
 struct DeepSeekUpdate {
@@ -42,6 +45,8 @@ std::string deepSeekCredential();
 void saveDeepSeekCredential(const std::string &value);
 bool validDeepSeekCredential(const std::string &value);
 std::string normalizeDeepSeekCredential(const std::string &text);
+std::wstring validateDeepSeekCredential(const std::string &token, std::atomic<bool> &stop,
+                                      DeepSeekTransport transport = {});
 int deepSeekTests(std::ostream &log);
 int deepSeekUiTests(const fs::path &directory);
 } // namespace quota
