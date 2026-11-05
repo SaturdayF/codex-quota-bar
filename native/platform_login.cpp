@@ -1,6 +1,36 @@
 #include "app.hpp"
+#include <shlwapi.h>
 
 namespace quota {
+BrowserKind platformBrowserKind(const fs::path &executable) {
+    auto filename = executable.filename().wstring();
+    std::transform(filename.begin(), filename.end(), filename.begin(), [](wchar_t c) { return wchar_t(towlower(c)); });
+    if (filename == L"msedge.exe") return BrowserKind::Edge;
+    if (filename == L"chrome.exe") return BrowserKind::Chrome;
+    return BrowserKind::Unsupported;
+}
+PlatformBrowser defaultPlatformBrowser() {
+    wchar_t executable[32768]{};
+    DWORD count = DWORD(std::size(executable));
+    PlatformBrowser browser;
+    if (FAILED(AssocQueryStringW(ASSOCF_IS_PROTOCOL, ASSOCSTR_EXECUTABLE, L"https", L"open", executable, &count)))
+        return browser;
+    browser.executable = executable;
+    browser.kind = platformBrowserKind(browser.executable);
+    browser.name = browser.kind == BrowserKind::Chrome ? L"Chrome" : browser.kind == BrowserKind::Edge ? L"Edge" : L"默认浏览器";
+    if (browser.kind != BrowserKind::Unsupported) {
+        auto local = edgeUserData().parent_path().parent_path().parent_path();
+        browser.userData = browser.kind == BrowserKind::Chrome ? local / L"Google" / L"Chrome" / L"User Data" : edgeUserData();
+    }
+    return browser;
+}
+bool openBrowserPlatform(HWND owner, const PlatformBrowser &browser, const std::string &profile) {
+    if (browser.kind == BrowserKind::Unsupported)
+        return INT_PTR(ShellExecuteW(owner, L"open", L"https://platform.deepseek.com/usage", nullptr, nullptr, SW_SHOWNORMAL)) > 32;
+    auto args = profile.empty() ? L"https://platform.deepseek.com/usage" :
+        L"--profile-directory=" + quote(wide(profile)) + L" https://platform.deepseek.com/usage";
+    return INT_PTR(ShellExecuteW(owner, L"open", browser.executable.c_str(), args.c_str(), nullptr, SW_SHOWNORMAL)) > 32;
+}
 fs::path edgeUserData() {
     PWSTR local = nullptr;
     if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local)))
@@ -14,6 +44,10 @@ bool openEdgePlatform(HWND owner, const std::string &profile) {
 }
 PlatformTokenResult acquireEdgePlatformToken(const fs::path &userData, const std::string &profile,
                                            std::atomic<bool> &stop) {
+    return acquireBrowserPlatformToken(userData, profile, stop, L"Edge");
+}
+PlatformTokenResult acquireBrowserPlatformToken(const fs::path &userData, const std::string &profile,
+                                              std::atomic<bool> &stop, const std::wstring &browserName) {
     PlatformTokenResult result;
     try {
         auto storage = userData / wide(profile) / L"Local Storage";
@@ -29,13 +63,13 @@ PlatformTokenResult acquireEdgePlatformToken(const fs::path &userData, const std
         auto token = readBrowserPlatformToken(storage / L"leveldb", stop);
         if (stop) return {};
         if (token.empty()) {
-            result.error = L"未找到 Edge 最近使用配置中的 DeepSeek 登录凭证。请在打开的平台网页登录，等待几秒后再次点击“一键获取凭证”。\n\n不支持 InPrivate 或自定义用户数据目录；也可按“凭证填写说明”手动填写。";
+            result.error = L"未找到 " + browserName + L" 最近使用配置中的 DeepSeek 登录凭证。请在平台网页登录，等待几秒后再次获取。无痕窗口或自定义数据目录暂不支持，也可手动填写。";
         } else {
             result.error = validateDeepSeekCredential(token, stop);
             if (result.error.empty() && !stop) result.token = std::move(token);
         }
     } catch (const std::exception &) {
-        result.error = L"无法读取 Edge 本地存储：文件正在变化、权限受限或格式暂不支持。请稍后重试，或按“凭证填写说明”手动填写。";
+        result.error = L"无法读取 " + browserName + L" 本地存储：文件正在变化、权限受限或格式暂不支持。请稍后重试，或按“凭证填写说明”手动填写。";
     }
     return result;
 }
@@ -50,22 +84,29 @@ void SettingsWindow::startPlatformToken() {
     tokenInputAtStart = std::move(text);
     auto probe = tokenProbe;
     if (!probe) {
+        PlatformBrowser browser;
         try {
-            auto userData = edgeUserData();
-            auto profile = edgeProfileName(userData);
-            if (!openEdgePlatform(window, profile)) {
-                openTokenFailure(L"获取凭证失败", L"无法打开 Microsoft Edge，请确认 Edge 已安装，或手动填写平台凭证。");
+            browser = defaultPlatformBrowser();
+            if (browser.kind == BrowserKind::Unsupported) {
+                openBrowserPlatform(window, browser, {});
+                openTokenFailure(L"自动获取暂不可用", L"已使用默认浏览器打开平台。自动获取目前支持 Microsoft Edge 和 Google Chrome，请将其中一个设为默认浏览器，或手动填写凭证。");
                 return;
             }
-            probe = [userData, profile](std::atomic<bool> &stop) { return acquireEdgePlatformToken(userData, profile, stop); };
+            auto userData = browser.userData;
+            auto profile = browserProfileName(userData);
+            if (!openBrowserPlatform(window, browser, profile)) {
+                openTokenFailure(L"获取凭证失败", L"无法打开默认浏览器，请确认浏览器已安装，或手动填写平台凭证。");
+                return;
+            }
+            probe = [userData, profile, browser](std::atomic<bool> &stop) { return acquireBrowserPlatformToken(userData, profile, stop, browser.name); };
         } catch (const std::exception &) {
-            ShellExecuteW(window, L"open", L"msedge.exe", L"https://platform.deepseek.com/usage", nullptr, SW_SHOWNORMAL);
-            openTokenFailure(L"请先登录 DeepSeek", L"未能确定 Edge 最近使用的用户配置。请在 Edge 中登录 DeepSeek 平台，等待几秒后重试；也可手动填写凭证。");
+            openBrowserPlatform(window, browser, {});
+            openTokenFailure(L"请先登录 DeepSeek", L"未能确定默认浏览器最近使用的用户配置。请在平台网页登录，等待几秒后重试；也可手动填写凭证。");
             return;
         }
     }
     EnableWindow(GetDlgItem(content, PlatformLoginButton), FALSE);
-    tokenStatus = L"正在读取并验证 Edge 登录凭证…";
+    tokenStatus = L"正在读取并验证浏览器登录凭证…";
     InvalidateRect(content, nullptr, FALSE);
     // The UI timer consumes results; destruction cancels and joins the worker.
     try {

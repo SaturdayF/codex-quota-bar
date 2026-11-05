@@ -289,7 +289,7 @@ std::string readBrowserPlatformToken(const fs::path &database, std::atomic<bool>
     return {};
 }
 
-std::string edgeProfileName(const fs::path &userData) {
+std::string browserProfileName(const fs::path &userData) {
     size_t budget = Limit;
     auto state = json::parse(readShared(userData / L"Local State", budget), nullptr, false);
     require(state.is_object() && state.contains("profile") && state["profile"].is_object());
@@ -310,6 +310,13 @@ int browserTokenTests(std::ostream &log) {
     auto rejects = [](const std::function<void()> &call) {
         try { call(); return false; } catch (...) { return true; }
     };
+    check(platformBrowserKind(L"C:/Program Files/Google/Chrome/Application/CHROME.EXE") == BrowserKind::Chrome,
+          "default browser selection recognizes Google Chrome case-insensitively");
+    check(platformBrowserKind(L"C:/Program Files/Microsoft/Edge/Application/msedge.exe") == BrowserKind::Edge,
+          "default browser selection recognizes Microsoft Edge");
+    check(platformBrowserKind(L"C:/Browsers/firefox.exe") == BrowserKind::Unsupported &&
+              platformBrowserKind(L"C:/Browsers/notchrome.exe") == BrowserKind::Unsupported,
+          "unsupported default browsers never fall back to another browser's credentials");
     // Independent known CRC32C check vector (unmasked 0xe3069283).
     uint32_t known = 0xe3069283u;
     check(crc("123456789") == ((known >> 15) | (known << 17)) + 0xa282ead8u,
@@ -412,9 +419,9 @@ int browserTokenTests(std::ostream &log) {
     write(L"000002.log", writeBatch(1, {{"VERSION", "1"}, {key, std::string(1, '\1') + "sk-test"}}));
     check(rejects([&] { readBrowserPlatformToken(fixture, stop); }), "browser acquisition rejects API keys");
     write(L"Local State", "{\"profile\":{\"last_used\":\"Profile 2\"}}");
-    check(edgeProfileName(fixture) == "Profile 2", "Edge acquisition uses the last-used profile without scanning other accounts");
+    check(browserProfileName(fixture) == "Profile 2", "Edge acquisition uses the last-used profile without scanning other accounts");
     write(L"Local State", "{\"profile\":{\"last_used\":\"../outside\"}}");
-    check(rejects([&] { edgeProfileName(fixture); }), "Edge profile paths reject directory traversal");
+    check(rejects([&] { browserProfileName(fixture); }), "Edge profile paths reject directory traversal");
     stop = true;
     check(readBrowserPlatformToken(fixture, stop).empty(), "cancelled browser acquisition returns no credential");
     return checks;

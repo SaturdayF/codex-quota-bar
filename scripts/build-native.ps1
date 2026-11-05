@@ -28,12 +28,12 @@ try {
         $objects += $object
     }
     $signature | Set-Content -LiteralPath $signatureFile -Encoding ASCII
-    & $Compiler @options @objects (Join-Path $output 'app.res') '-o' (Join-Path $output 'CodexQuotaBar.exe') '-lgdiplus' '-lcomctl32' '-ldwmapi' '-lcomdlg32' '-lshell32' '-lole32' '-ladvapi32' '-luuid' '-lgdi32' '-luser32' '-lwinhttp'
+    & $Compiler @options @objects (Join-Path $output 'app.res') '-o' (Join-Path $output 'CodexQuotaBar.exe') '-lgdiplus' '-lcomctl32' '-ldwmapi' '-lcomdlg32' '-lshell32' '-lshlwapi' '-lole32' '-ladvapi32' '-luuid' '-lgdi32' '-luser32' '-lwinhttp'
     if ($LASTEXITCODE -ne 0) { throw 'Native compilation failed' }
 } finally { Pop-Location }
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $output -Force
 Copy-Item -LiteralPath (Join-Path $root 'native/vendor/LICENSE-json.txt') -Destination (Join-Path $output 'LICENSE-json.txt') -Force
-'{"version":"0.3.5","runtime":"native-win32","architecture":"x64"}' | Set-Content -LiteralPath (Join-Path $output 'version.json') -Encoding UTF8
+'{"version":"0.3.6","runtime":"native-win32","architecture":"x64"}' | Set-Content -LiteralPath (Join-Path $output 'version.json') -Encoding UTF8
 Copy-Item -LiteralPath (Join-Path $root 'native/USER_GUIDE.md') -Destination (Join-Path $output 'README.md') -Force
 Copy-Item -LiteralPath (Join-Path $root 'CHANGELOG.md') -Destination $output -Force
 $manifestFiles = [ordered]@{}

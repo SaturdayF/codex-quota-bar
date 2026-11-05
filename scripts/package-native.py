@@ -6,7 +6,7 @@ import zipfile
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = "0.3.5"
+VERSION = "0.3.6"
 payload = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "artifacts/native-win-x64"
 if json.loads((payload / "version.json").read_text(encoding="utf-8-sig")).get("version") != VERSION:
     raise RuntimeError("Native runtime version does not match package version")

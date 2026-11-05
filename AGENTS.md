@@ -1,7 +1,7 @@
 # Project maintenance
 
 - Runtime implementation: C++ in `native/`. Native checks are in `native/tests.cpp` and `native/deepseek_tests.cpp`; integration checks are in `tests/`.
-- Released version: 0.3.5. Preserve published tags and assets. Subsequent functional changes use a new version.
+- Released version: 0.3.6. Preserve published tags and assets. Subsequent functional changes use a new version.
 - Keep application branding consistent across `assets/app.svg`, PNG, ICO and embedded resources: white background, interlocked green and blue quota rings with gray remainder arcs.
 - Validate UI changes with core/UI checks, relevant integration tests and rendered previews. Identify simulated data in screenshots.
 - Run uninstall tests only in isolated fixtures; preserve real installations, settings and credentials.

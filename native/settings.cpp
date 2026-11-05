@@ -1143,7 +1143,7 @@ SIZE SettingsWindow::helpSize() const {
     return {px(width), px(std::max(188.f, std::ceil(bounds.Height) + 166.f))};
 }
 void SettingsWindow::openTokenFailure(const std::wstring &title, const std::wstring &message) {
-    openHelp(title, message + L"\n\n请确认已在 Edge 网页版登录 DeepSeek 平台，登录后再试。");
+    openHelp(title, message + L"\n\n请确认已在默认浏览器的网页版登录 DeepSeek 平台，登录后再试。");
 }
 void SettingsWindow::openHelp(const std::wstring &title, const std::wstring &message) {
     closeHelp();
@@ -1201,7 +1201,7 @@ void SettingsWindow::renderHelp(Surface &image) {
         g.DrawString(helpMessage.c_str(), -1, &body, RectF(28, 76, width - 56, height - 158), &format, &ink);
     } else {
     const wchar_t *lines[] = {
-        L"1. 点击“一键获取凭证”，将在 Edge 打开平台网页。",
+        L"1. 点击“一键获取凭证”，用默认浏览器打开平台。",
         L"2. 已登录时自动读取凭证；未登录请先登录，",
         L"   等待几秒后再次获取，成功后自动返回并保存。",
         L"",
@@ -1209,7 +1209,7 @@ void SettingsWindow::renderHelp(Surface &image) {
         L"在 Application → Local Storage 中找到 userToken，",
         L"复制令牌或含 value 的 JSON 粘贴到“平台登录凭证”。",
         L"",
-        L"读取 Edge 最近使用的配置；不支持 InPrivate 登录。",
+        L"支持 Edge / Chrome 普通配置，不支持无痕窗口。",
     };
     float y = 62;
     for (auto line : lines) {

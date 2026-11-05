@@ -59,16 +59,19 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         }
         else if (has(L"--render-ui"))
             renderPreviews(after(L"--render-ui", L"native-previews"));
-        else if (has(L"--edge-token-probe")) {
+        else if (has(L"--edge-token-probe") || has(L"--browser-token-probe")) {
             // Status only: never persist or print browser credentials.
             std::atomic<bool> cancel{false};
             json report;
             try {
-                auto root = edgeUserData();
-                auto profile = edgeProfileName(root);
-                auto acquired = acquireEdgePlatformToken(root, profile, cancel);
-                report = {{"profileAvailable", true}, {"validated", !acquired.token.empty()}, {"error", utf8(acquired.error)}};
-            } catch (...) { report = {{"profileAvailable", false}, {"validated", false}, {"error", "Edge profile unavailable"}}; }
+                auto browser = defaultPlatformBrowser();
+                bool edgeOnly = has(L"--edge-token-probe");
+                if (!edgeOnly && browser.kind == BrowserKind::Unsupported) throw std::runtime_error("Unsupported browser");
+                auto root = edgeOnly ? edgeUserData() : browser.userData;
+                auto profile = browserProfileName(root);
+                auto acquired = acquireBrowserPlatformToken(root, profile, cancel, edgeOnly ? L"Edge" : browser.name);
+                report = {{"browser", utf8(edgeOnly ? L"Edge" : browser.name)}, {"profileAvailable", true}, {"validated", !acquired.token.empty()}, {"error", utf8(acquired.error)}};
+            } catch (...) { report = {{"profileAvailable", false}, {"validated", false}, {"error", "Browser profile unavailable or unsupported"}}; }
             std::ofstream out(after(L"--output", L"edge-token-probe.json"));
             out << report.dump(2);
             result = report["validated"].get<bool>() ? 0 : 1;
