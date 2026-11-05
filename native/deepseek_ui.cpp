@@ -56,7 +56,7 @@ void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &s
     auto toBalance = roll && roll->toBalance ? roll->toBalance : deepSeekPrimaryBalance(state);
     auto fromToday = roll && roll->fromToday ? roll->fromToday : state.todayCost(state.billingCurrency());
     auto toToday = roll && roll->toToday ? roll->toToday : state.todayCost(state.billingCurrency());
-    // The caption and currency symbol stay still; only the digits slide.
+    // The caption and currency symbol stay still; only the digits animate.
     auto line = [&](const wchar_t *caption, const std::string &currency, std::optional<int64_t> from,
                     std::optional<int64_t> to, Color color, float top, bool bold) {
         std::wstring oldHead, oldNumber, newHead, newNumber;
@@ -64,23 +64,21 @@ void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &s
         splitMoney(moneyLabel(to, currency), newHead, newNumber);
         std::wstring staticText = caption + (newNumber.empty() ? oldHead : newHead);
         float textWidth = uiTextWidth(g, staticText, 12 * d, bold, true);
-        drawUiText(g, staticText, RectF(left, top * d, width, 16 * d), 12 * d, color, bold);
-        RectF area(left + textWidth + 0.5f, top * d, std::max(0.f, width - textWidth), 16 * d);
+        drawUiText(g, staticText, RectF(left, top * d, width, 14 * d), 12 * d, color, bold);
+        RectF area(left + textWidth + 0.5f, top * d, std::max(0.f, width - textWidth), 14 * d);
         if (!roll || roll->progress >= 1.0f || oldNumber == newNumber) {
             drawUiText(g, newNumber, area, 12 * d, color, bold);
             return;
         }
+        // Fade-out shrinks and fade-in grows so the neighbouring line never collides.
         float t = std::clamp(roll->progress, 0.f, 1.f);
-        float distance = 11 * d;
         Color oldColor(BYTE(color.GetA() * (1 - t)), color.GetR(), color.GetG(), color.GetB());
         Color newColor(BYTE(color.GetA() * t), color.GetR(), color.GetG(), color.GetB());
-        drawUiText(g, oldNumber, RectF(area.X, area.Y + t * distance, area.Width, area.Height), 12 * d,
-                   oldColor, bold);
-        drawUiText(g, newNumber, RectF(area.X, area.Y - (1 - t) * distance, area.Width, area.Height), 12 * d,
-                   newColor, bold);
+        drawUiText(g, oldNumber, area, 12 * d * (1 - 0.28f * t), oldColor, bold);
+        drawUiText(g, newNumber, area, 12 * d * (0.72f + 0.28f * t), newColor, bold);
     };
     line(L"余额 ", state.currency(), fromBalance, toBalance, state.balanceError.empty() ? ink : muted, 0, true);
-    line(L"今日 ", state.billingCurrency(), fromToday, toToday, state.costError.empty() ? ink : muted, 16, false);
+    line(L"今日 ", state.billingCurrency(), fromToday, toToday, state.costError.empty() ? ink : muted, 18, false);
     if (roll && roll->flash > 0) {
         BYTE alpha = BYTE(std::clamp(roll->flash, 0.f, 1.f) * 90);
         fillRound(g, RectF(1, 1, image.width - 2.f, image.height - 2.f), 8 * d, Color(alpha, 255, 255, 255));
