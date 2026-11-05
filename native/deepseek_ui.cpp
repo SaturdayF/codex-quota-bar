@@ -83,7 +83,7 @@ void paintDeepSeek(Surface &image, const DeepSeekState &state, const Settings &s
     line(L"今日 ", state.billingCurrency(), fromToday, toToday, state.costError.empty() ? ink : muted, 16, false);
     if (roll && roll->flash > 0) {
         BYTE alpha = BYTE(std::clamp(roll->flash, 0.f, 1.f) * 90);
-        fillRound(g, RectF(1, 1, image.width - 2.f, image.height - 2.f), 8 * d, Color(alpha, 96, 170, 246));
+        fillRound(g, RectF(1, 1, image.width - 2.f, image.height - 2.f), 8 * d, Color(alpha, 255, 255, 255));
     }
 }
 // Renders a money value with a larger integer part while the decimals keep the
