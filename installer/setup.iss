@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.3.7"
+  #define AppVersion "0.3.8"
 #endif
 #ifndef PayloadDir
   #define PayloadDir "..\artifacts\native-win-x64"
@@ -145,9 +145,53 @@ begin
   end;
 end;
 
+function FindUninstaller(const Dir: String): String;
+var
+  FindRec: TFindRec;
+begin
+  Result := '';
+  if FindFirst(Dir + 'unins*.exe', FindRec) then begin
+    try
+      repeat
+        if CompareText(Copy(FindRec.Name, 1, 5), 'unins') = 0 then begin
+          Result := Dir + FindRec.Name;
+          Exit;
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
+function PreviousUninstaller: String;
+var
+  Command: String;
+begin
+  Result := '';
+  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexQuotaBar_is1',
+                         'UninstallString', Command) then
+    Result := RemoveQuotes(Command);
+end;
+
+procedure RemovePreviousInstall;
+var
+  Uninstaller: String;
+  ResultCode: Integer;
+begin
+  if IsIsolatedTest then Exit;
+  Uninstaller := FindUninstaller(AddBackslash(ExpandConstant('{app}')));
+  if Uninstaller = '' then Uninstaller := PreviousUninstaller;
+  if (Uninstaller = '') or not FileExists(Uninstaller) then Exit;
+  Exec(Uninstaller, '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   StopListener;
+  // Replace an existing copy in the chosen folder (or a previously registered
+  // version) so only the current release stays installed.
+  RemovePreviousInstall;
   Result := '';
 end;
 
