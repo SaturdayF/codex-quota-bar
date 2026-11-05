@@ -97,6 +97,14 @@ static std::wstring groupDigits(int64_t value) {
     std::reverse(out.begin(), out.end());
     return out;
 }
+// Floors a token count into K/M/B/T units, e.g. 2766081 -> 2M.
+static std::wstring compactCount(int64_t value) {
+    if (value >= 1000000000000LL) return std::to_wstring(value / 1000000000000LL) + L"T";
+    if (value >= 1000000000LL) return std::to_wstring(value / 1000000000LL) + L"B";
+    if (value >= 1000000LL) return std::to_wstring(value / 1000000LL) + L"M";
+    if (value >= 1000LL) return std::to_wstring(value / 1000LL) + L"K";
+    return std::to_wstring(value);
+}
 void Overlay::showDeepSeekDetails(const fs::path &capture) {
     auto &data = app->deepseek;
     float d = monitor.dpi / 96.f;
@@ -278,7 +286,7 @@ void Overlay::showDeepSeekDetails(const fs::path &capture) {
                 drawUiText(g, caption, RectF(tx, ty + 4 * d, tw, 18 * d), 11 * d, muted, false, true);
                 drawUiText(g, moneyLabel(chartValues[size_t(h)], billing, 2), RectF(tx, ty + 21 * d, tw, 24 * d),
                            14 * d, ink, true, true);
-                drawUiText(g, L"输入命中 " + groupDigits(usage.hit) + L" / 未命中 " + groupDigits(usage.miss),
+                drawUiText(g, L"输入命中 " + compactCount(usage.hit) + L" / 未命中 " + compactCount(usage.miss),
                            RectF(tx, ty + 48 * d, tw, 20 * d), 10 * d, muted, false, true);
             }
         } else {

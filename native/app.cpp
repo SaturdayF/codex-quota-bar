@@ -218,10 +218,10 @@ void Overlay::render() {
                 balanceFrom = balanceShown;
                 balanceTo = *primary;
                 balanceAnimStart = now;
-                // Longer rolls for bigger jumps so the integer digits count down too.
+                // Longer rolls for bigger jumps so the digits count down visibly.
                 int64_t delta = balanceTo > balanceFrom ? balanceTo - balanceFrom : balanceFrom - balanceTo;
                 int64_t cents = delta / (MoneyScale / 100);
-                balanceDuration = std::clamp<int64_t>(400 + cents * 12, 500, 1600);
+                balanceDuration = std::clamp<int64_t>(800 + cents * 24, 1000, 3000);
                 balanceAnimating = true;
                 SetTimer(window, 4, 16, nullptr);
             }

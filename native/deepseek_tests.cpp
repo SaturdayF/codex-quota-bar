@@ -306,11 +306,11 @@ int deepSeekUiTests(const fs::path &dir) {
         KillTimer(overlay->window, 4);
         check(overlay->balanceAnimating && overlay->balanceFrom == 944000000 && overlay->balanceTo == 810000000,
               "balance change starts a roll from the old total");
-        overlay->balanceAnimStart = GetTickCount64() - 400;
+        overlay->balanceAnimStart = GetTickCount64() - 1500;
         overlay->render();
         check(overlay->balanceShown > 810000000 && overlay->balanceShown < 944000000,
               "balance roll passes through intermediate integer values");
-        overlay->balanceAnimStart = GetTickCount64() - 2000;
+        overlay->balanceAnimStart = GetTickCount64() - 4000;
         overlay->render();
         check(!overlay->balanceAnimating && overlay->balanceShown == 810000000,
               "balance roll settles on the new total");
