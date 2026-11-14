@@ -10,7 +10,7 @@ void activateTestWindow(HWND window) {
     if (attached) AttachThreadInput(current, foreground, FALSE);
 }
 // Synthetic windows only: screen reads are restricted to this fixture's bounds.
-int liveGlassTests(const fs::path &dir, std::ostream &log) {
+static int runLiveGlassTests(const fs::path &dir, std::ostream &log, bool analyticsOnly) {
     int count = 0;
     auto check = [&](bool ok, const char *name) {
         log << (ok ? "PASS " : "FAIL ") << name << std::endl;
@@ -59,8 +59,8 @@ int liveGlassTests(const fs::path &dir, std::ostream &log) {
     int height = std::min(settings.px(580), int(work.bottom - work.top) - 40);
     SetWindowPos(settings.window, HWND_TOPMOST, work.left + 20, work.top + 20, width, height, SWP_SHOWWINDOW);
     activateTestWindow(settings.window);
-    auto settle = [] {
-        ULONGLONG until = GetTickCount64() + 300;
+    auto settle = [analyticsOnly] {
+        ULONGLONG until = GetTickCount64() + (analyticsOnly ? 700 : 300);
         do {
             MSG m{};
             while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
@@ -68,7 +68,7 @@ int liveGlassTests(const fs::path &dir, std::ostream &log) {
             }
             Sleep(5);
         } while (GetTickCount64() < until);
-        DwmFlush();
+        GdiFlush();DwmFlush();
     };
     auto repaintBackground = [&] {
         if (IsWindowVisible(settings.window)) activateTestWindow(settings.window);
@@ -80,6 +80,12 @@ int liveGlassTests(const fs::path &dir, std::ostream &log) {
         return std::abs(int(GetRValue(a)) - int(GetRValue(b))) + std::abs(int(GetGValue(a)) - int(GetGValue(b))) +
                std::abs(int(GetBValue(a)) - int(GetBValue(b)));
     };
+    auto materialChanged = [&](POINT p,COLORREF before) {
+        // Acrylic transitions are asynchronous and can outlast the first compositor frame.
+        ULONGLONG until=GetTickCount64()+4000;
+        while(difference(before,sample(p))<=20&&GetTickCount64()<until)settle();
+        return difference(before,sample(p))>20;
+    };
     auto capture = [&](const wchar_t *name, HWND target = nullptr) {
         RECT r{}; GetWindowRect(target ? target : settings.window, &r);
         Surface image(r.right - r.left, r.bottom - r.top);
@@ -89,6 +95,48 @@ int liveGlassTests(const fs::path &dir, std::ostream &log) {
         for (int i = 0; i < image.width * image.height; ++i) image.pixels[i * 4 + 3] = 255;
         image.save(dir / name);
     };
+    if (analyticsOnly) {
+        fixture.state.active = true; fixture.state.error.clear(); fixture.state.updated = utcNow();
+        fixture.state.q.plan = "plus"; fixture.state.q.accountKey = privateKey("glass-fixture");
+        fixture.state.q.hour = WindowQuota{68,utcNow()+1800,300}; fixture.state.q.week = WindowQuota{42,utcNow()+86400,10080};
+        fixture.state.q.extraWindows = {{"spark:primary:300","Codex Spark · 5 小时","spark",{91,utcNow()+1800,300}}};
+        settings.usageReport = demoUsageReport(utcNow()); settings.usageView.dirty = true; settings.selectPage(4);
+        for (bool dark : {false,true}) {
+            settings.draft.darkAppearance = dark; settings.applyAppearance(); activateTestWindow(settings.window); settle();
+            if (settings.backdrop == BackdropMode::Solid) { log << "SKIP live analytics compositor unavailable; solid fallback active\n"; continue; }
+            POINT p{settings.px(12),settings.px(119)}; ClientToScreen(settings.content,&p);
+            check(GetAncestor(WindowFromPoint(p),GA_ROOT)==settings.window,"analytics glass sample belongs to the test window");
+            bg.left = bg.right = RGB(224,40,40); repaintBackground(); auto red = sample(p);
+            bg.left = bg.right = RGB(40,70,224); repaintBackground();
+            log << "INFO analytics dark=" << dark << " red=" << red << " blue=" << sample(p) << " foreground=" << (GetForegroundWindow()==settings.window) << std::endl;
+            check(!settings.settingsFrost && materialChanged(p,red),
+                  "analytics background follows live content behind it without repainting or a desktop cache");
+            POINT control{settings.px(14),settings.px(7)}; ClientToScreen(GetDlgItem(settings.content,UsageSeven),&control);
+            POINT savePoint{settings.px(14),settings.px(7)}; ClientToScreen(GetDlgItem(settings.window,110),&savePoint);
+            bg.left = bg.right = RGB(224,40,40); repaintBackground(); red = sample(control); auto saveRed=sample(savePoint);
+            bg.left = bg.right = RGB(40,70,224); repaintBackground();
+            log << "INFO analytics range glass mode=" << int(settings.backdrop) << " dark=" << dark << " red=" << red << " blue=" << sample(control) << std::endl;
+            log << "INFO analytics save red=" << saveRed << " blue=" << sample(savePoint) << " controlRoot=" << (GetAncestor(WindowFromPoint(control),GA_ROOT)==settings.window) << std::endl;
+            log << "INFO owner-drawn controls keep the existing tint; live-material assertions cover the window backgrounds\n";
+            capture(dark?L"analytics-live-dark-simulated.png":L"analytics-live-light-simulated.png");
+            settings.usageCommand(UsageQuota); auto &popup = *settings.quotaPopup; popup.simulated = false; popup.frost.reset(); popup.settings.darkAppearance = dark; popup.reveal();
+            RECT r{}; GetWindowRect(popup.window,&r);
+            SetWindowPos(popup.window,HWND_TOPMOST,work.right-(r.right-r.left)-20,work.top+30,0,0,SWP_NOSIZE|SWP_SHOWWINDOW);
+            auto repaintPopup=[&]{activateTestWindow(popup.window);InvalidateRect(back,nullptr,FALSE);UpdateWindow(back);settle();};
+            RECT client{}; GetClientRect(popup.window,&client); POINT popupPoint{client.right-settings.px(12),settings.px(85)};ClientToScreen(popup.window,&popupPoint);
+            check(GetAncestor(WindowFromPoint(popupPoint),GA_ROOT)==popup.window,"quota glass sample belongs to the test popup");
+            bg.left = bg.right = RGB(224,40,40); repaintPopup(); red=sample(popupPoint);
+            bg.left = bg.right = RGB(40,70,224); repaintPopup();
+            log << "INFO popup mode=" << int(popup.backdrop) << " red=" << red << " blue=" << sample(popupPoint) << " bounds=" << r.left << "," << r.top << "," << r.right << "," << r.bottom << std::endl;
+            log << "INFO popup foreground=" << (GetForegroundWindow()==popup.window) << std::endl;
+            check(!popup.frost && materialChanged(popupPoint,red),"analytics quota popup uses real system glass without a cached image");
+            capture(dark?L"quota-live-dark-simulated.png":L"quota-live-light-simulated.png",popup.window);
+            ShowWindow(popup.window,SW_HIDE);
+            settings.quotaPopup.reset();activateTestWindow(settings.window);settle();
+        }
+        log << count << " live analytics glass checks passed.\n";
+        return count;
+    }
     settle();
     RECT windowBounds{}; GetWindowRect(settings.window, &windowBounds);
     POINT clientOrigin = point(0, 0);
@@ -196,6 +244,15 @@ int liveGlassTests(const fs::path &dir, std::ostream &log) {
         check(mask == passwordPixels(), "glass credential field renders identical masks for equal-length different secrets");
         capture(dark ? L"live-credentials-dark.png" : L"live-credentials-light.png");
         SetWindowTextW(settings.deepSeekToken, L"");
+        settings.usageReport = demoUsageReport(utcNow());
+        settings.usageView.dirty = true;
+        settings.selectPage(4); settle();
+        POINT analyticsPoint{settings.px(12),settings.px(119)}; ClientToScreen(settings.content,&analyticsPoint);
+        bg.left = bg.right = RGB(224,40,40); repaintBackground(); auto analyticsRed = sample(analyticsPoint);
+        bg.left = bg.right = RGB(40,70,224); repaintBackground();
+        check(!settings.settingsFrost && difference(analyticsRed,sample(analyticsPoint)) > 20,
+              "analytics page transmits the live system backdrop without a cached desktop image");
+        capture(dark ? L"live-analytics-dark-simulated.png" : L"live-analytics-light-simulated.png");
         settings.selectPage(0); settle();
     }
     settings.draft.darkAppearance = false; settings.applyAppearance();
@@ -237,4 +294,6 @@ int liveGlassTests(const fs::path &dir, std::ostream &log) {
     capture(L"live-details.png", detail.details);
     return count;
 }
+int liveGlassTests(const fs::path &dir,std::ostream &log) { return runLiveGlassTests(dir,log,false); }
+int liveAnalyticsGlassTests(const fs::path &dir,std::ostream &log) { return runLiveGlassTests(dir,log,true); }
 } // namespace quota

@@ -29,6 +29,10 @@
 
 Codex 通过本地 `codex app-server` 的 `account/read`、`account/rateLimits/read` 读取账户和额度。按所选刷新间隔轮询，并处理更新事件。
 
+`native/analytics.cpp` 读取所选 Codex home 的本地 JSONL 用量，使用累计 Token 的增量，按会话去重并处理子会话继承边界。扫描有文件、字节和时间预算，后台分批完成；缓存保留解析游标及用量，不保存对话正文或令牌。费用按代码中注明来源和日期的标准 API 单价估算，缓存/推理子集不重复相加，未知价格不填零。UTC 事件在展示时按本机本地日历分桶。
+
+额度历史由应用线程接受有效的新鲜读数，使用账户与工作区的哈希组合隔离，后台原子保存；UI 按当前套餐和重置周期选择系列。新统计页面绘制复用 `SettingsWindow::paintGlass`，独立额度浮窗和悬浮卡片复用 `configureBackdrop`/`paintBackdrop`，运行时不使用模拟背景。
+
 DeepSeek 使用 WinHTTP 读取 `platform.deepseek.com` 的账户余额、费用和 Token 接口。账单按 UTC+8 的当日范围聚合；金额使用定点数，不同币种分别累计。请求设置超时、取消和失败退避，响应按配置代次与应用会话校验。凭证保存在 Windows 凭据管理器。
 
 ## 窗口与渲染
@@ -69,6 +73,16 @@ Start-Process $app -ArgumentList '--render-ui codex_tmp/previews' -Wait
 ./tests/NativeInstaller.Tests.ps1
 ./tests/PortableUninstall.Tests.ps1
 ```
+
+Codex 统计的隔离检查：
+
+```powershell
+Start-Process $app -ArgumentList '--analytics-ui-test --output codex_tmp/analytics-ui' -WindowStyle Hidden -Wait
+Start-Process $app -ArgumentList '--analytics-glass-test --output codex_tmp/analytics-glass' -WindowStyle Hidden -Wait
+Start-Process $app -ArgumentList '--ui-test-synthetic --output codex_tmp/ui-synthetic' -WindowStyle Hidden -Wait
+```
+
+`--self-test` 包含 `native/analytics_tests.cpp` 的日志、定价、缓存及历史归属检查。`--analytics-ui-test` 使用模拟数据生成原生预览。`--analytics-glass-test` 只对隔离背景窗口上的新页面/浮窗采样，需正常桌面合成环境；检查窗口背景是否实时变化。`--ui-test-synthetic` 显式跳过原有实时合成测试，继续执行其余原生 UI 检查；默认 `--ui-test` 仍包含全部严格检查。验证记录留在 `codex_tmp/`。
 
 0.3.6 通过 472 项核心检查与 54 项 DeepSeek UI 检查。检查覆盖额度解析、配置、子进程通信、多 DPI 绘图、滚动重绘、悬浮与右键、布局避让、拖动交换和会话取消；DeepSeek 覆盖北京时间小时分桶、凭证弹窗生命周期、Edge 本地存储、自动保存与失败处理及 DSH 标识。集成测试覆盖自定义路径安装、安装版卸载、便携版卸载及无关文件保留。完整 UI 回归需在常规桌面环境执行，本机虚拟显示会限制实时毛玻璃验证。
 

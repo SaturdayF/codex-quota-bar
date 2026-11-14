@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.3.8"
+  #define AppVersion "0.4.1"
 #endif
 #ifndef PayloadDir
   #define PayloadDir "..\artifacts\native-win-x64"
@@ -58,14 +58,14 @@ Filename: "{app}\installer.ini"; Section: "Installation"; Key: "Product"; String
 Filename: "{app}\installer.ini"; Section: "Installation"; Key: "Version"; String: "{#AppVersion}"
 
 [InstallDelete]
-Type: files; Name: "{app}\uninstall.ps1"; Check: IsLegacyInstall
+Type: files; Name: "{app}\uninstall.ps1"; Check: not IsInPlaceUpdate and IsLegacyInstall
 
 [Icons]
-Name: "{code:DesktopShortcutFolder}\Codex Quota Bar"; Filename: "{app}\CodexQuotaBar.exe"; Parameters: "--settings"; WorkingDir: "{app}"; Tasks: desktopicon
-Name: "{autoprograms}\Codex Quota Bar\Codex Quota Bar Settings"; Filename: "{app}\CodexQuotaBar.exe"; Parameters: "--settings"; Check: not IsIsolatedTest
+Name: "{code:DesktopShortcutFolder}\Codex Quota Bar"; Filename: "{app}\CodexQuotaBar.exe"; Parameters: "--settings"; WorkingDir: "{app}"; Tasks: desktopicon; Check: not IsInPlaceUpdate
+Name: "{autoprograms}\Codex Quota Bar\Codex Quota Bar Settings"; Filename: "{app}\CodexQuotaBar.exe"; Parameters: "--settings"; Check: not IsIsolatedTest and not IsInPlaceUpdate
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "CodexQuotaBar"; ValueData: """{app}\CodexQuotaBar.exe"""; Tasks: loginstartup; Flags: uninsdeletevalue; Check: not IsIsolatedTest
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "CodexQuotaBar"; ValueData: """{app}\CodexQuotaBar.exe"""; Tasks: loginstartup; Flags: uninsdeletevalue; Check: not IsIsolatedTest and not IsInPlaceUpdate
 
 [Run]
 Filename: "{app}\CodexQuotaBar.exe"; Description: "启动 Codex Quota Bar"; Flags: nowait postinstall skipifsilent
@@ -97,6 +97,11 @@ end;
 function IsIsolatedTest: Boolean;
 begin
   Result := HasSwitch('/ISOLATEDTEST=1');
+end;
+
+function IsInPlaceUpdate: Boolean;
+begin
+  Result := HasSwitch('/QUOTAINPLACE=1');
 end;
 
 function DesktopShortcutFolder(Param: String): String;
@@ -147,8 +152,13 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  StopListener;
   Result := '';
+  if IsInPlaceUpdate then begin
+    if (GetIniString('Installation', 'Product', '', ExpandConstant('{app}\installer.ini')) <> 'CodexQuotaBar') or
+       not FileExists(ExpandConstant('{app}\CodexQuotaBar.exe')) or
+       not FileExists(ExpandConstant('{app}\unins000.exe')) then
+      Result := '当前目录不是可覆盖更新的 Codex Quota Bar 安装目录。';
+  end else StopListener;
 end;
 
 function ShouldRemoveSettings: Boolean;

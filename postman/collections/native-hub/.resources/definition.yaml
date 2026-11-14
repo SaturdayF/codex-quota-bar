@@ -1,0 +1,15 @@
+{
+  "$kind": "collection",
+  "name": "Native Hub synthetic contract",
+  "description": "Loopback-only isolated --hub-fixture. Never use production data or secrets.",
+  "variables": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:17321"
+    },
+    {
+      "key": "hubSecret",
+      "value": "synthetic-test-secret-only"
+    }
+  ]
+}

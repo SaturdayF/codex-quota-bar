@@ -1,0 +1,102 @@
+#include "analytics.hpp"
+namespace quota {
+int analyticsTests(std::ostream &log,const fs::path &rootFixture) {
+    auto fixture=rootFixture/(L"run-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));
+    int checks=0;
+    auto check=[&](bool ok,const char *name){if(!ok){log<<"FAIL "<<name<<std::endl;throw std::runtime_error(name);}++checks;log<<"PASS "<<name<<std::endl;};
+    check(parseUsageTime("2026-11-14T13:40:00Z")==parseUsageTime("2026-11-14T21:40:00+08:00"),"analytics UTC timestamps accept local offsets");
+    check(parseUsageTime("2026-11-14T13:40:00.123Z")==parseUsageTime("2026-11-14T13:40:00Z"),"analytics fractional timestamps retain seconds");
+    check(!parseUsageTime("2026-02-30T00:00:00Z")&&!parseUsageTime("2026-11-14T25:00:00Z")&&!parseUsageTime("2026-11-14T13:40:00"),"analytics rejects invalid dates and missing timezone");
+    int64_t now=utcNow(),day=localDay(now);
+    check(localDay(shiftLocalDay(day,-30))==shiftLocalDay(day,-30)&&shiftLocalDay(shiftLocalDay(day,-30),30)==day,"analytics day ranges use calendar arithmetic");
+    TokenUsage t{100000,60000,0,10000,4000};
+    auto cost=priceUsage("gpt-6.1-sol",t);
+    check(cost&&std::abs(*cost-.186)<1e-10,"analytics standard input excludes cached input and reasoning subset");
+    check(priceUsage("gpt-6.1-sol",t,"fast")==std::optional<double>(*cost*2),"analytics known Fast tier applies documented multiplier");
+    check(!priceUsage("unknown-model",t)&&!priceUsage("gpt-6.1-sol",t,"unresolved"),"analytics unknown model and unresolved request remain unpriced");
+    TokenUsage longRequest{300000,100000,0,10000,0};
+    check(std::abs(priceUsage("gpt-6.1-sol",longRequest).value_or(0)-.97)<1e-10,"analytics long-context pricing applies to whole request");
+    check(priceUsage("gpt-5.4-2026-03-05",t)==priceUsage("gpt-5.4",t),"analytics dated model snapshots resolve to known rates");
+    check(!TokenUsage{10,11,0,1,0}.valid()&&!TokenUsage{10,6,5,1,0}.valid()&&!TokenUsage{10,0,0,1,2}.valid(),"analytics rejects overlapping or impossible token subsets");
+    check(!TokenUsage::parse({{"input_tokens",-1},{"output_tokens",1}})&&!TokenUsage::parse({{"input_tokens",1.5},{"output_tokens",1}}),"analytics token counts require nonnegative integers");
+    auto window=[](double used,int minutes,int64_t reset){return json{{"usedPercent",used},{"windowDurationMins",minutes},{"resetsAt",reset}};};
+    auto q=Quotas::parse({{"accountId","synthetic-account"},{"rateLimitsByLimitId",{
+        {"codex",{{"primary",window(32,300,now+1000)},{"secondary",window(36,43200,now+2000)},{"planType","plus"}}},
+        {"codex-spark",{{"limitName","Codex Spark"},{"primary",window(9,300,now+1000)},{"secondary",window(17,10080,now+2000)}}}}}});
+    check(q.hour&&q.hour->remaining==68&&!q.week&&q.extraWindows.size()==3,"analytics parses monthly and named quota buckets without substituting main weekly quota");
+    check(q.accountKey.size()==64&&q.accountKey!=std::string("synthetic-account"),"quota history uses hashed account ownership");
+    check(q.extraWindows[0].window.minutes==43200&&q.extraWindows[1].label.find("Codex Spark")!=std::string::npos,"additional quota rows retain durations and provider labels");
+    auto absent=Quotas::parse({{"rateLimits",{{"primary",window(20,300,now+1000)}}}});
+    check(absent.extraWindows.empty(),"analytics never fabricates missing additional quota windows");
+    QuotaHistory history;State state;state.q=q;state.updated=now-30;state.error.clear();
+    check(history.observe(state)&&history.samples.size()==4,"quota history records fresh owned windows");
+    check(!history.observe(state),"quota history ignores duplicate update timestamps");
+    state.updated=now-15;check(!history.observe(state),"quota history compacts unchanged short-interval readings");
+    state.q.hour->remaining=60;check(history.observe(state)&&history.series(state.q,"hour").size()==2,"quota history retains a changed observed percentage");
+    auto other=state.q;other.accountKey=privateKey("another-account");check(history.series(other,"hour").empty(),"quota history never borrows another account's samples");
+    other=state.q;other.plan="pro";check(history.series(other,"hour").empty(),"quota history separates subscription plans");
+    other=state.q;other.hour->resets+=300;check(history.series(other,"hour").empty(),"quota history never connects different reset cycles");
+    state.error=L"failure";check(!history.observe(state),"quota history does not record stale failures");
+    fs::create_directories(fixture/L"home/sessions");fs::create_directories(fixture/L"home/archived_sessions");
+    auto file=fixture/L"home/sessions/one.jsonl",cache=fixture/L"usage-cache.json";
+    auto utc=[](int64_t at){time_t time=at;tm t{};gmtime_s(&t,&time);char b[40]{};strftime(b,sizeof(b),"%Y-%m-%dT%H:%M:%SZ",&t);return std::string(b);};
+    auto meta=[](const char *id,int gate=0){return json{{"type","session_meta"},{"payload",{{"id",id},{"cwd","E:/Projects/alpha"},{"creator_account_id","synthetic-account"},{"account_scoped",true},{"subagent_history_start_ordinal",gate}}}};};
+    auto context=[](const char *model){return json{{"type","turn_context"},{"payload",{{"model",model}}}};};
+    auto token=[](int64_t input,int64_t output,int64_t cached=0){return json{{"input_tokens",input},{"cached_input_tokens",cached},{"cache_write_input_tokens",0},{"output_tokens",output},{"reasoning_output_tokens",0}};};
+    auto event=[&](json total,json last,int64_t at){return json{{"type","event_msg"},{"timestamp",utc(at)},{"payload",{{"type","token_count"},{"info",{{"total_token_usage",total},{"last_token_usage",last}}}}}};};
+    auto write=[](const fs::path &p,const std::vector<json> &lines,bool append=false){std::ofstream out(p,std::ios::binary|(append?std::ios::app:std::ios::trunc));for(const auto &line:lines)out<<line.dump()<<'\n';};
+    auto a=event(token(100000,10000,60000),token(100000,10000,60000),now-1000);
+    write(file,{meta("session-one"),context("gpt-6.1-sol"),a,a});
+    std::atomic<bool> cancel{false};UsageScanOptions options;options.home=fixture/L"home";options.cache=cache;options.now=now;
+    auto report=scanCodexUsage(options,cancel);auto total=report.total();
+    check(total.tokens.total()==110000&&total.sessions.size()==1&&total.requests==1,"usage scanner counts cumulative token deltas and ignores duplicate notifications");
+    check(!total.unpriced&&std::abs(total.cost-.186)<1e-10,"usage scanner prices exact requests from validated token records");
+    check(!report.entries.front().account.empty()&&report.entries.front().account==q.accountKey,"usage scanner attributes explicit account-scoped metadata only");
+    auto again=scanCodexUsage(options,cancel);check(again.total().tokens.total()==total.tokens.total(),"incremental cache never recounts unchanged JSONL");
+    auto b=event(token(160000,16000,90000),token(60000,6000,30000),now-500);
+    write(file,{b},true);report=scanCodexUsage(options,cancel);
+    check(report.total().tokens.total()==176000&&report.total().requests==2,"incremental scanner reads appended requests without losing prior totals");
+    fs::copy_file(file,fixture/L"home/archived_sessions/copy.jsonl",fs::copy_options::overwrite_existing);
+    report=scanCodexUsage(options,cancel);check(report.total().tokens.total()==176000&&report.total().sessions.size()==1,"usage scanner deduplicates copied sessions across active and archived roots");
+    auto child=fixture/L"home/sessions/child.jsonl";
+    auto inheritedA=a,ownedB=b;inheritedA["ordinal"]=18;ownedB["ordinal"]=50;
+    write(child,{meta("session-child",50),context("gpt-6.1-sol"),inheritedA,context("gpt-6.1-sol"),ownedB});
+    report=scanCodexUsage(options,cancel);check(report.total().tokens.total()==242000&&report.total().sessions.size()==2,"child history ordinal excludes inherited tokens while preserving its cumulative baseline");
+    write(fixture/L"home/sessions/child-missing-ordinal.jsonl",{meta("child-missing-ordinal",50),context("gpt-6.1-sol"),a,b});
+    report=scanCodexUsage(options,cancel);check(report.partial&&report.total().tokens.total()==242000,"child records missing explicit ordinals stay uncounted rather than using physical line positions");
+    auto unknown=fixture/L"home/sessions/unknown.jsonl";auto unowned=meta("session-unknown");unowned["payload"]["account_scoped"]=false;
+    fs::create_directories(fixture/L"boundary/sessions");auto boundaryOptions=options;boundaryOptions.home=fixture/L"boundary";boundaryOptions.cache=fixture/L"boundary-cache.json";
+    write(fixture/L"boundary/sessions/owned-suffix.jsonl",{meta("owned-suffix",50),context("gpt-6.1-sol"),ownedB});
+    check(scanCodexUsage(boundaryOptions,cancel).total().tokens.total()==66000,"owned suffix without inherited baseline counts only its explicit latest request");
+    auto ambiguous=meta("ambiguous-child");ambiguous["payload"].erase("subagent_history_start_ordinal");ambiguous["payload"]["source"]={{"subagent",{{"thread_spawn",json::object()}}}};
+    write(fixture/L"boundary/sessions/ambiguous.jsonl",{ambiguous,context("gpt-6.1-sol"),a,b});
+    auto boundaryReport=scanCodexUsage(boundaryOptions,cancel);
+    check(boundaryReport.partial&&boundaryReport.total().tokens.total()==66000,"subagent without a verified history boundary cannot inflate aggregate usage");
+    write(unknown,{unowned,context("unpriced-model"),a});report=scanCodexUsage(options,cancel);
+    auto unpriced=std::find_if(report.entries.begin(),report.entries.end(),[](const auto &r){return r.model=="unpriced-model";});
+    check(unpriced!=report.entries.end()&&!unpriced->priced&&unpriced->account.empty(),"unknown prices and account ownership remain explicit without dropping tokens");
+    auto partial=fixture/L"home/sessions/partial.jsonl";write(partial,{meta("session-partial"),context("gpt-6.1-sol")});
+    {std::ofstream out(partial,std::ios::binary|std::ios::app);out<<a.dump();}
+    auto before=scanCodexUsage(options,cancel).total().tokens.total();
+    {std::ofstream out(partial,std::ios::binary|std::ios::app);out<<'\n';}
+    report=scanCodexUsage(options,cancel);check(report.total().tokens.total()==before+110000,"unfinished final JSONL line is counted only after its newline arrives");
+    write(partial,{meta("session-replaced"),context("gpt-6.1-sol"),event(token(20,2),token(20,2),now-100)});
+    report=scanCodexUsage(options,cancel);check(report.total().tokens.total()==before+22,"truncated or replaced source invalidates prior cached records");
+    write(fixture/L"home/session_index.jsonl",{{{"id","session-one"},{"thread_name","Synthetic session title"}}});
+    report=scanCodexUsage(options,cancel);check(report.titles["session-one"]=="Synthetic session title","session titles come from explicit title metadata rather than prompt text");
+    UsageScanOptions tiny=options;tiny.cache=fixture/L"tiny-cache.json";tiny.fileByteBudget=140;tiny.byteBudget=200;
+    auto bounded=scanCodexUsage(tiny,cancel);check(bounded.pending>0&&bounded.partial,"bounded scanner reports pending coverage rather than claiming a complete history");
+    auto incomplete=options;incomplete.fileLimit=1;auto retained=scanCodexUsage(incomplete,cancel);
+    check(retained.partial&&retained.total().tokens.total()==report.total().tokens.total(),"incomplete source discovery retains same-home cached totals instead of erasing unseen files");
+    auto compressedOptions=options;compressedOptions.cache=fixture/L"compression-cache.json";
+    auto plainReport=scanCodexUsage(compressedOptions,cancel);
+    fs::rename(partial,partial.wstring()+L".zst");
+    auto compressedReport=scanCodexUsage(compressedOptions,cancel);
+    check(compressedReport.partial&&compressedReport.total().tokens.total()==plainReport.total().tokens.total(),"previously scanned usage survives plain-to-compressed archive replacement without decompression");
+    saveAnalyticsJson(fixture/L"history.json",history.toJson());QuotaHistory restored;restored.load(fixture/L"history.json");
+    check(restored.samples.size()==history.samples.size()&&!restored.dirty,"quota history atomically persists and restores validated samples");
+    check(!history.toJson().dump().empty()&&history.toJson().dump().find("synthetic-account")==std::string::npos,"quota history never persists raw account identifiers");
+    UsageReport empty;check(empty.total().tokens.total()==0&&empty.total().sessions.empty(),"empty usage aggregation stays empty");
+    return checks;
+}
+} // namespace quota

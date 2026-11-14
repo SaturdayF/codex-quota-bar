@@ -1,4 +1,4 @@
-param([string]$Compiler = 'g++', [string]$Windres = 'windres', [switch]$DebugBuild, [string]$OutputDirectory)
+﻿param([string]$Compiler = 'g++', [string]$Windres = 'windres', [switch]$DebugBuild, [string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $output = if ($OutputDirectory) { $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory) } else { Join-Path $root 'artifacts/native-win-x64' }
@@ -14,7 +14,7 @@ try {
     $signatureFile = Join-Path $output 'build-options.txt'
     $sameOptions = (Test-Path -LiteralPath $signatureFile) -and (Get-Content -LiteralPath $signatureFile -Raw).Trim() -eq $signature
     $headers = @(Get-ChildItem -LiteralPath . -Filter '*.hpp' -File) + @(Get-Item -LiteralPath 'vendor/json.hpp')
-    foreach ($source in @('core.cpp','uninstall.cpp','taskbar.cpp','deepseek.cpp','deepseek_ui.cpp','deepseek_tests.cpp','browser_token.cpp','drawing.cpp','app.cpp','settings.cpp','platform_login.cpp','tests.cpp','glass_tests.cpp','main.cpp')) {
+    foreach ($source in @('core.cpp','hub.cpp','hub_ui.cpp','hub_tests.cpp','analytics.cpp','analytics_ui.cpp','analytics_tests.cpp','uninstall.cpp','update.cpp','taskbar.cpp','deepseek.cpp','deepseek_ui.cpp','deepseek_tests.cpp','browser_token.cpp','drawing.cpp','app.cpp','settings.cpp','platform_login.cpp','tests.cpp','glass_tests.cpp','main.cpp')) {
         $object = Join-Path $output ($source + '.o')
         $needsBuild = -not $sameOptions -or -not (Test-Path -LiteralPath $object)
         if (-not $needsBuild) {
@@ -28,12 +28,12 @@ try {
         $objects += $object
     }
     $signature | Set-Content -LiteralPath $signatureFile -Encoding ASCII
-    & $Compiler @options @objects (Join-Path $output 'app.res') '-o' (Join-Path $output 'CodexQuotaBar.exe') '-lgdiplus' '-lcomctl32' '-ldwmapi' '-lcomdlg32' '-lshell32' '-lshlwapi' '-lole32' '-ladvapi32' '-luuid' '-lgdi32' '-luser32' '-lwinhttp'
+    & $Compiler @options @objects (Join-Path $output 'app.res') '-o' (Join-Path $output 'CodexQuotaBar.exe') '-lgdiplus' '-lcomctl32' '-ldwmapi' '-lcomdlg32' '-lshell32' '-lshlwapi' '-lole32' '-ladvapi32' '-luuid' '-lgdi32' '-luser32' '-lwinhttp' '-lws2_32' '-liphlpapi'
     if ($LASTEXITCODE -ne 0) { throw 'Native compilation failed' }
 } finally { Pop-Location }
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $output -Force
 Copy-Item -LiteralPath (Join-Path $root 'native/vendor/LICENSE-json.txt') -Destination (Join-Path $output 'LICENSE-json.txt') -Force
-'{"version":"0.3.8","runtime":"native-win32","architecture":"x64"}' | Set-Content -LiteralPath (Join-Path $output 'version.json') -Encoding UTF8
+'{"version":"0.4.1","runtime":"native-win32","architecture":"x64"}' | Set-Content -LiteralPath (Join-Path $output 'version.json') -Encoding UTF8
 Copy-Item -LiteralPath (Join-Path $root 'native/USER_GUIDE.md') -Destination (Join-Path $output 'README.md') -Force
 Copy-Item -LiteralPath (Join-Path $root 'CHANGELOG.md') -Destination $output -Force
 $manifestFiles = [ordered]@{}

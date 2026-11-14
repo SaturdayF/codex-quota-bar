@@ -3,10 +3,15 @@
 #include "deepseek.hpp"
 #include "browser_token.hpp"
 #include "taskbar.hpp"
+#include "update.hpp"
+#include "hub.hpp"
+#include "analytics_ui.hpp"
+#include <future>
 namespace quota {
 constexpr UINT TrayMessage = WM_APP + 12;
 constexpr UINT TraySettings = 40001, TrayExit = 40002;
 enum class WidgetKind { Codex, DeepSeek };
+HMONITOR fullscreenMonitorForWindow(HWND window);
 Layout deepSeekLayout(const DeepSeekState &state, const Settings &settings, int dpi, int available);
 std::optional<int64_t> deepSeekPrimaryBalance(const DeepSeekState &state);
 // Downward slide transition for the widget's balance and spend numbers: the old
@@ -30,6 +35,7 @@ struct Overlay {
     Settings settings;
     WidgetKind kind = WidgetKind::Codex;
     int detailPage = 0;
+    QuotaCardView codexCard;
     // DeepSeek hourly-chart hit testing, filled while the details card renders.
     int chartHover = -1;
     bool chartVisible = false;
@@ -94,7 +100,14 @@ struct Application {
     ULONGLONG trayRetryAt = 0;
     std::function<BOOL(DWORD, NOTIFYICONDATAW *)> notifyIcon = Shell_NotifyIconW;
     Settings settings = Settings::load();
+    HubRuntime hub;
+    HubSettings hubConfig;
     State state;
+    QuotaHistory quotaHistory;
+    std::future<void> quotaHistoryWrite;
+    ULONGLONG quotaHistorySaveAt = 0;
+    bool quotaHistorySaveError = false;
+    void flushQuotaHistory(bool final = false);
     DeepSeekState deepseek;
     std::vector<std::unique_ptr<Overlay>> overlays;
     std::unique_ptr<SettingsWindow> settingsWindow;
@@ -102,6 +115,7 @@ struct Application {
     std::thread deepSeekWorker;
     std::thread taskbarWorker;
     std::vector<TaskbarSpace> taskbarSpaces;
+    HMONITOR fullscreenMonitor = nullptr;
     struct WidgetPosition { std::wstring monitor; WidgetKind kind; int x; };
     std::vector<WidgetPosition> widgetPositions;
     std::mutex mutex;
@@ -137,6 +151,7 @@ struct Application {
     void apply(const State &value);
     void rebuild();
     void checkTaskbars();
+    void updateFullscreenMonitor(HMONITOR monitor);
     void layoutWidgets(Overlay *moving = nullptr, bool animate = false);
     void runTaskbarWorker();
     void refresh();
@@ -153,6 +168,9 @@ struct SettingsWindow {
     Application *app;
     HWND window = nullptr, viewport = nullptr, content = nullptr, palette = nullptr, helpDialog = nullptr;
     Settings draft;
+    HubSettings hubDraft;
+    void drawHub(Graphics &g, const GlassPalette &colors);
+    void applyHub();
     Monitor monitor;
     int dpi = 96, page = 0, scroll = 0;
     int wheelRemainder = 0;
@@ -167,6 +185,24 @@ struct SettingsWindow {
     bool loading = false;
     bool layingOut = false;
     bool clearDeepSeekCredentials = false;
+    std::atomic<bool> updateCancel{false};
+    std::future<std::optional<UpdateRelease>> updateCheck;
+    std::future<fs::path> updateDownload;
+    UsageReport usageReport;
+    UsageView usageView;
+    std::future<UsageReport> usageTask;
+    std::atomic<bool> usageCancel{false};
+    ULONGLONG usageNextScan = 0;
+    std::unique_ptr<QuotaPopup> quotaPopup;
+    void startUsageScan();
+    void pollUsageScan();
+    void drawUsage(Graphics &g, const GlassPalette &colors);
+    void usageCommand(int id);
+    void usageClick(float x, float y);
+    void usageHover(float x, float y);
+    std::optional<UpdateRelease> updateOffer;
+    void beginUpdateCheck();
+    void pollUpdate();
     int64_t previewStart = -1;
     int contentWidth = 700, contentHeight = 600;
     HFONT font = nullptr;

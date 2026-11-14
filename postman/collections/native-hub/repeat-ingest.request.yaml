@@ -1,0 +1,33 @@
+{
+  "$kind": "http-request",
+  "name": "repeat-ingest",
+  "order": 4000,
+  "url": "{{baseUrl}}/api/ingest",
+  "method": "POST",
+  "headers": [
+    {
+      "key": "Authorization",
+      "value": "Bearer {{hubSecret}}"
+    },
+    {
+      "key": "Content-Type",
+      "value": "application/json"
+    }
+  ],
+  "scripts": [
+    {
+      "type": "beforeRequest",
+      "language": "text/javascript",
+      "code": "if (!/^http:\\/\\/127\\.0\\.0\\.1:\\d+$/.test(pm.variables.get(\"baseUrl\"))) { throw new Error(\"Use an isolated loopback Hub fixture\"); }"
+    },
+    {
+      "type": "afterResponse",
+      "language": "text/javascript",
+      "code": "pm.test(\"repeat-ingest contract\", function () { pm.response.to.have.status(200);  });"
+    }
+  ],
+  "body": {
+    "type": "json",
+    "content": "{\"deviceId\": \"postman-synthetic-mac\", \"hostname\": \"Simulated Mac\", \"allTime\": {\"totalTokens\": 1234, \"costUsd\": 0.25}, \"historyAvailable\": true, \"history\": {\"daily\": [], \"monthly\": [{\"month\": \"2026-11\", \"tokens\": 1234, \"cost\": 0.25}], \"summary\": {\"activeDaysComplete\": false}}}"
+  }
+}

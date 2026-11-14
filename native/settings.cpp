@@ -1,4 +1,4 @@
-#include "app.hpp"
+﻿#include "app.hpp"
 #include <commdlg.h>
 #include <windowsx.h>
 namespace quota {
@@ -8,6 +8,8 @@ enum {
     NavGeneral,
     NavAdvanced,
     NavDeepSeek,
+    NavAnalytics,
+    NavHub,
     Save = 110,
     Cancel,
     Style = 200,
@@ -33,6 +35,7 @@ enum {
     Exit,
     Uninstall,
     OpenFolder,
+    CheckUpdate,
     BackgroundOpacity,
     IconOpacity,
     AppearanceMode,
@@ -327,6 +330,7 @@ static bool isToggle(int id) {
 }
 SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
     : app(a), draft(a->settings), startup(startupEnabled()) {
+    hubDraft=a->hubConfig;if(hubDraft.deviceId.empty())hubDraft.deviceId="quota-"+newHubSecret().substr(0,24);
     simulatedGlass = a->testing || a->preview;
     auto all = monitors();
     for (auto &m : all)
@@ -362,6 +366,13 @@ SettingsWindow::SettingsWindow(Application *a, HMONITOR requested)
     SetTimer(window, 1, 16, nullptr);
 }
 SettingsWindow::~SettingsWindow() {
+    usageCancel = true;
+    if (usageTask.valid()) { try { usageTask.get(); } catch (...) {} }
+    quotaPopup.reset();
+    updateCancel = true;
+    if (updateDownload.valid()) {
+        try { discardUpdate(updateDownload.get()); } catch (const std::exception &) {}
+    }
     tokenStop = true;
     if (tokenWorker.joinable()) tokenWorker.join();
     closeHelp();
@@ -389,6 +400,8 @@ void SettingsWindow::createControls() {
     button(L"常规", NavGeneral, -1);
     button(L"高级", NavAdvanced, -1);
     button(L"DeepSeek 相关设置", NavDeepSeek, -1);
+    button(L"Codex 用量", NavAnalytics, -1);
+    button(L"多设备同步", NavHub, -1);
     button(L"保存更改", Save, -1);
     button(L"取消", Cancel, -1);
     auto control = [&](const wchar_t *cls, const wchar_t *text, int id, int p, DWORD style) {
@@ -492,6 +505,20 @@ void SettingsWindow::createControls() {
     button(L"退出额度工具", Exit, 2);
     button(L"卸载程序", Uninstall, 2);
     button(L"打开文件夹", OpenFolder, 2);
+    button(L"检查更新", CheckUpdate, 2);
+    for (const auto &entry : std::vector<std::pair<const wchar_t *, int>>{
+             {L"近 7 天",UsageSeven},{L"近 30 天",UsageThirty},{L"费用",UsageCost},{L"Token",UsageTokens},
+             {L"按天",UsageDay},{L"按小时",UsageHour},{L"模型",UsageModels},{L"项目",UsageProjects},
+             {L"会话",UsageSessions},{L"账户",UsageAccounts},{L"刷新统计",UsageRefresh},
+             {L"额度详情",UsageQuota},{L"返回全部",UsageClear},{L"上一页",UsagePrevious},{L"下一页",UsageNext}}) button(entry.first,entry.second,4);
+    auto mode=control(L"COMBOBOX",L"",700,5,CBS_DROPDOWNLIST);
+    for(auto label:{L"仅本机",L"连接 Hub",L"本机托管 Hub"})SendMessageW(mode,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label));
+    SendMessageW(mode,CB_SETCURSEL,hubDraft.mode,0);
+    control(L"EDIT",wide(hubDraft.url).c_str(),701,5,ES_AUTOHSCROLL);
+    control(L"EDIT",std::to_wstring(hubDraft.port).c_str(),702,5,ES_NUMBER|ES_AUTOHSCROLL);
+    control(L"EDIT",L"",703,5,ES_PASSWORD|ES_AUTOHSCROLL);
+    control(L"EDIT",wide(hubDraft.deviceId).c_str(),704,5,ES_AUTOHSCROLL);
+    button(L"生成新密钥",705,5);button(L"应用同步设置",706,5);button(L"复制密钥",707,5);button(L"按月 / 按天",708,5);button(L"更早记录",709,5);button(L"更新记录",710,5);
     styleChanged();
 }
 void SettingsWindow::styleChanged() {
@@ -533,21 +560,26 @@ void SettingsWindow::layout() {
     GetClientRect(viewport, &c);
     contentWidth = int(c.right * 96. / dpi);
     contentHeight = int(c.bottom * 96. / dpi);
-    int needed = pageHeight = page == 0 ? 836 : page == 1 ? 620 : page == 3 ? 748 : 606;
+    if(page==4){usageView.prepare(usageReport);usageView.groupPage=std::clamp(usageView.groupPage,0,std::max(0,(int(usageView.groups.size())-1)/5));}
+    int needed = pageHeight = page == 5 ? 1640 : page == 4 ? 1320 : page == 0 ? 836 : page == 1 ? 620 : page == 3 ? 748 : 672;
     scroll = std::clamp(scroll, 0, std::max(0, needed - contentHeight));
     contentWidth = int(std::max(1, int(c.right) - px(14)) * 96. / dpi);
     SetWindowPos(content, nullptr, 0, -px(scroll), std::max(1, int(c.right) - px(14)), std::max<int>(c.bottom, px(needed)),
                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
-    struct Placement { HWND window; int x, y, width, height; };
+    struct Placement { HWND window; int x, y, width, height; bool visible = true; };
     std::vector<Placement> placements;
     auto place = [&](int id, double x, double y, double ww, double hh) {
         HWND ctrl = GetDlgItem(content, id);
         int ownerPage = int(reinterpret_cast<INT_PTR>(GetPropW(ctrl, L"QuotaPage"))) - 2;
-        if (ownerPage == page) placements.push_back({ctrl, px(x), px(y), px(ww), px(hh)});
+        if (ownerPage == page) {
+            bool visible = id != UsageClear || usageView.selectedDay || !usageView.project.empty();
+            placements.push_back({ctrl,px(x),px(y),px(ww),px(hh),visible});
+        }
     };
     int right = contentWidth - 224;
-    for (int i = 0; i < 4; ++i)
-        SetWindowPos(GetDlgItem(window, NavAppearance + i), nullptr, px(15), px(82 + CaptionHeight + i * 43), px(166), px(38),
+    const int navigationOrder[] = {0,1,4,5,2,3};
+    for (int i = 0; i < 6; ++i)
+        SetWindowPos(GetDlgItem(window, NavAppearance + navigationOrder[i]), nullptr, px(15), px(82 + CaptionHeight + i * 43), px(166), px(38),
                      SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
     SetWindowPos(GetDlgItem(window, Save), nullptr, w - px(148), h - px(58), px(120), px(36),
                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
@@ -579,6 +611,7 @@ void SettingsWindow::layout() {
     place(Exit, contentWidth - 146, 339, 132, 34);
     place(Uninstall, contentWidth - 124, 405, 110, 34);
     place(OpenFolder, contentWidth - 146, 471, 132, 34);
+    place(CheckUpdate, contentWidth - 146, 537, 132, 34);
     place(DeepSeekEnabled, contentWidth - 60, 89, 44, 26);
     place(DeepSeekAlwaysShow, contentWidth - 60, 155, 44, 26);
     place(DeepSeekBadge, contentWidth - 60, 221, 44, 26);
@@ -590,13 +623,28 @@ void SettingsWindow::layout() {
     place(DeepSeekClear, contentWidth - 124, 527, 110, 34);
     place(DeepSeekPlatform, contentWidth - 194, 275, 180, 28);
     place(DeepSeekHelp, contentWidth - 164, 307, 150, 26);
+    place(UsageSeven,0,82,84,30); place(UsageThirty,90,82,90,30);
+    place(UsageQuota,contentWidth-110,0,96,32); place(UsageRefresh,contentWidth-212,0,94,32);
+    place(UsageCost,contentWidth-306,247,65,28); place(UsageTokens,contentWidth-235,247,65,28);
+    place(UsageDay,contentWidth-160,247,65,28); place(UsageHour,contentWidth-89,247,75,28);
+    place(UsageModels,0,728,64,30); place(UsageProjects,72,728,64,30);
+    place(UsageSessions,144,728,64,30); place(UsageAccounts,216,728,64,30);
+    place(UsageClear,contentWidth-110,728,96,30);
+    place(700,0,116,contentWidth-14,34);place(701,0,198,contentWidth-14,32);
+    place(702,0,280,160,32);place(703,0,362,contentWidth-158,32);place(705,contentWidth-146,362,132,32);
+    place(704,0,444,contentWidth-14,32);place(706,0,504,160,34);
+    auto hubMode=int(SendDlgItemMessageW(content,700,CB_GETCURSEL,0,0));EnableWindow(GetDlgItem(content,701),hubMode==1);EnableWindow(GetDlgItem(content,702),hubMode==2);EnableWindow(GetDlgItem(content,703),hubMode!=0);EnableWindow(GetDlgItem(content,705),hubMode!=0);
+    place(707,172,504,110,34);place(708,0,1128,116,30);place(709,128,1128,104,30);place(710,244,1128,104,30);
+    place(UsagePrevious,contentWidth-202,1098,88,29);place(UsageNext,contentWidth-104,1098,88,29);
+    EnableWindow(GetDlgItem(content,UsagePrevious),usageView.groupPage>0);
+    EnableWindow(GetDlgItem(content,UsageNext),size_t((usageView.groupPage+1)*5)<usageView.groups.size());
     UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS | SWP_SHOWWINDOW;
     HDWP batch = BeginDeferWindowPos(int(placements.size()));
     for (auto &p : placements)
-        if (batch) batch = DeferWindowPos(batch, p.window, nullptr, p.x, p.y, p.width, p.height, flags);
+        if (batch) batch = DeferWindowPos(batch, p.window, nullptr, p.x, p.y, p.width, p.height, (flags & ~SWP_SHOWWINDOW) | (p.visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
     bool applied = batch && EndDeferWindowPos(batch);
     if (!applied)
-        for (auto &p : placements) SetWindowPos(p.window, nullptr, p.x, p.y, p.width, p.height, flags);
+        for (auto &p : placements) SetWindowPos(p.window, nullptr, p.x, p.y, p.width, p.height, (flags & ~SWP_SHOWWINDOW) | (p.visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
     RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
 void SettingsWindow::applyAppearance() {
@@ -641,12 +689,14 @@ void SettingsWindow::scrollTo(int value) {
     RedrawWindow(viewport, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
 void SettingsWindow::selectPage(int index) {
+    if (index < 0 || index > 5) return;
     page = index;
     scroll = 0;
     wheelRemainder = 0;
     closePalette();
     for (HWND combo : {styles, display, interval, deepSeekInterval, GetDlgItem(content, AppearanceMode)}) SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
     layout();
+    if (page == 4 && !usageReport.updated) startUsageScan();
 }
 void SettingsWindow::reveal(HMONITOR requested) {
     if (IsIconic(window))
@@ -702,11 +752,13 @@ void SettingsWindow::draw(HDC dc, bool inner) {
             g.FillRectangle(&b, RectF(0, 0, 196, float(rect.bottom / d)));
             g.Restore(saved);
             drawHeading(g, L"设置", RectF(26, 22 + CaptionHeight, 150, 44), 29, ink);
+            if (page == 4 && simulatedGlass) drawUiText(g, L"模拟数据", RectF(218,8,160,22),11,muted);
             drawUiText(g, L"Codex Quota Bar\n" + std::wstring(Version), RectF(24, rect.bottom / d - 80, 155, 58), 14, muted);
             Pen line(colors.border, 0);
             g.DrawLine(&line, 196.f, 0.f, 196.f, float(rect.bottom / d));
             g.DrawLine(&line, 218.f, rect.bottom / d - 78, rect.right / d - 28, rect.bottom / d - 78);
         } else {
+            if (page == 5) { drawHub(g,colors); } else if (page == 4) { drawUsage(g, colors); } else {
             const wchar_t *headings[] = {L"外观", L"常规", L"高级", L"DeepSeek 相关设置"};
             const wchar_t *subtitles[] = {L"调整任务栏组件的显示方式。",
                                           L"管理显示屏幕，以及应用的启动与退出。",
@@ -776,7 +828,9 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 row(332, L"退出", L"停止显示与后台监听。");
                 row(398, L"卸载", L"删除本工具及设置，保留目录中的其他文件。");
                 row(464, L"程序所在文件夹", L"在文件资源管理器中打开。");
-                drawUiText(g, L"通过本机 Codex 读取，不保存登录信息。", RectF(0, 549, float(contentWidth), 32),
+                auto version = L"当前版本 " + std::wstring(Version) + L" · 查询 GitHub 正式发布。";
+                row(530, L"软件更新", version.c_str());
+                drawUiText(g, L"通过本机 Codex 读取，不保存登录信息。", RectF(0, 615, float(contentWidth), 32),
                          14, muted);
             } else {
                 row(82, L"自动跟随 DeepSeekHarness", L"Harness 运行时自动显示并刷新。", 110);
@@ -792,6 +846,7 @@ void SettingsWindow::draw(HDC dc, bool inner) {
                 drawUiText(g, L"北京时间 UTC+8 · 平台账单可能延迟更新。", RectF(0, 596, float(contentWidth), 26), 13, muted);
                 drawUiText(g, L"平台登录态保存在本机 Windows 凭据管理器。", RectF(0, 629, float(contentWidth), 26), 12, muted);
             }
+            }
         }
     }
     BitBlt(dc, 0, 0, rect.right, rect.bottom, image.dc, 0, 0, SRCCOPY);
@@ -806,7 +861,7 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
         bool disabled = (item.itemState & ODS_DISABLED) != 0;
         bool pressed = (item.itemState & ODS_SELECTED) != 0;
         bool hot = (item.itemState & ODS_HOTLIGHT) != 0 || GetPropW(item.hwndItem, L"VibrancyHover");
-        bool nav = id >= NavAppearance && id <= NavDeepSeek;
+        bool nav = id >= NavAppearance && id <= NavHub;
         paintGlass(g, item.hwndItem, image.width, image.height);
         if (nav) {
             auto saved = g.Save();
@@ -837,7 +892,11 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
             float left = enabled ? area.GetRight() - size - 4 * d : area.X + 4 * d;
             fillRound(g, RectF(left, area.Y + 4 * d, size, size), size / 2, Color(255, 255, 255, 255));
         } else {
-            if (!nav) glassControl(g, area, d, colors, hot, pressed, id == Save, disabled);
+            bool usageSelected = id == UsageSeven ? usageView.days == 7 : id == UsageThirty ? usageView.days == 30 :
+                                 id == UsageCost ? !usageView.tokens : id == UsageTokens ? usageView.tokens :
+                                 id == UsageDay ? !usageView.hourly : id == UsageHour ? usageView.hourly :
+                                 id >= UsageModels && id <= UsageAccounts ? usageView.group == id - UsageModels : false;
+            if (!nav) glassControl(g, area, d, colors, hot, pressed, id == Save || usageSelected, disabled);
             if (nav && (pressed || id - NavAppearance == page))
                 fillRound(g, area, 8 * d, colors.active);
             else if (nav && hot && !disabled)
@@ -867,12 +926,18 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
 void SettingsWindow::command(int id, int notice) {
     if (loading)
         return;
-    if (id != Style && id != AppearanceMode && notice != BN_CLICKED)
+    if (id != Style && id != AppearanceMode && id != 700 && notice != BN_CLICKED)
         return;
-    if (id >= NavAppearance && id <= NavDeepSeek) {
+    if (id >= NavAppearance && id <= NavHub) {
         selectPage(id - NavAppearance);
         return;
     }
+    if (id >= UsageSeven && id <= UsageNext) { usageCommand(id); return; }
+    if(id==700&&notice==CBN_SELCHANGE){layout();InvalidateRect(content,nullptr,FALSE);return;}
+    if(id==705){SetDlgItemTextW(content,703,wide(newHubSecret()).c_str());return;}
+    if(id==707){auto value=controlText(GetDlgItem(content,703));if(value.empty()&&!app->testing&&!app->preview)value=wide(hubSecret());if(!value.empty()&&OpenClipboard(window)){EmptyClipboard();auto memory=GlobalAlloc(GMEM_MOVEABLE,(value.size()+1)*sizeof(wchar_t));if(memory){auto data=GlobalLock(memory);if(data){memcpy(data,value.c_str(),(value.size()+1)*sizeof(wchar_t));GlobalUnlock(memory);if(!SetClipboardData(CF_UNICODETEXT,memory))GlobalFree(memory);}else GlobalFree(memory);}CloseClipboard();}return;}
+    if(id==706){applyHub();return;}
+    if(id>=708&&id<=710){auto pageNumber=reinterpret_cast<INT_PTR>(GetPropW(window,L"HubHistoryPage"));if(id==708){SetPropW(window,L"HubHistoryMonthly",GetPropW(window,L"HubHistoryMonthly")?nullptr:reinterpret_cast<HANDLE>(1));pageNumber=0;}else if(id==709)++pageNumber;else pageNumber=std::max<INT_PTR>(0,pageNumber-1);SetPropW(window,L"HubHistoryPage",reinterpret_cast<HANDLE>(pageNumber));InvalidateRect(content,nullptr,FALSE);return;}
     switch (id) {
     case DeepSeekEnabled:
         draft.deepSeekEnabled = !draft.deepSeekEnabled;
@@ -1000,6 +1065,9 @@ void SettingsWindow::command(int id, int notice) {
     case Exit:
         app->stop();
         break;
+    case CheckUpdate:
+        beginUpdateCheck();
+        break;
     case OpenFolder:
         if (reinterpret_cast<INT_PTR>(ShellExecuteW(window, L"open", executable().parent_path().c_str(),
                                                    nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
@@ -1021,6 +1089,72 @@ void SettingsWindow::command(int id, int notice) {
     if (auto w = GetDlgItem(content, id))
         InvalidateRect(w, nullptr, TRUE);
     InvalidateRect(content, nullptr, FALSE);
+}
+void SettingsWindow::beginUpdateCheck() {
+    if (updateCheck.valid() || updateDownload.valid()) {
+        updateCancel = true;
+        return;
+    }
+    updateCancel = false;
+    try {
+        updateCheck = std::async(std::launch::async, [this] { return checkForUpdate(updateCancel); });
+        SetWindowTextW(GetDlgItem(content, CheckUpdate), L"取消检查");
+    } catch (const std::exception &) {
+        openHelp(L"检查更新失败", L"无法开始检查，请稍后重试。");
+    }
+}
+void SettingsWindow::pollUpdate() {
+    using namespace std::chrono_literals;
+    auto button = GetDlgItem(content, CheckUpdate);
+    if (updateCheck.valid() && updateCheck.wait_for(0ms) == std::future_status::ready) {
+        SetWindowTextW(button, L"检查更新");
+        try {
+            auto release = updateCheck.get();
+            if (updateCancel || !IsWindowVisible(window)) return;
+            if (!release) {
+                openHelp(L"暂无更新", L"当前版本 " + std::wstring(Version) + L"。暂无可安装的较新正式版。");
+                return;
+            }
+            if (!nativeInstalled(executable().parent_path())) {
+                auto message = L"GitHub 已发布 " + wide(release->tag) + L"。当前为便携版。打开发布页下载新的便携包？";
+                if (MessageBoxW(window, message.c_str(), L"发现新版本", MB_YESNO | MB_ICONINFORMATION | MB_DEFBUTTON2) == IDYES)
+                    ShellExecuteW(window, L"open",
+                                  (L"https://github.com/SaturdayF/codex-quota-bar/releases/tag/" + wide(release->tag)).c_str(),
+                                  nullptr, nullptr, SW_SHOWNORMAL);
+                return;
+            }
+            auto message = L"发现 " + wide(release->tag) + L"。下载并覆盖安装到当前目录？\n\n" +
+                           executable().parent_path().wstring() +
+                           L"\n\n安装时程序会退出并重新启动。请先保存设置页面中的更改。";
+            if (MessageBoxW(window, message.c_str(), L"确认安装更新", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
+                return;
+            updateOffer = *release;
+            updateDownload = std::async(std::launch::async, [this, offer = *release] {
+                return downloadUpdate(offer, updateCancel);
+            });
+            SetWindowTextW(button, L"取消下载");
+        } catch (const std::exception &) {
+            if (!updateCancel && IsWindowVisible(window))
+                openHelp(L"检查更新失败", L"无法读取 GitHub 正式发布或找到可验证的安装包。请稍后重试。");
+        }
+    }
+    if (updateDownload.valid() && updateDownload.wait_for(0ms) == std::future_status::ready) {
+        SetWindowTextW(button, L"检查更新");
+        fs::path stage;
+        try {
+            stage = updateDownload.get();
+            if (updateCancel || !IsWindowVisible(window)) {
+                discardUpdate(stage);
+                return;
+            }
+            launchUpdate(stage, *updateOffer);
+            app->stop();
+        } catch (const std::exception &) {
+            if (!stage.empty()) discardUpdate(stage);
+            if (!updateCancel && IsWindowVisible(window))
+                openHelp(L"无法安装更新", L"下载、校验或启动安装程序失败。请检查网络和目录权限后重试。");
+        }
+    }
 }
 bool SettingsWindow::save() {
     auto newToken = normalizeDeepSeekCredential(utf8(controlText(deepSeekToken)));
@@ -1534,6 +1668,21 @@ LRESULT CALLBACK SettingsWindow::contentProcedure(HWND w, UINT msg, WPARAM wp, L
     if (!self)
         return DefWindowProcW(w, msg, wp, lp);
     switch (msg) {
+    case WM_MOUSEMOVE:
+        if (self->page == 4) self->usageHover(GET_X_LPARAM(lp) * 96.f / self->dpi, GET_Y_LPARAM(lp) * 96.f / self->dpi);
+        break;
+    case WM_LBUTTONUP:
+        if (self->page == 4) { SetFocus(w); self->usageClick(GET_X_LPARAM(lp) * 96.f / self->dpi, GET_Y_LPARAM(lp) * 96.f / self->dpi); }
+        break;
+    case WM_KEYDOWN:
+        if (self->page == 4 && (wp == VK_UP || wp == VK_DOWN || wp == VK_RETURN)) {
+            if (wp == VK_RETURN) {
+                auto hit = std::find_if(self->usageView.hits.begin(),self->usageView.hits.end(),[&](const auto &h){return h.action==22&&h.value==self->usageView.keyboard;});
+                if (hit != self->usageView.hits.end()) self->usageClick(hit->rect.X+2,hit->rect.Y+2);
+            } else { int first=self->usageView.groupPage*5,last=std::min(first+4,int(self->usageView.groups.size())-1);self->usageView.keyboard=std::clamp(self->usageView.keyboard+(wp==VK_DOWN?1:-1),first,std::max(first,last)); InvalidateRect(w,nullptr,FALSE); }
+            return 0;
+        }
+        break;
     case WM_ERASEBKGND:
         return 1;
     case WM_PRINTCLIENT:
@@ -1688,7 +1837,10 @@ LRESULT CALLBACK SettingsWindow::procedure(HWND w, UINT msg, WPARAM wp, LPARAM l
         return 0;
     }
     case WM_TIMER:
+        if(self->page==5){auto now=GetTickCount64();auto previous=reinterpret_cast<ULONG_PTR>(GetPropW(w,L"HubPaintTick"));if(now-previous>=1000){SetPropW(w,L"HubPaintTick",reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>(now)));InvalidateRect(self->content,nullptr,FALSE);}}
+        self->pollUsageScan();
         if (self->tokenDone) self->finishPlatformToken();
+        self->pollUpdate();
         if (self->previewStart >= 0) {
             if (GetTickCount64() - self->previewStart >= 1200)
                 self->previewStart = -1;
@@ -1706,7 +1858,10 @@ LRESULT CALLBACK SettingsWindow::procedure(HWND w, UINT msg, WPARAM wp, LPARAM l
         self->command(LOWORD(wp), HIWORD(wp));
         return 0;
     case WM_CLOSE:
+        self->usageCancel = true;
+        if (self->quotaPopup && self->quotaPopup->window) ShowWindow(self->quotaPopup->window, SW_HIDE);
         self->tokenStop = true;
+        self->updateCancel = true;
         self->closePalette();
         ShowWindow(w, SW_HIDE);
         self->draft = self->app->settings;

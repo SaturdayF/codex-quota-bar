@@ -292,6 +292,34 @@ int selfTests(const fs::path &output) {
     fs::remove(fixture);
     checks += uninstallTests(log);
     checks += deepSeekTests(log);
+    checks += analyticsTests(log, output.parent_path() / L"analytics-fixtures");
+    const std::string digest(64, 'a');
+    json asset{{"name", "CodexQuotaBar-v0.3.10-Setup.exe"}, {"size", 123},
+               {"digest", "sha256:" + digest}, {"state", "uploaded"}};
+    json release{{"tag_name", "v0.3.10"}, {"draft", false}, {"prerelease", false},
+                 {"assets", json::array({asset})}};
+    auto update = parseUpdateRelease(release, "0.3.9");
+    check(update && update->tag == "v0.3.10" && update->digest == digest && update->size == 123,
+          "update compares version components numerically and selects a verified installer");
+    check(!parseUpdateRelease(release, "0.3.10") && !parseUpdateRelease(release, "0.4.0"),
+          "update cannot reinstall the same version or downgrade");
+    auto rejects = [&](json candidate) {
+        try { parseUpdateRelease(candidate, "0.3.9"); }
+        catch (const std::exception &) { return true; }
+        return false;
+    };
+    auto invalid = release;
+    invalid["prerelease"] = true;
+    check(rejects(invalid), "update refuses prerelease metadata");
+    invalid = release;
+    invalid["assets"][0]["digest"] = nullptr;
+    check(rejects(invalid), "update refuses an installer without SHA-256");
+    invalid = release;
+    invalid["assets"][0]["size"] = 33 * 1024 * 1024;
+    check(rejects(invalid), "update refuses oversized installer metadata");
+    invalid = release;
+    invalid["assets"][0]["name"] = "unrelated.exe";
+    check(rejects(invalid), "update refuses unrelated assets");
     log << checks << " native checks passed.\n";
     return 0;
 }
@@ -308,7 +336,7 @@ static void pumpUntil(const std::function<bool()> &ready) {
             Sleep(1);
     }
 }
-int uiTests(const fs::path &dir) {
+static int runUiTests(const fs::path &dir, bool liveGlass) {
     fs::create_directories(dir);
     std::ofstream log(dir / L"checks.txt");
     int count = 0;
@@ -318,8 +346,75 @@ int uiTests(const fs::path &dir) {
             throw std::runtime_error(name);
         ++count;
     };
+    // Exercise fullscreen with synthetic app windows and quota data.
+    {
+        Application fixture(false, true);
+        fixture.settings = Settings{};
+        fixture.settings.displayMode = "primary";
+        fixture.settings.avoidIcons = false;
+        fixture.taskbarProbe = [](HMONITOR) -> HWND { return nullptr; };
+        fixture.state.active = true;
+        fixture.state.q.plan = "plus";
+        fixture.state.q.hour = WindowQuota{68, utcNow() + 1800};
+        fixture.harnessActive = true;
+        fixture.rebuild();
+        check(fixture.overlays.size() == 2, "fullscreen fixture has both providers");
+        auto &widget = *fixture.overlays.front();
+        const auto monitor = widget.monitor;
+        auto foreground = GetForegroundWindow();
+        RECT bounds{};
+        GetWindowRect(widget.window, &bounds);
+        POINT p{(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
+        const RECT &screen = monitor.bounds;
+        HWND fullscreen = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC", L"Fullscreen test",
+                                         WS_POPUP | WS_VISIBLE, screen.left, screen.top,
+                                         screen.right - screen.left, screen.bottom - screen.top,
+                                         nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        check(fullscreen && fullscreenMonitorForWindow(fullscreen) == monitor.handle,
+              "borderless window covering the monitor is detected");
+        if (fullscreen) {
+            ShowWindow(fullscreen, SW_HIDE);
+            check(!fullscreenMonitorForWindow(fullscreen), "hidden fullscreen window is ignored");
+            ShowWindow(fullscreen, SW_SHOWNOACTIVATE);
+            SetWindowPos(fullscreen, nullptr, 0, 0, 320, 240, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            check(!fullscreenMonitorForWindow(fullscreen), "windowed mode is ignored");
+            DestroyWindow(fullscreen);
+        }
+        HWND maximized = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC", L"Maximized test",
+                                        WS_OVERLAPPEDWINDOW, screen.left, screen.top, 320, 240,
+                                        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (maximized)
+            SetWindowLongPtrW(maximized, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_MAXIMIZE);
+        check(maximized && IsZoomed(maximized) && !fullscreenMonitorForWindow(maximized),
+              "ordinary maximized window does not hide taskbar providers");
+        if (maximized) DestroyWindow(maximized);
+        widget.showDetails();
+        check(IsWindowVisible(widget.details), "details are open before fullscreen starts");
+        fixture.updateFullscreenMonitor(monitor.handle);
+        for (auto &overlay : fixture.overlays) {
+            overlay->tick(&p);
+            overlay->showDetails();
+            check(overlay->blocked && !IsWindowVisible(overlay->window) && !IsWindowVisible(overlay->details),
+                  "fullscreen hides each provider and suppresses details at the old position");
+        }
+        fixture.rebuild();
+        check(std::all_of(fixture.overlays.begin(), fixture.overlays.end(),
+                          [](auto &o) { return o->blocked && !IsWindowVisible(o->window); }),
+              "rebuilding during fullscreen keeps both providers hidden");
+        fixture.updateFullscreenMonitor(nullptr);
+        check(std::all_of(fixture.overlays.begin(), fixture.overlays.end(),
+                          [](auto &o) { return !o->blocked && IsWindowVisible(o->window) && !IsWindowVisible(o->details); }),
+              "leaving fullscreen restores widgets without reopening details");
+        auto &restored = *fixture.overlays.front();
+        restored.tick(&p);
+        restored.hoverStart -= 225;
+        restored.tick(&p);
+        check(IsWindowVisible(restored.details), "hover details work again after leaving fullscreen");
+        check(GetForegroundWindow() == foreground, "fullscreen transitions do not steal focus");
+    }
     // Run composited screen checks before any other fixture can cover them.
-    count += liveGlassTests(dir, log);
+    if (liveGlass) count += liveGlassTests(dir, log);
+    else log << "SKIP legacy live compositor suite: run --glass-test separately; analytics material has its own --analytics-glass-test.\n";
     // Exercise shell lifecycle without touching the user's real tray or Explorer.
     std::vector<DWORD> trayCalls;
     {
@@ -721,12 +816,12 @@ int uiTests(const fs::path &dir) {
     SendMessageW(settings.content, WM_HSCROLL, TB_THUMBPOSITION, reinterpret_cast<LPARAM>(settings.iconOpacitySlider));
     SetFocus(GetDlgItem(settings.window, 100));
     settings.capture(dir / L"settings-appearance.png");
-    HWND appearance = GetDlgItem(settings.content, 249);
+    HWND appearance = GetDlgItem(settings.content, 250);
     check(appearance && !Settings::fromJson(json::object()).darkAppearance,
           "missing appearance preference defaults to light");
     auto setAppearance = [&](int index) {
         SendMessageW(appearance, CB_SETCURSEL, index, 0);
-        SendMessageW(settings.content, WM_COMMAND, MAKEWPARAM(249, CBN_SELCHANGE),
+        SendMessageW(settings.content, WM_COMMAND, MAKEWPARAM(250, CBN_SELCHANGE),
                      reinterpret_cast<LPARAM>(appearance));
     };
     auto printSlider = [&] {
@@ -1202,7 +1297,10 @@ int uiTests(const fs::path &dir) {
     app.wake.notify_all();
     app.worker.join();
     count += deepSeekUiTests(dir / L"deepseek");
+    count += analyticsUiTests(dir / L"analytics");
     log << count << " native UI checks passed.\n";
     return 0;
 }
+int uiTests(const fs::path &dir) { return runUiTests(dir, true); }
+int syntheticUiTests(const fs::path &dir) { return runUiTests(dir, false); }
 } // namespace quota

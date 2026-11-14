@@ -1,0 +1,20 @@
+{
+  "$kind": "http-request",
+  "name": "health",
+  "order": 1000,
+  "url": "{{baseUrl}}/api/health",
+  "method": "GET",
+  "headers": [],
+  "scripts": [
+    {
+      "type": "beforeRequest",
+      "language": "text/javascript",
+      "code": "if (!/^http:\\/\\/127\\.0\\.0\\.1:\\d+$/.test(pm.variables.get(\"baseUrl\"))) { throw new Error(\"Use an isolated loopback Hub fixture\"); }"
+    },
+    {
+      "type": "afterResponse",
+      "language": "text/javascript",
+      "code": "pm.test(\"health contract\", function () { pm.response.to.have.status(200); pm.expect(pm.response.json().role).to.equal(\"hub\"); });"
+    }
+  ]
+}

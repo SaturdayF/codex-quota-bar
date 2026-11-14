@@ -33,8 +33,8 @@ namespace quota {
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 using namespace Gdiplus;
-constexpr wchar_t Version[] = L"0.3.8";
-constexpr char VersionUtf8[] = "0.3.8";
+constexpr wchar_t Version[] = L"0.4.1";
+constexpr char VersionUtf8[] = "0.4.1";
 constexpr UINT StateMessage = WM_APP + 1, SettingsMessage = WM_APP + 2, RebuildMessage = WM_APP + 3;
 constexpr UINT DeepSeekMessage = WM_APP + 5;
 constexpr UINT TaskbarMessage = WM_APP + 6;
@@ -47,6 +47,8 @@ int64_t utcNow();
 bool lightTheme();
 bool motionEnabled();
 std::wstring timeLabel(int64_t value, bool date = true);
+std::string privateKey(const std::string &value);
+fs::path codexHome();
 Color parseColor(const std::string &s, Color fallback);
 std::string hexColor(Color c);
 struct Preference {
@@ -105,9 +107,16 @@ bool launchUninstaller(HWND owner);
 struct WindowQuota {
     double remaining = 0;
     int64_t resets = 0;
+    int minutes = 0;
+};
+struct NamedQuota {
+    std::string id, label, bucket;
+    WindowQuota window;
 };
 struct Quotas {
     std::optional<WindowQuota> hour, week;
+    std::vector<NamedQuota> extraWindows;
+    std::string accountKey;
     std::string plan;
     bool weekOnly() const;
     std::wstring planLabel() const;
@@ -157,6 +166,8 @@ class Rpc {
     std::atomic<bool> *cancel;
     std::string plan;
     std::function<void(Quotas)> notification;
+    Quotas lastSnapshot;
+    std::string ownerKey;
     std::function<bool()> sessionEnded;
     ULONGLONG checkedSession = 0;
     void send(const json &value);

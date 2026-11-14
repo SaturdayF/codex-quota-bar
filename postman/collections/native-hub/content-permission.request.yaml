@@ -1,0 +1,25 @@
+{
+  "$kind": "http-request",
+  "name": "content-permission",
+  "order": 8000,
+  "url": "{{baseUrl}}/api/sync/content",
+  "method": "GET",
+  "headers": [
+    {
+      "key": "Authorization",
+      "value": "Bearer {{hubSecret}}"
+    }
+  ],
+  "scripts": [
+    {
+      "type": "beforeRequest",
+      "language": "text/javascript",
+      "code": "if (!/^http:\\/\\/127\\.0\\.0\\.1:\\d+$/.test(pm.variables.get(\"baseUrl\"))) { throw new Error(\"Use an isolated loopback Hub fixture\"); }"
+    },
+    {
+      "type": "afterResponse",
+      "language": "text/javascript",
+      "code": "pm.test(\"content-permission contract\", function () { pm.response.to.have.status(200); pm.expect(pm.response.json().sessionTitles.enabled).to.equal(false); });"
+    }
+  ]
+}

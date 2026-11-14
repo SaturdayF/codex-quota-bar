@@ -1,6 +1,10 @@
 #include "app.hpp"
 #include "uninstall.hpp"
-namespace quota { int liveGlassTests(const fs::path &, std::ostream &); }
+namespace quota {
+int liveGlassTests(const fs::path &, std::ostream &);
+int liveAnalyticsGlassTests(const fs::path &, std::ostream &);
+int syntheticUiTests(const fs::path &);
+}
 using namespace quota;
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     using DpiFn = BOOL(WINAPI *)(HANDLE);
@@ -23,6 +27,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     };
     if (has(L"--fake-server"))
         return fakeServer();
+    if (!args.empty() && args.front() == L"--update-helper")
+        return runUpdateHelper(args);
     ULONG_PTR token = 0;
     GdiplusStartupInput input;
     if (GdiplusStartup(&token, &input, nullptr) != Ok)
@@ -43,6 +49,20 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         }
         else if (has(L"--uninstall-user-data"))
             result = removeUninstallUserData(has(L"-WhatIf")) ? 0 : 1;
+        else if (has(L"--hub-fixture")) {
+            auto dir=after(L"--output",L"hub-fixture");fs::create_directories(dir);HubSettings cfg;cfg.mode=2;cfg.port=0;cfg.deviceId="synthetic-host";HubRuntime runtime;runtime.start(cfg,"synthetic-test-secret-only",dir,true);
+            saveAnalyticsJson(dir/L"ready.json",{{"port",runtime.port()}});auto deadline=GetTickCount64()+60000;while(GetTickCount64()<deadline&&!fs::exists(dir/L"stop"))Sleep(50);runtime.stop();
+        }
+        else if (has(L"--hub-render-ui")) {
+            auto dir=after(L"--output",L"hub-ui");fs::create_directories(dir);Application app(false,true);app.hubConfig.mode=2;app.hubConfig.port=17321;app.hubConfig.deviceId="simulated-windows";auto fixture=app.hubConfig;fixture.port=0;app.hub.start(fixture,"synthetic-test-secret-only",dir/L"synthetic-store",true);auto data=hubLocalSnapshot(demoUsageReport(utcNow()),State{},fixture.deviceId);data["hostname"]="Simulated Windows";app.hub.publish(data);app.showSettings();auto &ui=*app.settingsWindow;ui.command(105,BN_CLICKED);if(ui.page!=5||!IsWindowVisible(GetDlgItem(ui.content,700)))throw std::runtime_error("Hub navigation/controls inaccessible");
+            for(int mode=0;mode<3;++mode){SendDlgItemMessageW(ui.content,700,CB_SETCURSEL,mode,0);ui.command(700,CBN_SELCHANGE);if(bool(IsWindowEnabled(GetDlgItem(ui.content,701)))!=(mode==1)||bool(IsWindowEnabled(GetDlgItem(ui.content,702)))!=(mode==2))throw std::runtime_error("Hub mode field availability mismatch");}
+            if(!(GetWindowLongPtrW(GetDlgItem(ui.content,703),GWL_STYLE)&ES_PASSWORD))throw std::runtime_error("Hub secret is not masked");ui.command(708,BN_CLICKED);if(!GetPropW(ui.window,L"HubHistoryMonthly"))throw std::runtime_error("Hub monthly history unavailable");ui.command(708,BN_CLICKED);
+            std::ofstream(dir/L"checks.txt")<<"PASS Hub navigation and visible controls\nPASS local/client/host field availability\nPASS shared secret masking\nPASS daily/monthly history switching\n";
+            ui.capture(dir/L"hub-light-simulated.png");ui.scrollTo(850);ui.capture(dir/L"hub-totals-light-simulated.png");ui.draft.darkAppearance=true;ui.applyAppearance();ui.capture(dir/L"hub-totals-dark-simulated.png");ui.scrollTo(0);ui.capture(dir/L"hub-dark-simulated.png");
+        }
+        else if (has(L"--hub-test")) {
+            auto dir=after(L"--output",L"hub-tests");fs::create_directories(dir);std::ofstream log(dir/L"checks.txt");hubTests(log,dir);
+        }
         else if (has(L"--self-test"))
             result = selfTests(after(L"--output", L"native-tests.txt"));
         else if (has(L"--glass-test")) {
@@ -51,6 +71,15 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             std::ofstream log(dir / L"checks.txt");
             liveGlassTests(dir, log);
         }
+        else if (has(L"--analytics-glass-test")) {
+            auto dir = after(L"--output", L"analytics-glass-tests"); fs::create_directories(dir);
+            std::ofstream log(dir / L"checks.txt"); liveAnalyticsGlassTests(dir, log);
+        }
+        else if (has(L"--analytics-ui-test")) {
+            analyticsUiTests(after(L"--output", L"analytics-ui-tests"));
+        }
+        else if (has(L"--ui-test-synthetic"))
+            result = syntheticUiTests(after(L"--output", L"native-ui-tests"));
         else if (has(L"--ui-test"))
             result = uiTests(after(L"--output", L"native-ui-tests"));
         else if (has(L"--deepseek-ui-test")) {
@@ -89,6 +118,19 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             out << report.dump(2);
             result = state.balanceAt && state.costAt && state.tokensAt ? 0 : 1;
         }
+        else if (has(L"--usage-probe")) {
+            std::atomic<bool> cancel{false};
+            UsageScanOptions options; options.home = codexHome(); options.cache = after(L"--cache", {});
+            auto report = scanCodexUsage(options, cancel);
+            size_t unpriced = 0, attributed = 0;
+            for (const auto &entry : report.entries) { if (!entry.priced) ++unpriced; if (!entry.account.empty()) ++attributed; }
+            json status{{"available",report.available},{"files",report.files},{"pending",report.pending},
+                        {"partial",report.partial},{"entryCount",report.entries.size()},
+                        {"unpricedEntries",unpriced},{"attributedEntries",attributed},
+                        {"cacheWarning",!report.error.empty()},{"pricingDate",UsagePricingDate}};
+            std::ofstream out(after(L"--output",L"usage-probe.json")); out << status.dump(2);
+            result = report.available ? 0 : 1;
+        }
         else if (has(L"--probe")) {
             std::atomic<bool> canceled{false};
             Rpc rpc(findCodex(Settings::load().codexPath), &canceled);
@@ -97,6 +139,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                 return w ? json{{"remaining", w->remaining}, {"resetsAt", w->resets}} : json(nullptr);
             };
             json report = {{"hour", window(q.hour)}, {"week", window(q.week)},
+                           {"extraWindowCount", q.extraWindows.size()}, {"historyOwnerAvailable", !q.accountKey.empty()},
                            {"plan", q.plan},         {"desktopRunning", desktopRunning()},
                            {"planLabel", utf8(q.planLabel())}, {"weekOnly", q.weekOnly()},
                            {"native", true},         {"version", VersionUtf8}};
@@ -104,7 +147,22 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             out << report.dump(2);
         } else {
             bool preview = has(L"--preview");
+            auto readyName = after(L"--update-ready", {}).wstring();
+            HANDLE ready = nullptr;
+            if (!preview && after(L"--update-version", {}).wstring() == Version &&
+                readyName.rfind(L"Local\\CodexQuotaBar.Update-", 0) == 0)
+                ready = OpenEventW(EVENT_MODIFY_STATE, FALSE, readyName.c_str());
+            std::unique_ptr<void, decltype(&CloseHandle)> readyEvent(ready, CloseHandle);
             if (!preview) {
+                HANDLE updating = OpenMutexW(SYNCHRONIZE, FALSE, UpdateLock);
+                if (updating) {
+                    CloseHandle(updating);
+                    if (!readyEvent) {
+                        CoUninitialize();
+                        GdiplusShutdown(token);
+                        return 0;
+                    }
+                }
                 singleton = CreateMutexW(nullptr, FALSE, L"Local\\CodexQuotaBar.Listener");
                 if (GetLastError() == ERROR_ALREADY_EXISTS) {
                     if (has(L"--settings")) {
@@ -127,8 +185,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                 app.showSettings();
             if (has(L"--smoke-ui"))
                 SetTimer(app.controller, 2, 7000, nullptr);
+            if (readyEvent) PostMessageW(app.controller, WM_NULL, 0, 0);
             MSG msg;
             while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+                if (readyEvent && msg.message == WM_NULL && msg.hwnd == app.controller) {
+                    SetEvent(readyEvent.get());
+                    readyEvent.reset();
+                }
                 if (msg.message == WM_TIMER && msg.hwnd == app.controller && msg.wParam == 2) {
                     app.stop();
                     continue;

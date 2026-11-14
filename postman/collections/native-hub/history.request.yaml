@@ -1,0 +1,25 @@
+{
+  "$kind": "http-request",
+  "name": "history",
+  "order": 6000,
+  "url": "{{baseUrl}}/api/history",
+  "method": "GET",
+  "headers": [
+    {
+      "key": "Authorization",
+      "value": "Bearer {{hubSecret}}"
+    }
+  ],
+  "scripts": [
+    {
+      "type": "beforeRequest",
+      "language": "text/javascript",
+      "code": "if (!/^http:\\/\\/127\\.0\\.0\\.1:\\d+$/.test(pm.variables.get(\"baseUrl\"))) { throw new Error(\"Use an isolated loopback Hub fixture\"); }"
+    },
+    {
+      "type": "afterResponse",
+      "language": "text/javascript",
+      "code": "pm.test(\"history contract\", function () { pm.response.to.have.status(200); pm.expect(pm.response.json().monthly[0].tokens).to.equal(1234); });"
+    }
+  ]
+}

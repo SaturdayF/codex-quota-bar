@@ -11,7 +11,7 @@ static bool plainFile(const fs::path &path) {
     return attributes != INVALID_FILE_ATTRIBUTES &&
            !(attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT));
 }
-static std::string sha256(const fs::path &path) {
+std::string sha256(const fs::path &path) {
     HCRYPTPROV provider = 0;
     HCRYPTHASH hash = 0;
     if (!CryptAcquireContextW(&provider, nullptr, nullptr, PROV_RSA_AES, CRYPT_VERIFYCONTEXT))
@@ -269,13 +269,13 @@ bool removeUninstallUserData(bool whatIf) {
             link->Release();
         }
     }
-    for (auto target : {L"CodexQuotaBar.DeepSeek.PlatformToken", L"CodexQuotaBar.DeepSeek.ApiKey"})
+    for (auto target : {L"CodexQuotaBar.DeepSeek.PlatformToken", L"CodexQuotaBar.DeepSeek.ApiKey", L"CodexQuotaBar.SyncHub.Secret"})
         if (!CredDeleteW(target, CRED_TYPE_GENERIC, 0) && GetLastError() != ERROR_NOT_FOUND) ok = false;
     auto dir = dataDirectory();
     auto attributes = GetFileAttributesW(dir.c_str());
     if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
         return false;
-    for (auto name : {L"settings.json", L"settings.native.tmp"}) {
+    for (auto name : {L"settings.json", L"settings.native.tmp", L"codex-usage-cache.json", L"codex-quota-history.json", L"hub-settings.json", L"hub-devices.json", L"hub-scan-cache.json", L"hub-local-history.json", L"hub-remote-cache.json"}) {
         auto file = dir / name;
         if (plainFile(file)) {
             std::error_code ec;

@@ -4,11 +4,11 @@
 
 在 Windows 任务栏显示 Codex 额度和 DeepSeek 账户余额，支持多屏、拖动布局、悬浮详情和自动刷新。
 
-**最新发布：[0.3.8](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.3.8)** · Windows 10/11 x64 · C++ 原生程序
+**最新发布：[0.4.1](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.4.1)** · Windows 10/11 x64 · C++ 原生程序
 
-**稳定版：[0.3.8](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.3.8)**
+**稳定版：[0.4.1](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.4.1)**
 
-[安装包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.8/CodexQuotaBar-v0.3.8-Setup.exe) · [便携包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.8/CodexQuotaBar-v0.3.8-Portable-win-x64.zip) · [SHA-256 校验](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.3.8/SHA256SUMS.txt) · [版本记录](CHANGELOG.md)
+[安装包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.4.1/CodexQuotaBar-v0.4.1-Setup.exe) · [便携包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.4.1/CodexQuotaBar-v0.4.1-Portable-win-x64.zip) · [SHA-256 校验](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.4.1/SHA256SUMS.txt) · [版本记录](CHANGELOG.md)
 
 ## 界面预览
 
@@ -97,6 +97,22 @@ Codex 额度通过本地 `codex app-server` 读取；DeepSeek 余额和用量通
 Windows 11 22H2 及以上使用 Desktop Acrylic，较早系统使用兼容模糊；系统合成不可用、启用高对比度或进入省电模式（Battery Saver）时回退为纯色。省电模式下系统会关闭半透明与模糊，因此毛玻璃效果不可用，设置与详情恢复为不透明底色。Windows 10 兼容材质尚未完成实机专项验证。
 
 这是独立工具，与 OpenAI、DeepSeek 无隶属关系。
+
+## 0.4.1 多设备同步
+
+新增「多设备同步」，支持连接已有 Hub 或让 Windows 本机托管 Hub，与 Token Monitor 基础用量协议交换统计。共享汇总和每日/月度历史在同步页查看，密钥独立保存在 Windows 凭据管理器。已采集历史独立保留；不恢复丢失记录、不跨设备去重。内置 Hub 使用 HTTP，跨网络请使用可信 VPN 或 HTTPS 反向代理。
+
+详见 [Hub 同步说明](docs/HUB_SYNC.md) 与 [0.4.1 版本说明](docs/releases/v0.4.1.md)。
+
+## Codex 用量与额度历史
+
+Codex 扩展功能：
+
+- **更多额度与历史**：详情中显示接口提供的月度、模型专属额度；按账户和工作区记录采样，查看剩余额度曲线与均匀消耗参考线。
+- **本地用量统计**：新增「Codex 用量」页，显示近 7 / 30 天 Token、会话数量及标准 API 等价费用估算；包含按天/小时趋势和年度活跃热力图。
+- **分组查看**：按模型、项目、会话和日志能确认的账户归属汇总；点击项目可查看其会话，点击日期可筛选当日记录。
+
+费用是本机日志对应的 API 等价估算，非订阅实际扣费；未知价格、归属和未覆盖数据会单独标明。额外配额取决于接口，额度历史从有效采样开始积累。统计页和额度浮窗沿用系统实时毛玻璃。使用范围与缓存说明见[使用指南](native/USER_GUIDE.md#codex-用量与额度历史)。
 
 ## 开发
 

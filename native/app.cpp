@@ -1,5 +1,35 @@
 #include "app.hpp"
+#include <windowsx.h>
+#include <dwmapi.h>
 namespace quota {
+HMONITOR fullscreenMonitorForWindow(HWND window) {
+    if (!window || window == GetDesktopWindow() || window == GetShellWindow() ||
+        !IsWindowVisible(window) || IsIconic(window))
+        return nullptr;
+    // Maximized windows can reach the monitor edges with an auto-hidden taskbar.
+    if (IsZoomed(window) && (GetWindowLongPtrW(window, GWL_STYLE) & WS_CAPTION) == WS_CAPTION)
+        return nullptr;
+    DWORD cloaked = 0;
+    if (SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked)
+        return nullptr;
+    RECT bounds{};
+    if (FAILED(DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, &bounds, sizeof(bounds))) &&
+        !GetWindowRect(window, &bounds))
+        return nullptr;
+    HMONITOR monitor = MonitorFromRect(&bounds, MONITOR_DEFAULTTONULL);
+    MONITORINFO info{sizeof(info)};
+    if (!monitor || !GetMonitorInfoW(monitor, &info)) return nullptr;
+    const RECT &screen = info.rcMonitor;
+    return bounds.left <= screen.left && bounds.top <= screen.top &&
+           bounds.right >= screen.right && bounds.bottom >= screen.bottom ? monitor : nullptr;
+}
+static HMONITOR foregroundFullscreenMonitor() {
+    HWND foreground = GetForegroundWindow();
+    DWORD process = 0;
+    if (!foreground || !GetWindowThreadProcessId(foreground, &process) || process == GetCurrentProcessId())
+        return nullptr;
+    return fullscreenMonitorForWindow(foreground);
+}
 static void registerClass(const wchar_t *name, WNDPROC proc, UINT style = 0) {
     WNDCLASSEXW c{};
     c.cbSize = sizeof(c);
@@ -85,10 +115,16 @@ void Overlay::measure(bool reset) {
     placed = true;
 }
 void Overlay::place(int target, bool hidden, bool animate) {
+    hidden = hidden || monitor.handle == app->fullscreenMonitor;
     x = target;
     bool visibilityChanged = blocked != hidden;
     blocked = hidden;
-    if (visibilityChanged && blocked) { hideDetails(); ShowWindow(window, SW_HIDE); }
+    if (visibilityChanged && blocked) {
+        hover = false;
+        hideDetails();
+        ShowWindow(window, SW_HIDE);
+        render();
+    }
     RECT current{};
     bool known = GetWindowRect(window, &current);
     bool sameShape = known && current.top == y && current.right - current.left == layout.width &&
@@ -288,6 +324,7 @@ void Overlay::hideDetails() {
     detailsHoverTracked = false;
 }
 void Overlay::presentDetails(std::unique_ptr<Surface> image, int left, int top) {
+    if (monitor.handle == app->fullscreenMonitor) return;
     detailImage = std::move(image);
     SetWindowPos(details, HWND_TOPMOST, left, top, detailImage->width, detailImage->height,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -299,8 +336,8 @@ void Overlay::showDetails(const fs::path &capture) {
         return;
     }
     float d = monitor.dpi / 96.f;
-    auto visible = settings.visibility(state.q);
-    int width = int(372 * d), height = int((170 + 100 * visible.count()) * d);
+    int width = int(372 * d), height = int(quotaCardHeight(state, settings,
+        int((monitor.work.bottom - monitor.work.top) / d) - 24, codexCard.history) * d);
     width = std::min(width, int(monitor.work.right - monitor.work.left));
     int left =
         std::clamp<LONG>(x, monitor.work.left, std::max(monitor.work.left, monitor.work.right - width));
@@ -315,47 +352,11 @@ void Overlay::showDetails(const fs::path &capture) {
         Graphics g(image.bitmap.get());
         g.Clear(Color(0, 0, 0, 0));
         g.SetSmoothingMode(SmoothingModeAntiAlias);
-        auto ink = colors.ink, muted = colors.secondary;
         RectF glass(1, 1, width - 2.f, height - 2.f);
         if (simulated) paintFrost(g, glass, 16 * d, colors, detailFrost.get(), glass);
         else paintBackdrop(g, colors, detailBackdrop);
-        drawHeading(g, L"Codex 额度", RectF(20 * d, 12 * d, 124 * d, 32 * d), 20 * d, ink);
-        drawUiText(g, state.q.planLabel(), RectF(154 * d, 12 * d, width - 174 * d, 32 * d),
-                   14 * d, muted);
-        drawUiText(g, visible.count() == 2 ? L"5 小时与每周额度" : visible.hour ? L"5 小时额度" : L"每周额度",
-                 RectF(20 * d, 44 * d, width - 40 * d, 26 * d), 14 * d, muted);
-        int row = 0;
-        for (bool hour : {true, false}) {
-            if (hour ? !visible.hour : !visible.week)
-                continue;
-            auto q = hour ? state.q.hour : state.q.week;
-            float yy = (86 + row * 100) * d;
-            Color c = parseColor(hour ? settings.hourColor : settings.weekColor, Color(255, 33, 158, 134));
-            drawUiText(g, hour ? L"5 小时" : L"每周", RectF(20 * d, yy, 100 * d, 25 * d), 16 * d, ink, true);
-            std::wostringstream precise;
-            if (q)
-                precise << std::fixed << std::setprecision(2) << q->remaining << L"%";
-            else
-                precise << L"--";
-            drawUiText(g, precise.str(), RectF(155 * d, yy, width - 175 * d, 32 * d), 24 * d, c, true, true);
-            fillRound(g, RectF(20 * d, yy + 40 * d, width - 40 * d, 4 * d), 2 * d,
-                      colors.deep);
-            if (q && q->remaining > 0)
-                fillRound(g, RectF(20 * d, yy + 40 * d, (width - 40 * d) * float(q->remaining / 100), 4 * d),
-                          2 * d, c);
-            drawUiText(g, L"重置 " + timeLabel(q ? q->resets : 0),
-                     RectF(20 * d, yy + 51 * d, width - 40 * d, 26 * d), 14 * d, muted);
-            ++row;
-        }
-        float footer = (86 + row * 100) * d;
-        drawUiText(g,
-                 L"更新 " + (state.updated ? timeLabel(state.updated, false) : L"尚无") + L"   ·   " +
-                     std::to_wstring(state.interval) + L" 秒刷新",
-                 RectF(20 * d, footer, width - 40 * d, 28 * d), 14 * d, muted);
-        std::wstring status =
-            state.error.empty() ? (state.stale() ? L"数据已过期，等待更新" : L"右键打开设置") : state.error;
-        drawUiText(g, status, RectF(20 * d, footer + 30 * d, width - 40 * d, 28 * d), 14 * d,
-                 state.stale() ? colors.warning : muted);
+        g.ScaleTransform(d, d);
+        paintQuotaCard(g, width / d, height / d, state, settings, app->quotaHistory, codexCard, simulated);
     }
     if (!capture.empty())
         image.save(capture);
@@ -476,6 +477,21 @@ LRESULT CALLBACK Overlay::detailProcedure(HWND w, UINT msg, WPARAM wp, LPARAM lp
     if (msg == WM_NCCREATE)
         SetWindowLongPtrW(w, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams));
     auto self = reinterpret_cast<Overlay *>(GetWindowLongPtrW(w, GWLP_USERDATA));
+    if (self && self->kind == WidgetKind::Codex && msg == WM_LBUTTONUP) {
+        float d = self->monitor.dpi / 96.f;
+        for (const auto &hit : self->codexCard.hits) if (hit.rect.Contains(GET_X_LPARAM(lp) / d, GET_Y_LPARAM(lp) / d)) {
+            if (hit.action == 5) { self->hideDetails(); self->hover = false; }
+            else if (hit.action == 3) {
+                self->hideDetails();
+                PostMessageW(self->app->controller, SettingsMessage, reinterpret_cast<WPARAM>(self->monitor.handle), 4);
+            } else { quotaCardAction(self->codexCard, hit.action, w, self->state); self->showDetails(); }
+            return 0;
+        }
+    }
+    if (self && self->kind == WidgetKind::Codex && msg == WM_MOUSEWHEEL) {
+        self->codexCard.extraScroll = std::max(0, self->codexCard.extraScroll + (GET_WHEEL_DELTA_WPARAM(wp) < 0 ? 1 : -1));
+        self->showDetails(); return 0;
+    }
     if (self && msg == WM_ERASEBKGND) return 1;
     if (self && msg == WM_PAINT) {
         PAINTSTRUCT paint{};
@@ -555,6 +571,10 @@ LRESULT CALLBACK Overlay::detailProcedure(HWND w, UINT msg, WPARAM wp, LPARAM lp
     return DefWindowProcW(w, msg, wp, lp);
 }
 Application::Application(bool previewMode, bool test) : preview(previewMode), testing(test) {
+    if(!testing&&!preview){try{hubConfig=HubSettings::load();hub.start(hubConfig,hubSecret(),dataDirectory());}catch(...){}}
+    if (!testing && !preview) {
+        try { quotaHistory.load(dataDirectory() / L"codex-quota-history.json"); } catch (...) {}
+    }
     registerClass(L"CodexQuotaBar.Native.Controller", procedure);
     controller = CreateWindowExW(WS_EX_TOOLWINDOW, L"CodexQuotaBar.Native.Controller",
                                  L"Codex Quota Bar Native Controller", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr,
@@ -568,6 +588,7 @@ Application::Application(bool previewMode, bool test) : preview(previewMode), te
         ResetEvent(quitEvent);
     }
     SetTimer(controller, 1, 500, nullptr);
+    if (!testing && !preview) SetTimer(controller, 3, 100, nullptr);
     if (preview) {
         state.active = true;
         state.error.clear();
@@ -583,6 +604,7 @@ Application::Application(bool previewMode, bool test) : preview(previewMode), te
     }
 }
 Application::~Application() {
+    hub.stop();
     removeTrayIcon();
     stopping = true;
     *deepSeekSessionStop = true;
@@ -594,6 +616,7 @@ Application::~Application() {
     if (taskbarWorker.joinable())
         taskbarWorker.join();
     settingsWindow.reset();
+    flushQuotaHistory(true);
     overlays.clear();
     if (quitEvent)
         CloseHandle(quitEvent);
@@ -702,6 +725,7 @@ void Application::checkSettingsFile() {
     }
 }
 void Application::rebuild() {
+    if (!testing && !preview) fullscreenMonitor = foregroundFullscreenMonitor();
     for (auto &overlay : overlays) {
         auto found = std::find_if(widgetPositions.begin(), widgetPositions.end(), [&](auto &p) {
             return p.monitor == overlay->monitor.name && p.kind == overlay->kind;
@@ -726,6 +750,18 @@ void Application::rebuild() {
         for (auto &p : widgetPositions)
             if (p.monitor == overlay->monitor.name && p.kind == overlay->kind) overlay->x = p.x;
     layoutWidgets();
+}
+void Application::updateFullscreenMonitor(HMONITOR monitor) {
+    if (fullscreenMonitor == monitor) return;
+    fullscreenMonitor = monitor;
+    for (auto &overlay : overlays) {
+        if (overlay->monitor.handle == monitor && overlay->dragging) {
+            overlay->finishDrag({}, true);
+            if (GetCapture() == overlay->window) ReleaseCapture();
+            return; // finishDrag already laid out all widgets.
+        }
+    }
+    if (!overlays.empty()) layoutWidgets();
 }
 void Application::layoutWidgets(Overlay *moving, bool animate) {
     for (auto &o : overlays) {
@@ -853,11 +889,17 @@ void Application::runTaskbarWorker() {
     if (SUCCEEDED(initialized)) CoUninitialize();
 }
 void Application::apply(const State &value) {
+    quotaHistory.observe(value);
     bool layoutChanged = value.active != state.active ||
                          settings.visibility(value.q) != settings.visibility(state.q);
     bool previewChanged = settingsWindow &&
                           settingsWindow->draft.visibility(value.q) != settingsWindow->draft.visibility(state.q);
     state = value;
+    if (settingsWindow) {
+        if (settingsWindow->page == 4) InvalidateRect(settingsWindow->content, nullptr, FALSE);
+        if (settingsWindow->quotaPopup && settingsWindow->quotaPopup->window)
+            InvalidateRect(settingsWindow->quotaPopup->window, nullptr, FALSE);
+    }
     if (layoutChanged)
         rebuild();
     else
@@ -1009,18 +1051,24 @@ LRESULT CALLBACK Application::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) 
     }
     case SettingsMessage:
         self->showSettings(reinterpret_cast<HMONITOR>(wp));
-        if (lp == 3 && self->settingsWindow) self->settingsWindow->selectPage(3);
+        if ((lp == 3 || lp == 4) && self->settingsWindow) self->settingsWindow->selectPage(int(lp));
         return 0;
     case RebuildMessage:
         self->rebuild();
         return 0;
     case WM_TIMER:
+        if (wp == 3) {
+            if (!self->overlays.empty())
+                self->updateFullscreenMonitor(foregroundFullscreenMonitor());
+            return 0;
+        }
         if (!self->trayAdded && GetTickCount64() >= self->trayRetryAt) self->addTrayIcon();
         if (self->quitEvent && WaitForSingleObject(self->quitEvent, 0) == WAIT_OBJECT_0) {
             self->stop();
             return 0;
         }
         self->checkSettingsFile();
+        self->flushQuotaHistory();
         self->checkHarness();
         self->checkTaskbars();
         return 0;

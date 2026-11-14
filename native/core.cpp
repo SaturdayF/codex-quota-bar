@@ -1,7 +1,34 @@
 #include "core.hpp"
 #include "deepseek.hpp"
 #include <cwctype>
+#include <wincrypt.h>
 namespace quota {
+std::string privateKey(const std::string &value) {
+    if (value.empty()) return {};
+    HCRYPTPROV provider = 0; HCRYPTHASH hash = 0;
+    if (!CryptAcquireContextW(&provider, nullptr, nullptr, PROV_RSA_AES, CRYPT_VERIFYCONTEXT)) return {};
+    std::string result;
+    if (CryptCreateHash(provider, CALG_SHA_256, 0, 0, &hash)) {
+        if (CryptHashData(hash, reinterpret_cast<const BYTE *>(value.data()), DWORD(value.size()), 0)) {
+            BYTE digest[32]; DWORD length = sizeof(digest);
+            if (CryptGetHashParam(hash, HP_HASHVAL, digest, &length, 0)) {
+                constexpr char hex[] = "0123456789abcdef";
+                for (DWORD i = 0; i < length; ++i) { result += hex[digest[i] >> 4]; result += hex[digest[i] & 15]; }
+            }
+        }
+        CryptDestroyHash(hash);
+    }
+    CryptReleaseContext(provider, 0);
+    return result;
+}
+fs::path codexHome() {
+    wchar_t value[32768]{};
+    DWORD length = GetEnvironmentVariableW(L"CODEX_HOME", value, DWORD(std::size(value)));
+    if (length && length < std::size(value)) return fs::path(value);
+    length = GetEnvironmentVariableW(L"USERPROFILE", value, DWORD(std::size(value)));
+    if (length && length < std::size(value)) return fs::path(value) / L".codex";
+    throw std::runtime_error("Codex home unavailable");
+}
 std::wstring wide(const std::string &s) {
     int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), int(s.size()), nullptr, 0);
     std::wstring r(n, L'\0');
@@ -284,18 +311,15 @@ Quotas Quotas::parse(const json &j) {
         return q;
     json bucket;
     if (j.contains("rateLimitsByLimitId") && j["rateLimitsByLimitId"].is_object()) {
-        if (!j["rateLimitsByLimitId"].contains("codex"))
-            return q;
-        bucket = j["rateLimitsByLimitId"]["codex"];
+        bucket = j["rateLimitsByLimitId"].contains("codex") ? j["rateLimitsByLimitId"]["codex"] : json::object();
     } else if (j.contains("rateLimits"))
         bucket = j["rateLimits"];
     else
         return q;
-    if (!bucket.is_object())
-        return q;
-    if (bucket.contains("limitId") && bucket["limitId"].is_string() && bucket["limitId"] != "codex")
-        return q;
+    if (!bucket.is_object()) bucket = json::object();
+    std::string bucketId = bucket.contains("limitId") && bucket["limitId"].is_string() ? bucket["limitId"].get<std::string>() : "codex";
     for (const char *key : {"primary", "secondary"}) {
+        if (bucketId != "codex") continue;
         if (!bucket.contains(key) || !bucket[key].is_object())
             continue;
         auto &w = bucket[key];
@@ -306,7 +330,7 @@ Quotas Quotas::parse(const json &j) {
         double used = w["usedPercent"].get<double>();
         if (!std::isfinite(used))
             continue;
-        WindowQuota value{std::clamp(100 - used, 0., 100.), 0};
+        WindowQuota value{std::clamp(100 - used, 0., 100.), 0, int(std::min<int64_t>(duration, INT_MAX))};
         if (w.contains("resetsAt") && w["resetsAt"].is_number_integer()) {
             auto seconds = w["resetsAt"].get<int64_t>();
             if (seconds >= 0 && seconds <= 253402300799LL)
@@ -319,6 +343,38 @@ Quotas Quotas::parse(const json &j) {
     }
     if (bucket.contains("planType") && bucket["planType"].is_string())
         q.plan = bucket["planType"].get<std::string>();
+    if (j.contains("accountId") && j["accountId"].is_string() && !j["accountId"].get_ref<const std::string &>().empty())
+        q.accountKey = privateKey("account:" + j["accountId"].get<std::string>());
+    auto extraBucket = [&](const std::string &id, const json &source) {
+        if (!source.is_object() || id.size() > 160) return;
+        std::string name = source.value("limitName", json()).is_string() ? source["limitName"].get<std::string>() : id;
+        if (name.empty() || name == "codex") name = "Codex";
+        if (name.size() > 120) name.resize(120);
+        for (char &c : name) if (static_cast<unsigned char>(c) < 32) c = ' ';
+        for (const char *key : {"primary", "secondary"}) {
+            auto it = source.find(key);
+            if (it == source.end() || !it->is_object()) continue;
+            const auto &w = *it;
+            if (!w.contains("windowDurationMins") || !w["windowDurationMins"].is_number_integer() ||
+                !w.contains("usedPercent") || !w["usedPercent"].is_number()) continue;
+            auto minutes = w["windowDurationMins"].get<int64_t>(); double used = w["usedPercent"].get<double>();
+            if (minutes <= 0 || minutes > 5256000 || !std::isfinite(used)) continue;
+            if (id == "codex" && (minutes == 300 || minutes == 10080)) continue;
+            WindowQuota v{std::clamp(100 - used, 0., 100.), 0, int(minutes)};
+            if (w.contains("resetsAt") && w["resetsAt"].is_number_integer()) {
+                auto reset = w["resetsAt"].get<int64_t>();
+                if (reset > 0 && reset <= 253402300799LL) v.resets = reset;
+            }
+            std::string label = id == "codex" ? "" : name + " · ";
+            label += minutes == 43200 ? "月度" : minutes == 10080 ? "每周" : minutes == 300 ? "5 小时" :
+                     minutes % 1440 == 0 ? std::to_string(minutes / 1440) + " 天" :
+                     minutes % 60 == 0 ? std::to_string(minutes / 60) + " 小时" : std::to_string(minutes) + " 分钟";
+            if (q.extraWindows.size() < 32) q.extraWindows.push_back({id + ":" + key + ":" + std::to_string(minutes), label, id, v});
+        }
+    };
+    if (j.contains("rateLimitsByLimitId") && j["rateLimitsByLimitId"].is_object()) {
+        for (auto it = j["rateLimitsByLimitId"].begin(); it != j["rateLimitsByLimitId"].end(); ++it) extraBucket(it.key(), it.value());
+    } else extraBucket(bucketId, bucket);
     return q;
 }
 std::wstring numberLabel(const std::optional<WindowQuota> &q, bool percent, double progress) {
@@ -667,12 +723,22 @@ void Rpc::dispatch(const json &value) {
     if (value.value("method", std::string()) != "account/rateLimits/updated" || !value.contains("params"))
         return;
     auto &p = value["params"];
+    if (!p.is_object()) return;
+    // Non-default buckets need a complete re-read, never replace the main quota
+    // with a model-specific notification. Normal polling obtains their windows.
     if (p.contains("rateLimits") && p["rateLimits"].is_object() &&
-        p["rateLimits"].value("limitId", std::string("codex")) != "codex")
-        return;
+        p["rateLimits"].value("limitId", std::string("codex")) != "codex") return;
     auto q = Quotas::parse(p);
+    if (!q.accountKey.empty() && !ownerKey.empty()) q.accountKey = privateKey(q.accountKey + ":" + ownerKey);
+    else if (!ownerKey.empty()) q.accountKey = lastSnapshot.accountKey;
+    else q.accountKey.clear();
+    if (!p.contains("rateLimitsByLimitId") && !q.accountKey.empty() && q.accountKey == lastSnapshot.accountKey) {
+        for (const auto &extra : lastSnapshot.extraWindows)
+            if (extra.bucket != "codex") q.extraWindows.push_back(extra);
+    }
     if (q.plan.empty())
         q.plan = plan;
+    lastSnapshot = q;
     if (notification)
         notification(q);
 }
@@ -696,19 +762,32 @@ json Rpc::request(const std::string &method, const json &args) {
     throw std::runtime_error("Codex request timed out");
 }
 Quotas Rpc::read() {
+    ownerKey.clear();
+    lastSnapshot = {};
     try {
         auto account = request("account/read", {{"refreshToken", false}});
         plan = account.contains("account") && account["account"].is_object()
                    ? account["account"].value("planType", std::string())
                    : "";
+        ownerKey.clear();
+        if (account.contains("account") && account["account"].is_object()) {
+            const auto &a = account["account"];
+            if (a.contains("email") && a["email"].is_string() && !a["email"].get_ref<const std::string &>().empty()) ownerKey = privateKey("email:" + a["email"].get<std::string>());
+        }
     } catch (const std::exception &) {
         plan.clear();
+        ownerKey.clear();
         if (cancel->load())
             throw;
     }
     auto q = Quotas::parse(request("account/rateLimits/read"));
     if (q.plan.empty())
         q.plan = plan;
+    // A workspace ID alone can be shared by multiple users; an email alone can
+    // belong to several workspaces. Persist quota samples only with both.
+    if (!q.accountKey.empty() && !ownerKey.empty()) q.accountKey = privateKey(q.accountKey + ":" + ownerKey);
+    else q.accountKey.clear();
+    lastSnapshot = q;
     return q;
 }
 void Rpc::poll() {
