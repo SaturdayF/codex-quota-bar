@@ -370,6 +370,9 @@ UsageReport scanCodexUsage(const UsageScanOptions &given,std::atomic<bool> &canc
         if(value.dump().size()<=MaxCache){try{saveAnalyticsJson(o.cache,value);}catch(...){report.error=L"统计可用，但本地缓存保存失败";}}
         else report.error=L"本地缓存达到上限，部分历史将在下次重新扫描";
     }
+    if(!o.cache.empty()&&!cancel){auto archive=o.cache.parent_path()/L"codex-restored-data.csv";
+        if(fs::exists(archive))try{mergeUsageReport(report,readAnalyticsCsv(archive).usage);}catch(...){report.error=L"恢复档案不可读，已保留本地统计。";}
+    }
     if(!report.available)report.error=L"未找到 Codex 本地会话日志；运行本地任务后可在此查看。";
     return report;
 }

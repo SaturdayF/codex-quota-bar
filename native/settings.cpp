@@ -514,7 +514,9 @@ void SettingsWindow::createControls() {
              {L"近 7 天",UsageSeven},{L"近 30 天",UsageThirty},{L"费用",UsageCost},{L"Token",UsageTokens},
              {L"按天",UsageDay},{L"按小时",UsageHour},{L"模型",UsageModels},{L"项目",UsageProjects},
              {L"会话",UsageSessions},{L"账户",UsageAccounts},{L"刷新统计",UsageRefresh},
-             {L"额度详情",UsageQuota},{L"返回全部",UsageClear},{L"上一页",UsagePrevious},{L"下一页",UsageNext}}) button(entry.first,entry.second,4);
+             {L"导出 CSV",UsageExport},{L"导入 CSV",UsageImport},{L"额度详情",UsageQuota},{L"返回全部",UsageClear},{L"上一页",UsagePrevious},{L"下一页",UsageNext}}) button(entry.first,entry.second,4);
+    control(L"COMBOBOX",L"",UsageSource,4,CBS_DROPDOWNLIST | WS_VSCROLL);
+    button(L"累计",UsageAll,4);
     auto mode=control(L"COMBOBOX",L"",700,5,CBS_DROPDOWNLIST);
     for(auto label:{L"仅本机",L"连接 Hub",L"本机托管 Hub"})SendMessageW(mode,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label));
     SendMessageW(mode,CB_SETCURSEL,hubDraft.mode,0);
@@ -523,6 +525,7 @@ void SettingsWindow::createControls() {
     control(L"EDIT",L"",703,5,ES_PASSWORD|ES_AUTOHSCROLL);
     control(L"EDIT",wide(hubDraft.deviceId).c_str(),704,5,ES_AUTOHSCROLL);
     button(L"生成新密钥",705,5);button(L"应用同步设置",706,5);button(L"复制密钥",707,5);button(L"按月 / 按天",708,5);button(L"更早记录",709,5);button(L"更新记录",710,5);
+    syncUsageSources(true);
     styleChanged();
 }
 void SettingsWindow::styleChanged() {
@@ -564,8 +567,8 @@ void SettingsWindow::layout() {
     GetClientRect(viewport, &c);
     contentWidth = int(c.right * 96. / dpi);
     contentHeight = int(c.bottom * 96. / dpi);
-    if(page==4){usageView.prepare(usageReport);usageView.groupPage=std::clamp(usageView.groupPage,0,std::max(0,(int(usageView.groups.size())-1)/5));}
-    int needed = pageHeight = page == 5 ? 1640 : page == 4 ? usagePageHeight(usageView,usageReport) : page == 0 ? 836 : page == 1 ? 620 : page == 3 ? 748 : 672;
+    if(page==4){if(usageSource.empty())usageView.prepare(usageReport);else prepareSharedUsage();usageView.groupPage=std::clamp(usageView.groupPage,0,std::max(0,(int(usageView.groups.size())-1)/5));}
+    int needed = pageHeight = page == 5 ? 1640 : page == 4 ? usagePageHeight(usageView,usageReport)+(usageSource.empty()?0:30) : page == 0 ? 836 : page == 1 ? 620 : page == 3 ? 748 : 672;
     scroll = std::clamp(scroll, 0, std::max(0, needed - contentHeight));
     contentWidth = int(std::max(1, int(c.right) - px(14)) * 96. / dpi);
     SetWindowPos(content, nullptr, 0, -px(scroll), std::max(1, int(c.right) - px(14)), std::max<int>(c.bottom, px(needed)),
@@ -628,9 +631,11 @@ void SettingsWindow::layout() {
     place(DeepSeekClear, contentWidth - 124, 527, 110, 34);
     place(DeepSeekPlatform, contentWidth - 194, 275, 180, 28);
     place(DeepSeekHelp, contentWidth - 164, 307, 150, 26);
+    place(UsageExport,contentWidth-230,82,100,30);place(UsageImport,contentWidth-120,82,100,30);
+    place(UsageSource,0,40,220,260);place(UsageAll,186,82,84,30);
     place(UsageSeven,0,82,84,30); place(UsageThirty,90,82,90,30);
     place(UsageQuota,contentWidth-110,0,96,32); place(UsageRefresh,contentWidth-212,0,94,32);
-    place(UsageCost,contentWidth-306,247,65,28); place(UsageTokens,contentWidth-235,247,65,28);
+    place(UsageCost,contentWidth-(usageSource.empty()?306:160),247,65,28); place(UsageTokens,contentWidth-(usageSource.empty()?235:89),247,65,28);
     place(UsageDay,contentWidth-160,247,65,28); place(UsageHour,contentWidth-89,247,75,28);
     place(UsageModels,0,728,64,30); place(UsageProjects,72,728,64,30);
     place(UsageSessions,144,728,64,30); place(UsageAccounts,216,728,64,30);
@@ -643,6 +648,7 @@ void SettingsWindow::layout() {
     place(UsagePrevious,contentWidth-202,usageRowsEnd(usageView)+6,88,29);place(UsageNext,contentWidth-104,usageRowsEnd(usageView)+6,88,29);
     EnableWindow(GetDlgItem(content,UsagePrevious),usageView.groupPage>0);
     EnableWindow(GetDlgItem(content,UsageNext),size_t((usageView.groupPage+1)*5)<usageView.groups.size());
+    for(auto &p:placements){int id=GetDlgCtrlID(p.window);if(id==UsageAll)p.visible=p.visible&&!usageSource.empty();if(!usageSource.empty()&&(id==UsageExport||id==UsageImport||id==UsageDay||id==UsageHour))p.visible=false;}
     UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS | SWP_SHOWWINDOW;
     HDWP batch = BeginDeferWindowPos(int(placements.size()));
     for (auto &p : placements)
@@ -897,7 +903,7 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
             float left = enabled ? area.GetRight() - size - 4 * d : area.X + 4 * d;
             fillRound(g, RectF(left, area.Y + 4 * d, size, size), size / 2, Color(255, 255, 255, 255));
         } else {
-            bool usageSelected = id == UsageSeven ? usageView.days == 7 : id == UsageThirty ? usageView.days == 30 :
+            bool usageSelected = id == UsageAll ? (!usageSource.empty()&&sharedPeriod==2) : id == UsageSeven ? (usageSource.empty()?usageView.days==7:sharedPeriod==0) : id == UsageThirty ? (usageSource.empty()?usageView.days==30:sharedPeriod==1) :
                                  id == UsageCost ? !usageView.tokens : id == UsageTokens ? usageView.tokens :
                                  id == UsageDay ? !usageView.hourly : id == UsageHour ? usageView.hourly :
                                  id >= UsageModels && id <= UsageAccounts ? usageView.group == id - UsageModels : false;
@@ -931,13 +937,13 @@ void SettingsWindow::drawButton(const DRAWITEMSTRUCT &item) {
 void SettingsWindow::command(int id, int notice) {
     if (loading)
         return;
-    if (id != Style && id != AppearanceMode && id != 700 && notice != BN_CLICKED)
+    if (id != Style && id != AppearanceMode && id != 700 && id != UsageSource && notice != BN_CLICKED)
         return;
     if (id >= NavAppearance && id <= NavHub) {
         selectPage(id - NavAppearance);
         return;
     }
-    if (id >= UsageSeven && id <= UsageNext) { usageCommand(id); return; }
+    if (id >= UsageSeven && id <= UsageAll) { if(id!=UsageSource||notice==CBN_SELCHANGE)usageCommand(id); return; }
     if(id==700&&notice==CBN_SELCHANGE){layout();InvalidateRect(content,nullptr,FALSE);return;}
     if(id==705){SetDlgItemTextW(content,703,wide(newHubSecret()).c_str());return;}
     if(id==707){auto value=controlText(GetDlgItem(content,703));if(value.empty()&&!app->testing&&!app->preview)value=wide(hubSecret());if(!value.empty()&&OpenClipboard(window)){EmptyClipboard();auto memory=GlobalAlloc(GMEM_MOVEABLE,(value.size()+1)*sizeof(wchar_t));if(memory){auto data=GlobalLock(memory);if(data){memcpy(data,value.c_str(),(value.size()+1)*sizeof(wchar_t));GlobalUnlock(memory);if(!SetClipboardData(CF_UNICODETEXT,memory))GlobalFree(memory);}else GlobalFree(memory);}CloseClipboard();}return;}
@@ -1704,7 +1710,7 @@ LRESULT CALLBACK SettingsWindow::contentProcedure(HWND w, UINT msg, WPARAM wp, L
     case WM_KEYDOWN:
         if (self->page == 4 && (wp == VK_UP || wp == VK_DOWN || wp == VK_RETURN)) {
             if (wp == VK_RETURN) {
-                auto hit = std::find_if(self->usageView.hits.begin(),self->usageView.hits.end(),[&](const auto &h){return h.action==22&&h.value==self->usageView.keyboard;});
+                auto hit = std::find_if(self->usageView.hits.begin(),self->usageView.hits.end(),[&](const auto &h){return (h.action==22||h.action==23)&&h.value==self->usageView.keyboard;});
                 if (hit != self->usageView.hits.end()) self->usageClick(hit->rect.X+2,hit->rect.Y+2);
             } else { int first=self->usageView.groupPage*5,last=std::min(first+4,int(self->usageView.groups.size())-1);self->usageView.keyboard=std::clamp(self->usageView.keyboard+(wp==VK_DOWN?1:-1),first,std::max(first,last)); InvalidateRect(w,nullptr,FALSE); }
             return 0;

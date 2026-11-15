@@ -1,5 +1,6 @@
 #include "app.hpp"
 #include <windowsx.h>
+#include <commdlg.h>
 namespace quota {
 namespace {
 std::wstring projectName(const std::string &path) {
@@ -83,6 +84,7 @@ void SettingsWindow::startUsageScan() {
     InvalidateRect(content,nullptr,FALSE);
 }
 void SettingsWindow::pollUsageScan() {
+    auto previous=usageHubRevision;syncUsageSources();if(previous!=usageHubRevision&&page==4){layout();InvalidateRect(content,nullptr,FALSE);}
     if(usageTask.valid()&&usageTask.wait_for(std::chrono::seconds(0))==std::future_status::ready){
         try{auto report=usageTask.get();if(!usageCancel){usageReport=std::move(report);usageView.dirty=true;usageNextScan=GetTickCount64()+(usageReport.pending?1500:120000);}}
         catch(...){usageReport.error=L"无法读取本地用量，已保留上次统计。请检查日志目录权限后重试。";usageNextScan=GetTickCount64()+120000;}
@@ -91,6 +93,32 @@ void SettingsWindow::pollUsageScan() {
     if(page==4&&!closing&&!usageTask.valid()&&usageNextScan&&GetTickCount64()>=usageNextScan)startUsageScan();
 }
 void SettingsWindow::usageCommand(int id) {
+    if(id==UsageSource){auto index=SendDlgItemMessageW(content,UsageSource,CB_GETCURSEL,0,0);if(index>=0&&size_t(index)<usageSources.size())usageSource=usageSources[size_t(index)];usageView.groupPage=0;usageView.hovered=-1;syncUsageSources(true);layout();InvalidateRect(content,nullptr,FALSE);return;}
+    if(!usageSource.empty()){sharedUsageCommand(id);return;}
+    if(id==UsageExport||id==UsageImport){
+        wchar_t file[32768]=L"Codex用量备份.csv";OPENFILENAMEW dialog{sizeof(dialog)};dialog.hwndOwner=window;dialog.lpstrFilter=L"Codex 数据备份 (*.csv)\0*.csv\0\0";dialog.lpstrFile=file;dialog.nMaxFile=32768;dialog.lpstrDefExt=L"csv";dialog.Flags=OFN_EXPLORER|OFN_NOCHANGEDIR|OFN_PATHMUSTEXIST|(id==UsageExport?OFN_OVERWRITEPROMPT:OFN_FILEMUSTEXIST);
+        if(!(id==UsageExport?GetSaveFileNameW(&dialog):GetOpenFileNameW(&dialog)))return;
+        try{
+            AnalyticsBackup data{usageReport,app->quotaHistory};mergeUsageReport(data.usage,app->popupUsage);
+            if(id==UsageExport){if(!data.usage.available&&data.history.samples.empty())throw std::runtime_error("暂无已采集数据，请等待统计读取后重试。");writeAnalyticsCsv(file,data);openHelp(L"导出完成",L"已导出全部已采集用量和额度历史，不受当前日期筛选限制。");}
+            else{
+                auto imported=readAnalyticsCsv(file);auto archive=dataDirectory()/L"codex-restored-data.csv";
+                if(fs::exists(archive)){auto previous=readAnalyticsCsv(archive);mergeUsageReport(data.usage,previous.usage);mergeQuotaHistory(data.history,previous.history);}
+                mergeUsageReport(data.usage,imported.usage);mergeQuotaHistory(data.history,imported.history);
+                // Drain pre-import scans so an older result cannot replace restored data.
+                usageCancel=true;app->popupUsageCancel=true;
+                if(usageTask.valid()){usageTask.wait();std::optional<UsageReport> latest;try{latest=usageTask.get();}catch(...){}if(latest)mergeUsageReport(data.usage,*latest);}
+                if(app->popupUsageTask.valid()){app->popupUsageTask.wait();std::optional<UsageReport> latest;try{latest=app->popupUsageTask.get();}catch(...){}if(latest)mergeUsageReport(data.usage,*latest);}
+                auto popupCopy=data.usage;fs::create_directories(archive.parent_path());writeAnalyticsCsv(archive,data);
+                usageReport=std::move(data.usage);app->quotaHistory=std::move(data.history);app->quotaHistory.dirty=true;app->popupUsage=std::move(popupCopy);
+                usageCancel=false;app->popupUsageCancel=false;usageNextScan=GetTickCount64()+120000;app->popupUsageNextScan=GetTickCount64()+120000;EnableWindow(GetDlgItem(content,UsageRefresh),TRUE);
+                usageView.dirty=true;layout();InvalidateRect(content,nullptr,FALSE);
+                for(auto &overlay:app->overlays)if(overlay->kind==WidgetKind::Codex&&IsWindowVisible(overlay->details))overlay->showDetails();
+                openHelp(L"导入完成",L"数据已合并并保存，重复记录不会再次累加。重启后仍可查看恢复的统计。");
+            }
+        }catch(const std::exception &error){usageCancel=false;app->popupUsageCancel=false;EnableWindow(GetDlgItem(content,UsageRefresh),TRUE);openHelp(id==UsageExport?L"导出失败":L"导入失败",wide(error.what()));}
+        return;
+    }
     if(id==UsageRefresh){startUsageScan();return;}
     if(id==UsageQuota){if(!quotaPopup)quotaPopup=std::make_unique<QuotaPopup>(app,window,draft);quotaPopup->settings=draft;quotaPopup->reveal();return;}
     if(id==UsagePrevious||id==UsageNext){usageView.groupPage+=id==UsageNext?1:-1;usageView.keyboard=-1;layout();InvalidateRect(content,nullptr,FALSE);return;}
@@ -100,11 +128,12 @@ void SettingsWindow::usageCommand(int id) {
     if(id>=UsageModels&&id<=UsageAccounts){usageView.group=id-UsageModels;usageView.project.clear();}
     if(id==UsageClear){usageView.selectedDay=0;usageView.project.clear();}
     usageView.dirty=true;usageView.hovered=-1;usageView.keyboard=-1;usageView.groupPage=0;
-    for(auto ctrl:controls){int cid=GetDlgCtrlID(ctrl);if(cid>=UsageSeven&&cid<=UsageNext)InvalidateRect(ctrl,nullptr,TRUE);}
+    for(auto ctrl:controls){int cid=GetDlgCtrlID(ctrl);if(cid>=UsageSeven&&cid<=UsageImport)InvalidateRect(ctrl,nullptr,TRUE);}
     layout();
     InvalidateRect(content,nullptr,FALSE);
 }
 void SettingsWindow::usageClick(float x,float y) {
+    if(!usageSource.empty()){sharedUsageClick(x,y);return;}
     for(const auto &hit:usageView.hits)if(hit.rect.Contains(x,y)){
         if(hit.action==20){usageView.hovered=int(hit.value);InvalidateRect(content,nullptr,FALSE);return;}
         if(hit.action==21){usageView.selectedDay=usageView.selectedDay==hit.value?0:hit.value;usageView.project.clear();usageView.dirty=true;usageView.hovered=-1;layout();InvalidateRect(content,nullptr,FALSE);return;}
@@ -123,14 +152,15 @@ void SettingsWindow::usageHover(float x,float y) {
     if(hovered!=usageView.hovered){usageView.hovered=hovered;InvalidateRect(content,nullptr,FALSE);}
 }
 void SettingsWindow::drawUsage(Graphics &g,const GlassPalette &c) {
+    if(!usageSource.empty()){drawSharedUsage(g,c);return;}
     usageView.prepare(usageReport);usageView.hits.clear();float w=float(contentWidth)-14;
     Color green=parseColor(draft.hourColor,Color(255,33,158,134)),blue=parseColor(draft.weekColor,Color(255,100,141,230));
     drawHeading(g,L"Codex 用量",RectF(0,0,w-220,38),27,c.ink);
     auto today=localDay(usageReport.updated?usageReport.updated:utcNow());
     auto begin=usageView.selectedDay?usageView.selectedDay:shiftLocalDay(today,1-usageView.days);
     auto range=usageDate(begin)+L" – "+usageDate(usageView.selectedDay?usageView.selectedDay:today);
-    drawUiText(g,L"本机日志 · "+range+((simulatedGlass||app->testing||app->preview)?L" · 模拟数据":L""),RectF(0,42,w,24),13,c.secondary);
-    drawUiText(g,usageTask.valid()?L"后台读取中…":usageReport.partial?L"记录覆盖不完整":L"本地估算",RectF(w-190,84,188,26),12,usageReport.partial?c.warning:c.secondary,false,true);
+    drawUiText(g,L"本机日志 · "+range+((simulatedGlass||app->testing||app->preview)?L" · 模拟数据":L""),RectF(234,42,w-234,24),13,c.secondary);
+
     const auto &t=usageView.total;float col=w/3;
     const wchar_t *labels[]={L"API 等价费用估算",L"已记录 Token",L"会话"};
     std::wstring values[]={costText(t),t.overflow?L"无法汇总":compactTokens(t.tokens.total()),std::to_wstring(t.sessions.size())};
@@ -231,9 +261,67 @@ void SettingsWindow::drawUsage(Graphics &g,const GlassPalette &c) {
 }
 
 int quotaCardHeight(const State &s,const Settings &settings,int maximum,bool history) {
-    (void)settings;(void)history;return std::min(maximum,740+int(s.q.extraWindows.size())*108);
+    (void)settings;(void)history;return std::min(maximum,700+int(s.q.extraWindows.size())*108);
 }
-void paintQuotaCard(Graphics &g,float width,float height,const State &s,const Settings &settings,const QuotaHistory &history,QuotaCardView &view,bool simulated,const UsageReport *usage) {
+double TokenRoll::position(size_t column,int64_t now) const {
+    const auto &c=columns.at(column);
+    if(started<0)return c.to;
+    double p=std::clamp(double(now-started-int64_t(column)*Stagger)/Duration,0.,1.);
+    double eased=1-std::pow(1-p,3);
+    return c.from+(c.to-c.from)*eased;
+}
+bool TokenRoll::running(int64_t now) const {
+    return started>=0&&!columns.empty()&&now<started+Duration+int64_t(columns.size()-1)*Stagger;
+}
+void TokenRoll::update(std::optional<int64_t> tokens,int64_t localDate,bool enabled,int64_t now) {
+    if(!tokens){*this={};return;}
+    auto next=compactTokens(*tokens);
+    bool opening=!value||day!=localDate;
+    if(!opening&&next==text&&enabled){value=tokens;return;}
+    int direction=opening||*tokens>=value.value_or(0)?1:-1;
+    bool compatible=!opening&&next.size()==text.size();
+    std::vector<Column> nextColumns(next.size());
+    bool moving=false;
+    for(size_t i=0;i<next.size();++i){
+        if(next[i]<L'0'||next[i]>L'9')continue;
+        double digit=next[i]-L'0',from=digit,to=digit;
+        if(enabled){
+            if(opening){from=0;to=10+digit;}
+            else if(compatible&&text[i]>=L'0'&&text[i]<=L'9'){
+                from=position(i,now);
+                to=digit+10*(direction>0?std::ceil((from-digit)/10):std::floor((from-digit)/10));
+            }else from=digit-direction*10;
+        }
+        nextColumns[i]={from,to};moving=moving||from!=to;
+    }
+    text=std::move(next);columns=std::move(nextColumns);value=tokens;day=localDate;started=moving?now:-1;
+}
+static void drawRollingTokens(Graphics &g,RectF area,const TokenRoll &roll,int64_t now,Color ink) {
+    if(roll.text.empty())return;
+    float size=24;
+    auto widthAt=[&](float em){float w=0;for(auto ch:roll.text)w+=uiTextWidth(g,std::wstring(1,ch),em,true,true);return w+em/3;};
+    while(size>6&&widthAt(size)>area.Width)size-=.5f;
+    Font font(L"Segoe UI",size,FontStyleBold,UnitPixel);
+    StringFormat format(StringFormat::GenericTypographic());
+    format.SetFormatFlags(format.GetFormatFlags()|StringFormatFlagsNoWrap|StringFormatFlagsNoClip);
+    SolidBrush brush(ink);
+    auto saved=g.Save();g.SetClip(area,CombineModeIntersect);g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
+    float x=area.X+size/6,top=area.Y+(area.Height-font.GetHeight(&g))/2;
+    auto glyph=[&](wchar_t ch,float offset){wchar_t str[]={ch,0};g.DrawString(str,1,&font,PointF(x,top+offset),&format,&brush);};
+    for(size_t i=0;i<roll.text.size();++i){
+        auto ch=roll.text[i];float advance=uiTextWidth(g,std::wstring(1,ch),size,true,true);
+        if(ch>=L'0'&&ch<=L'9'){
+            double p=roll.position(i,now),whole=std::floor(p);float fraction=float(p-whole);
+            int digit=(int(whole)%10+10)%10;
+            glyph(wchar_t(L'0'+digit),-fraction*area.Height);
+            if(fraction>0)glyph(wchar_t(L'0'+(digit+1)%10),(1-fraction)*area.Height);
+        }else glyph(ch,0);
+        x+=advance;
+    }
+    g.Restore(saved);
+}
+void paintQuotaCard(Graphics &g,float width,float height,const State &s,const Settings &settings,const QuotaHistory &history,QuotaCardView &view,bool simulated,const UsageReport *usage,int64_t frameTime,bool animate) {
+    auto now=frameTime<0?int64_t(GetTickCount64()):frameTime;
     const auto &c=glassPalette(settings.darkAppearance);Color green=parseColor(settings.hourColor,Color(255,33,158,134)),blue=parseColor(settings.weekColor,Color(255,100,141,230));
     view.hits.clear();RectF close(width-40,12,24,25);view.hits.push_back({close,5});
     view.history=false;
@@ -241,7 +329,7 @@ void paintQuotaCard(Graphics &g,float width,float height,const State &s,const Se
     auto visibility=settings.visibility(s.q);auto windows=allQuotaWindows(s.q,visibility.hour,visibility.week);view.windows=windows;
     if(!view.history){
         auto body=g.Save();
-        float bodyScale=std::min(1.f,std::max(.35f,(height-170)/570));
+        float bodyScale=std::min(1.f,std::max(.35f,(height-170)/530));
         g.TranslateTransform(0,94);g.ScaleTransform(1,bodyScale);g.TranslateTransform(0,-94);
         float y=94;
         auto meter=[&](const std::wstring &label,WindowQuota q,Color accent,float x,float yy,float w,bool extra){
@@ -264,8 +352,10 @@ void paintQuotaCard(Graphics &g,float width,float height,const State &s,const Se
             if(bin!=trend.bins.end()&&bin->at==day){bin->total.add(entry);trend.total.add(entry);}
         }
         auto total=trend.bins.back().total;
+        view.todayTokens.update(ready&&!total.overflow?std::optional<int64_t>(total.tokens.total()):std::nullopt,today,animate&&settings.pref().animate&&motionEnabled(),now);
         drawUiText(g,L"今日 Token",RectF(20,y,width/2-20,22),12,c.secondary);
-        drawUiText(g,ready?(total.overflow?L"无法汇总":compactTokens(total.tokens.total())):L"--",RectF(20,y+23,width/2-20,31),24,c.ink,true);
+        if(ready&&!total.overflow)drawRollingTokens(g,RectF(20,y+23,width/2-20,31),view.todayTokens,now,c.ink);
+        else drawUiText(g,ready?L"无法汇总":L"--",RectF(20,y+23,width/2-20,31),24,c.ink,true);
         drawUiText(g,L"近 7 天 Token",RectF(width/2,y,width/2-20,22),12,c.secondary);
         drawUiText(g,ready?(trend.total.overflow?L"无法汇总":compactTokens(trend.total.tokens.total())):L"--",RectF(width/2,y+23,width/2-20,31),24,c.ink,true);
         drawUiText(g,ready?L"输入 "+compactTokens(total.tokens.input)+L"   ·   输出 "+compactTokens(total.tokens.output):L"正在读取本地会话用量…",RectF(20,y+59,width-40,21),11,c.secondary);
@@ -284,13 +374,13 @@ void paintQuotaCard(Graphics &g,float width,float height,const State &s,const Se
                 auto end=selected.window.resets,start=end-int64_t(selected.window.minutes)*60;std::vector<PointF> points;
                 for(const auto &sample:samples)points.emplace_back(historyPlot.X+historyPlot.Width*float(double(sample.at-start)/std::max<int64_t>(1,end-start)),historyPlot.Y+historyPlot.Height*float(1-sample.remaining/100));
                 smoothLine(g,points,blue);
-                drawUiText(g,L"采样 "+timeLabel(samples.back().at)+L" · 曲线止于采样时刻",RectF(20,y+140,width-40,20),10,c.secondary);
+
                 drawUiText(g,selected.window.minutes<=300?timeLabel(start,false).substr(0,5):usageDate(start),RectF(44,y+115,95,20),10,c.secondary);
                 drawUiText(g,selected.window.minutes<=300?timeLabel(end,false).substr(0,5):usageDate(end),RectF(width-112,y+115,95,20),10,c.secondary,false,true);
             }
-            drawUiText(g,L"实线：采样间平滑连接   虚线：均匀消耗参考",RectF(20,y+160,width-40,20),10,c.secondary);
+
         }
-        y+=180;
+        y+=140;
         drawUiText(g,L"每日 Token 消耗 · 近 7 天",RectF(20,y,width-40,24),13,c.ink,true);
         RectF plot(46,y+40,width-70,75);Pen grid(c.border,1);
         for(int i=0;i<3;++i){float yy=plot.Y+plot.Height*i/2;g.DrawLine(&grid,plot.X,yy,plot.GetRight(),yy);}
@@ -345,27 +435,34 @@ QuotaPopup::QuotaPopup(Application *a,HWND parent,const Settings &appearance):ap
 }
 QuotaPopup::~QuotaPopup(){if(window)DestroyWindow(window);}
 void QuotaPopup::reveal(){
+    if(!IsWindowVisible(window))view.todayTokens={};
     app->refreshPopupUsage();
     auto parent=GetWindow(window,GW_OWNER);RECT owner{};GetWindowRect(parent,&owner);MONITORINFO info{sizeof(info)};GetMonitorInfoW(MonitorFromWindow(parent,MONITOR_DEFAULTTONEAREST),&info);
     dpi=GetDpiForWindow(parent);float d=dpi/96.f;int width=int(440*d),height=int(quotaCardHeight(app->state,settings,int((info.rcWork.bottom-info.rcWork.top)/d)-40,view.history)*d);
     width=std::min(width,int(info.rcWork.right-info.rcWork.left));int x=std::clamp(int(owner.right)-width-30,int(info.rcWork.left),int(info.rcWork.right)-width),y=std::clamp(int(owner.top)+75,int(info.rcWork.top),std::max(int(info.rcWork.top),int(info.rcWork.bottom)-height));
-    frost.reset();SetWindowPos(window,HWND_TOP,x,y,width,height,SWP_SHOWWINDOW);backdrop=configureBackdrop(window,settings.darkAppearance);InvalidateRect(window,nullptr,FALSE);lastInside=GetTickCount64();SetTimer(window,1,50,nullptr);if(!app->testing)SetForegroundWindow(window);
+    frost.reset();SetWindowPos(window,HWND_TOP,x,y,width,height,SWP_SHOWWINDOW);backdrop=configureBackdrop(window,settings.darkAppearance);InvalidateRect(window,nullptr,FALSE);lastInside=GetTickCount64();SetTimer(window,1,16,nullptr);if(!app->testing)SetForegroundWindow(window);
 }
-static void renderQuotaPopup(QuotaPopup &p,Surface &image){Graphics g(image.bitmap.get());g.SetSmoothingMode(SmoothingModeAntiAlias);
+static void renderQuotaPopup(QuotaPopup &p,Surface &image,bool animate=true){Graphics g(image.bitmap.get());g.SetSmoothingMode(SmoothingModeAntiAlias);
     if(p.simulated){if(!p.frost)p.frost=previewFrost(image.width,image.height);paintFrost(g,RectF(0,0,float(image.width),float(image.height)),0,glassPalette(p.settings.darkAppearance),p.frost.get(),RectF(0,0,float(image.width),float(image.height)));}
     else paintBackdrop(g,glassPalette(p.settings.darkAppearance),p.backdrop);
-    float d=p.dpi/96.f;g.ScaleTransform(d,d);paintQuotaCard(g,image.width/d,image.height/d,p.app->state,p.settings,p.app->quotaHistory,p.view,p.simulated||p.app->testing||p.app->preview,&p.app->popupUsage);g.Flush(FlushIntentionSync);
+    float d=p.dpi/96.f;g.ScaleTransform(d,d);paintQuotaCard(g,image.width/d,image.height/d,p.app->state,p.settings,p.app->quotaHistory,p.view,p.simulated||p.app->testing||p.app->preview,&p.app->popupUsage,-1,animate);g.Flush(FlushIntentionSync);
+    if(IsWindowVisible(p.window))SetTimer(p.window,1,p.view.todayTokens.running(GetTickCount64())?16:50,nullptr);
 }
 void QuotaPopup::draw(HDC dc){RECT client{};GetClientRect(window,&client);Surface image(client.right,client.bottom);renderQuotaPopup(*this,image);BitBlt(dc,0,0,image.width,image.height,image.dc,0,0,SRCCOPY);}
-void QuotaPopup::capture(const fs::path &file){RECT r{};GetClientRect(window,&r);Surface image(r.right,r.bottom);renderQuotaPopup(*this,image);for(int i=0;i<image.width*image.height;++i)image.pixels[i*4+3]=255;image.save(file);}
+void QuotaPopup::capture(const fs::path &file){RECT r{};GetClientRect(window,&r);Surface image(r.right,r.bottom);renderQuotaPopup(*this,image,false);for(int i=0;i<image.width*image.height;++i)image.pixels[i*4+3]=255;image.save(file);}
 LRESULT CALLBACK QuotaPopup::procedure(HWND w,UINT msg,WPARAM wp,LPARAM lp){auto self=reinterpret_cast<QuotaPopup *>(GetWindowLongPtrW(w,GWLP_USERDATA));if(msg==WM_NCCREATE){self=static_cast<QuotaPopup *>(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams);SetWindowLongPtrW(w,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(self));}if(!self)return DefWindowProcW(w,msg,wp,lp);
     switch(msg){case WM_NCCALCSIZE:return 0;case WM_ERASEBKGND:return 1;case WM_PAINT:{PAINTSTRUCT p{};auto dc=BeginPaint(w,&p);self->draw(dc);EndPaint(w,&p);return 0;}
+    case WM_SHOWWINDOW:if(!wp)KillTimer(w,1);break;
     case WM_PRINTCLIENT:self->draw(reinterpret_cast<HDC>(wp));return 0;
     case WM_TIMER:if(IsWindowVisible(w)){
         POINT pointer{};GetCursorPos(&pointer);RECT bounds{};GetWindowRect(w,&bounds);auto now=GetTickCount64();
         if(PtInRect(&bounds,pointer))self->lastInside=now;
-        else if(now-self->lastInside>=1500){ShowWindow(w,SW_HIDE);return 0;}
+        else if(now-self->lastInside>=1500){ShowWindow(w,SW_HIDE);KillTimer(w,1);return 0;}
         if(now-self->lastPaint>=1000){self->lastPaint=now;self->app->refreshPopupUsage();InvalidateRect(w,nullptr,FALSE);}
+        if(self->view.todayTokens.started>=0){
+            InvalidateRect(w,nullptr,FALSE);
+            if(!self->view.todayTokens.running(now))self->view.todayTokens.started=-1;
+        }
     }return 0;
     case WM_NCHITTEST:{POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ScreenToClient(w,&p);RECT r{};GetClientRect(w,&r);return p.y<int(45*self->dpi/96.f)&&p.x<r.right-int(48*self->dpi/96.f)?HTCAPTION:HTCLIENT;}
     case WM_LBUTTONUP:{float d=self->dpi/96.f;for(const auto &h:self->view.hits)if(h.rect.Contains(GET_X_LPARAM(lp)/d,GET_Y_LPARAM(lp)/d)){if(h.action==5)ShowWindow(w,SW_HIDE);else if(h.action==3){ShowWindow(w,SW_HIDE);self->app->showSettings();self->app->settingsWindow->selectPage(4);}else {quotaCardAction(self->view,h.action,w,self->app->state);self->reveal();}InvalidateRect(w,nullptr,FALSE);break;}return 0;}
@@ -411,10 +508,62 @@ void Application::flushQuotaHistory(bool final){
 int analyticsUiTests(const fs::path &dir){
     fs::create_directories(dir);std::ofstream log(dir/L"checks.txt");int count=0;
     auto check=[&](bool ok,const char *name){if(!ok){log<<"FAIL "<<name<<std::endl;throw std::runtime_error(name);}++count;log<<"PASS "<<name<<std::endl;};
+    {
+        TokenRoll roll;auto day=localDay(utcNow());
+        roll.update(std::nullopt,day,true,1000);
+        check(!roll.running(1000)&&roll.text.empty(),"unavailable Token totals do not animate a fabricated zero");
+        roll.update(48580000,day,true,1100);
+        check(roll.text==L"48.58M"&&roll.running(1100)&&roll.position(0,1100)==0,"today Token reveal starts rolling digits toward the actual compact total");
+        auto started=roll.started;roll.update(48580001,day,true,1250);
+        check(roll.started==started,"refreshes with unchanged displayed digits do not restart the roll");
+        double position=roll.position(0,1400);roll.update(49580000,day,true,1400);
+        check(std::abs(roll.position(0,1400)-position)<1e-9,"a new total retargets from the fractional visible digit position");
+        check(!roll.running(3000)&&int(std::round(roll.position(0,3000)))%10==4,"rolling settles exactly on the target without a continuing timer");
+        roll.update(47580000,day,true,3100);
+        check(roll.columns[1].to<roll.columns[1].from,"corrected lower totals roll in the reverse direction");
+        roll.update(47580000,day,false,3200);
+        check(!roll.running(3200)&&roll.position(1,3200)==7,"disabling animation immediately shows the actual total");
+        for(auto tokens:{int64_t(0),int64_t(999),int64_t(1000),int64_t(999999),int64_t(1000000),INT64_MAX}){
+            roll.update(tokens,day,true,4000);bool exact=roll.text==compactTokens(tokens);
+            for(size_t i=0;i<roll.text.size();++i)if(roll.text[i]>=L'0'&&roll.text[i]<=L'9')exact=exact&&((int(std::round(roll.position(i,6000)))%10+10)%10)==roll.text[i]-L'0';
+            check(exact,"digit and K/M/B unit transitions preserve the formatted total, including large counts");
+        }
+        roll.update(123,shiftLocalDay(day,1),true,7000);
+        check(roll.position(0,7000)==0&&roll.text==L"123","a new local calendar day resets the reveal state");
+        roll.update(std::nullopt,day,true,7100);check(roll.text.empty()&&!roll.running(7100),"missing data clears an in-progress roll");
+        // Native rendered frames, deliberately synthetic; the suffix and label
+        // remain fixed while individual digits move inside the number bounds.
+        for(bool dark:{false,true})for(int dpi:{96,144,192}){
+            float scale=dpi/96.f;std::vector<BYTE> first,last;
+            TokenRoll preview;preview.update(48580000,day,true,0);
+            for(int elapsed:{0,200,400,600,900}){
+                Surface image(int(220*scale),int(80*scale));Graphics g(image.bitmap.get());const auto &c=glassPalette(dark);g.Clear(c.mid);g.ScaleTransform(scale,scale);
+                drawUiText(g,L"今日 Token · 模拟数据",RectF(12,3,200,22),12,c.secondary);
+                drawRollingTokens(g,RectF(12,28,190,36),preview,elapsed,c.ink);g.Flush(FlushIntentionSync);
+                if(elapsed==0)first.assign(image.pixels,image.pixels+image.width*image.height*4);
+                if(elapsed==900)last.assign(image.pixels,image.pixels+image.width*image.height*4);
+                image.save(dir/(L"token-roll-"+std::wstring(dark?L"dark-":L"light-")+std::to_wstring(dpi)+L"dpi-"+std::to_wstring(elapsed)+L"ms-simulated.png"));
+            }
+            check(first!=last,"native Token digits animate in both themes and at 100/150/200 percent DPI");
+        }
+    }
     Application app(false,true);app.settings=Settings{};app.state.active=true;app.state.updated=utcNow();app.state.error.clear();app.state.q.plan="plus";app.state.q.accountKey=privateKey("demo-account");app.state.q.hour=WindowQuota{68,utcNow()+1800,300};app.state.q.week=WindowQuota{42,utcNow()+86400*2,10080};
     app.state.q.extraWindows={{"spark:primary:300","Codex Spark · 5 小时","spark",{91,utcNow()+1800,300}},{"codex:monthly:43200","月度额度","codex",{64,utcNow()+86400*16,43200}}};
     for(const auto &w:allQuotaWindows(app.state.q)){int64_t start=w.window.resets-int64_t(w.window.minutes)*60;for(int i=0;i<9;++i){auto at=start+(app.state.updated-start)*i/8;app.quotaHistory.samples.push_back({app.state.q.accountKey,app.state.q.plan,w.id,w.label,at,w.window.resets,w.window.minutes,100-(100-w.window.remaining)*i/8});}}
+    if(motionEnabled()){
+        auto demo=app.state;demo.q.extraWindows.clear();demo.q.hour->remaining=73;demo.q.week->remaining=4;
+        auto usage=demoUsageReport(utcNow());auto today=localDay(utcNow());
+        usage.entries.erase(std::remove_if(usage.entries.begin(),usage.entries.end(),[&](const auto &entry){return localDay(entry.at)==today;}),usage.entries.end());
+        UsageEntry entry;entry.at=utcNow();entry.tokens={48468000,47550000,0,112000,0};entry.requests=282;usage.entries.push_back(entry);
+        QuotaCardView view;
+        for(int elapsed=0;elapsed<=900;elapsed+=30){
+            Surface image(550,875);Graphics g(image.bitmap.get());g.Clear(glassPalette(false).mid);g.ScaleTransform(1.25f,1.25f);g.SetSmoothingMode(SmoothingModeAntiAlias);
+            paintQuotaCard(g,440,700,demo,app.settings,app.quotaHistory,view,true,&usage,elapsed);g.Flush(FlushIntentionSync);
+            image.save(dir/(L"token-roll-card-"+std::to_wstring(elapsed)+L"ms-simulated.png"));
+        }
+    }
     app.showSettings();auto &ui=*app.settingsWindow;ui.usageReport=demoUsageReport(utcNow());ui.selectPage(4);ui.usageView.dirty=true;
+    check(IsWindowVisible(GetDlgItem(ui.content,UsageExport))&&IsWindowVisible(GetDlgItem(ui.content,UsageImport)),"usage page exposes CSV export and restore buttons");
     check(ui.page==4&&IsWindowVisible(GetDlgItem(ui.content,UsageSeven)),"native analytics page exposes range controls");
     ui.capture(dir/L"usage-light-simulated.png");check(!ui.usageView.groups.empty()&&ui.usageView.total.tokens.total()>0,"native analytics renders nonempty model summaries");
     auto seven=ui.usageView.total.tokens.total();ui.usageCommand(UsageThirty);ui.capture(dir/L"usage-month-simulated.png");check(ui.usageView.total.tokens.total()>seven,"native analytics range switches recalculate totals");
@@ -432,7 +581,23 @@ int analyticsUiTests(const fs::path &dir){
     ui.capture(dir/L"usage-sessions-simulated.png");ui.usageCommand(UsageClear);ui.usageCommand(UsageAccounts);ui.capture(dir/L"usage-accounts-simulated.png");
     check(std::any_of(ui.usageView.groups.begin(),ui.usageView.groups.end(),[](const auto &r){return r.key.empty();}),"native analytics preserves unknown account attribution");
     ui.usageCommand(UsageTokens);ui.usageCommand(UsageHour);ui.capture(dir/L"usage-hourly-simulated.png");check(ui.usageView.tokens&&ui.usageView.bins.size()==24,"native analytics supports Token and hourly plots");
-    ui.usageCommand(UsageQuota);check(ui.quotaPopup&&IsWindowVisible(ui.quotaPopup->window),"native quota popup opens from analytics");ui.quotaPopup->capture(dir/L"quota-current-simulated.png");
+    ui.usageCommand(UsageQuota);check(ui.quotaPopup&&IsWindowVisible(ui.quotaPopup->window),"native quota popup opens from analytics");
+    {
+        auto &popup=*ui.quotaPopup;RECT r{};GetClientRect(popup.window,&r);Surface image(r.right,r.bottom);
+        SendMessageW(popup.window,WM_PRINTCLIENT,reinterpret_cast<WPARAM>(image.dc),PRF_CLIENT);
+        check(!motionEnabled()||popup.view.todayTokens.running(GetTickCount64()),"analytics quota popup starts the today Token animation when revealed");
+        if(motionEnabled()){
+            popup.view.todayTokens.started=GetTickCount64()-350;
+            SendMessageW(popup.window,WM_TIMER,1,0);
+            check(popup.view.todayTokens.running(GetTickCount64()),"native popup timer keeps repainting while Token digits roll");
+            popup.view.todayTokens.started=GetTickCount64()-2000;SendMessageW(popup.window,WM_TIMER,1,0);
+            check(!popup.view.todayTokens.running(GetTickCount64()),"native popup stops animation repaint requests after the final frame");
+        }
+        ShowWindow(popup.window,SW_HIDE);popup.reveal();
+        SendMessageW(popup.window,WM_PRINTCLIENT,reinterpret_cast<WPARAM>(image.dc),PRF_CLIENT);
+        check(!motionEnabled()||popup.view.todayTokens.running(GetTickCount64()),"reopening the analytics quota popup replays the Token reveal");
+    }
+    ui.quotaPopup->capture(dir/L"quota-current-simulated.png");
     auto extras=app.state.q.extraWindows;app.state.q.extraWindows.clear();ui.quotaPopup->reveal();
     ui.quotaPopup->capture(dir/L"quota-standard-simulated.png");
     RECT normal{};GetWindowRect(ui.quotaPopup->window,&normal);
@@ -469,13 +634,28 @@ int analyticsUiTests(const fs::path &dir){
     ShowWindow(ui.window,SW_HIDE);
     {
         auto monitor=monitors().front();Overlay overlay(&app,monitor,app.settings,app.state);KillTimer(overlay.window,1);
-        overlay.showDetails();overlay.hover=true;POINT outside{monitor.work.left-100,monitor.work.top-100};
+        overlay.showDetails();
+        check(!motionEnabled()||overlay.codexCard.todayTokens.running(GetTickCount64()),"taskbar hover card starts the today Token animation");
+        auto start=overlay.codexCard.todayTokens.started;overlay.showDetails();
+        check(overlay.codexCard.todayTokens.started==start,"redrawing an open hover card does not restart its Token animation");
+        if(motionEnabled()){
+            std::vector<BYTE> first(overlay.detailImage->pixels,overlay.detailImage->pixels+overlay.detailImage->width*overlay.detailImage->height*4);
+            overlay.codexCard.todayTokens.started=GetTickCount64()-350;SendMessageW(overlay.details,WM_TIMER,1,0);
+            std::vector<BYTE> middle(overlay.detailImage->pixels,overlay.detailImage->pixels+overlay.detailImage->width*overlay.detailImage->height*4);
+            check(first!=middle,"native hover animation timer presents a different rendered digit frame");
+            overlay.codexCard.todayTokens.started=GetTickCount64()-2000;SendMessageW(overlay.details,WM_TIMER,1,0);
+            check(!overlay.codexCard.todayTokens.running(GetTickCount64()),"native hover animation timer settles on the final total");
+        }
+        overlay.hover=true;POINT outside{monitor.work.left-100,monitor.work.top-100};
         overlay.lastInside=GetTickCount64()-1000;overlay.tick(&outside);
         check(IsWindowVisible(overlay.details),"quota hover remains visible during the 1.5 second leave grace period");
         RECT card{};GetWindowRect(overlay.details,&card);POINT inside{card.left+10,card.top+10};overlay.tick(&inside);
         check(GetTickCount64()-overlay.lastInside<100,"returning to quota details resets the leave timer");
         overlay.lastInside=GetTickCount64()-1600;overlay.tick(&outside);
         check(!IsWindowVisible(overlay.details),"quota hover closes after the leave grace period");
+        check(!overlay.codexCard.todayTokens.value,"hiding the hover card clears its animation state");
+        overlay.settings.preferences[overlay.settings.styleIndex()].animate=false;overlay.showDetails();
+        check(overlay.codexCard.todayTokens.value&&!overlay.codexCard.todayTokens.running(GetTickCount64()),"existing style animation switch disables today Token rolling in the hover card");
     }
     ShowWindow(ui.window,SW_SHOW);
     ui.quotaPopup->view.history=true;ui.quotaPopup->reveal();ui.quotaPopup->capture(dir/L"quota-history-simulated.png");check(!app.quotaHistory.series(app.state.q,"hour").empty(),"native quota history uses recorded owned samples");

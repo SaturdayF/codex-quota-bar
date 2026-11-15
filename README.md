@@ -4,11 +4,11 @@
 
 在 Windows 任务栏显示 Codex 额度和 DeepSeek 账户余额，支持多屏、拖动布局、悬浮详情和自动刷新。
 
-**最新发布：[0.4.2](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.4.2)** · Windows 10/11 x64 · C++ 原生程序
+**最新发布：[0.4.3](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.4.3)** · Windows 10/11 x64 · C++ 原生程序
 
 **稳定版：[0.3.8](https://github.com/SaturdayF/codex-quota-bar/releases/tag/v0.3.8)**
 
-[安装包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.4.2/CodexQuotaBar-v0.4.2-Setup.exe) · [便携包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.4.2/CodexQuotaBar-v0.4.2-Portable-win-x64.zip) · [SHA-256 校验](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.4.2/SHA256SUMS.txt) · [版本记录](CHANGELOG.md)
+[安装包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.4.3/CodexQuotaBar-v0.4.3-Setup.exe) · [便携包](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.4.3/CodexQuotaBar-v0.4.3-Portable-win-x64.zip) · [SHA-256 校验](https://github.com/SaturdayF/codex-quota-bar/releases/download/v0.4.3/SHA256SUMS.txt) · [版本记录](CHANGELOG.md)
 
 ## 界面预览
 
@@ -97,6 +97,12 @@ Codex 额度通过本地 `codex app-server` 读取；DeepSeek 余额和用量通
 Windows 11 22H2 及以上使用 Desktop Acrylic，较早系统使用兼容模糊；系统合成不可用、启用高对比度或进入省电模式（Battery Saver）时回退为纯色。省电模式下系统会关闭半透明与模糊，因此毛玻璃效果不可用，设置与详情恢复为不透明底色。Windows 10 兼容材质尚未完成实机专项验证。
 
 这是独立工具，与 OpenAI、DeepSeek 无隶属关系。
+
+## 0.4.3 更新
+
+Codex 用量新增 CSV 备份与恢复，支持全部已采集用量明细和额度采样历史。详情页的“今日 Token”加入逐位数字滚动动画，并精简采样说明文字。
+
+用量页支持切换本机日志、全部设备与指定设备。共享来源显示今日、本月、累计统计、模型/项目/会话分组及同步账户额度；Windows 补充额度与会话/项目上传，远端读取独立运行。共享统计保留上报日期口径，不跨设备去重；本机 CSV 备份与按小时分析仍使用本地记录。
 
 ## 0.4.2 更新
 

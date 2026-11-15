@@ -63,6 +63,22 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             std::ofstream(dir/L"checks.txt")<<"PASS Hub navigation and visible controls\nPASS local/client/host field availability\nPASS shared secret masking\nPASS daily/monthly history switching\n";
             ui.capture(dir/L"hub-light-simulated.png");ui.scrollTo(850);ui.capture(dir/L"hub-totals-light-simulated.png");ui.draft.darkAppearance=true;ui.applyAppearance();ui.capture(dir/L"hub-totals-dark-simulated.png");ui.scrollTo(0);ui.capture(dir/L"hub-dark-simulated.png");
         }
+        else if (has(L"--shared-live-check")) {
+            auto dir=after(L"--output",L"shared-live-check");fs::create_directories(dir);
+            auto config=HubSettings::load();if(config.mode!=1)throw std::runtime_error("Configure a Hub client before this read-only check");
+            HubRuntime client;client.start(config,hubSecret(),dir/L"receive-cache",true);client.refresh();auto view=client.view();auto all=hubSharedUsage(view,"*",0,0);
+            json summary={{"readOnly",true},{"devices",view["devices"].size()},{"sharedTodayTokens",all["totals"]["tokens"]},{"macDevices",0},{"macTodayTokens",0},{"macSessions",0},{"macProjects",0},{"codexQuotaProviders",all["providers"].size()}};
+            double sum=0;for(const auto &device:view["devices"]){auto id=device.value("deviceId",std::string());auto selected=hubSharedUsage(view,id,0,2);sum+=selected["totals"]["tokens"].get<double>();
+                if(device.value("platform",std::string()).find("darwin")!=std::string::npos){summary["macDevices"]=summary["macDevices"].get<int>()+1;summary["macTodayTokens"]=selected["totals"]["tokens"];summary["macSessions"]=selected["groups"].size();summary["macProjects"]=hubSharedUsage(view,id,0,1)["groups"].size();}}
+            summary["aggregateMatchesDeviceSum"]=sum==all["totals"]["tokens"].get<double>();client.stop();saveAnalyticsJson(dir/L"summary.json",summary);
+            if(!summary["aggregateMatchesDeviceSum"].get<bool>()||!summary["macDevices"].get<int>())throw std::runtime_error("Shared live aggregate verification failed");
+        }
+        else if (has(L"--shared-ui-test")) {
+            sharedUsageUiTests(after(L"--output",L"shared-ui-tests"));
+        }
+        else if (has(L"--shared-test")) {
+            auto dir=after(L"--output",L"shared-tests");fs::create_directories(dir);std::ofstream log(dir/L"checks.txt");sharedUsageTests(log,dir);
+        }
         else if (has(L"--hub-test")) {
             auto dir=after(L"--output",L"hub-tests");fs::create_directories(dir);std::ofstream log(dir/L"checks.txt");hubTests(log,dir);
         }

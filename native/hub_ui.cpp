@@ -35,7 +35,7 @@ void SettingsWindow::applyHub(){
  try{app->hub.start(next,secret,dataDirectory());if(next.mode&&secret!=old){saveHubSecret(secret);keySaved=true;}next.save();}
  catch(...){if(keySaved){if(old.empty())CredDeleteW(L"CodexQuotaBar.SyncHub.Secret",CRED_TYPE_GENERIC,0);else try{saveHubSecret(old);}catch(...){}}
  try{app->hub.start(previous,old,dataDirectory());}catch(...){}throw;}
- app->hubConfig=hubDraft=next;SetDlgItemTextW(content,703,L"");InvalidateRect(content,nullptr,FALSE);
+ app->hubConfig=hubDraft=next;syncUsageSources(true);SetDlgItemTextW(content,703,L"");InvalidateRect(content,nullptr,FALSE);
  }catch(...){MessageBoxW(window,L"无法应用同步设置。请检查Hub 地址、端口是否占用、设备 ID，以及至少 16 个字符的共享密钥。",L"多设备同步",MB_OK|MB_ICONERROR);}
 }
 }

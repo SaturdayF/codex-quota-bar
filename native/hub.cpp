@@ -200,7 +200,7 @@ HubResponse HubStore::request(const std::string &method,const std::string &path,
   if(devices.count(id)&&body.contains("history")&&body["history"].is_object()&&body.contains("trackedClients"))d["history"]=retainUntrackedHistory(d["history"],devices[id].value("history",json()),body["trackedClients"]);
   if(body.contains("limits")&&(!body["limits"].is_object()||!body["limits"].value("providers",json::array()).is_array()))return {400,{{"error","invalid_limits"}}};
   if(body.contains("limits"))for(const auto &p:body["limits"].value("providers",json::array())){if(!p.is_object())return {400,{{"error","invalid_limits"}}};for(auto key:{"provider","accountKey","updatedAt","status"})if(p.contains(key)&&!p[key].is_string())return {400,{{"error","invalid_limits"}}};if(p.contains("windows")&&!p["windows"].is_array())return {400,{{"error","invalid_limits"}}};}
-  for(auto key:{"limits","trackedClients","projectsEnabled","allTimeProjectsOmitted","allTimeProjectsIncomplete"})if(body.contains(key))d[key]=sanitize(body[key]);
+  for(auto key:{"limits","trackedClients","projectsEnabled","allTimeProjectsOmitted","allTimeProjectsIncomplete","syncUploadIntervalMs","clientStatus","clientHealth","wslStatus","sessionDetailsOmitted"})if(body.contains(key))d[key]=sanitize(body[key]);
   if(body.contains("allTimeTokensUnavailable"))d["allTimeTokensUnavailable"]=body["allTimeTokensUnavailable"]==true;
   if(body.contains("periodWindows")){if(!body["periodWindows"].is_object())return {400,{{"error","invalid_period_windows"}}};auto windows=body["periodWindows"];for(auto name:{"today","month"})if(windows.contains(name)){if(!windows[name].is_object())return {400,{{"error","invalid_period_windows"}}};for(auto key:{"key","endsAt"})if(windows[name].contains(key)&&!windows[name][key].is_string())return {400,{{"error","invalid_period_windows"}}};}d["periodWindows"]=sanitize(windows);}
   auto old=devices;devices[id]=d;try{json persisted={{"schema",1},{"devices",devices}};if(persisted.dump().size()>16*1024*1024)throw std::runtime_error("Hub storage limit");if(!file.empty())saveAnalyticsJson(file,persisted);}catch(...){devices=std::move(old);return {507,{{"error","persistence_failed"}}};}return {200,{{"ok",true}}};
@@ -219,23 +219,25 @@ UsageReport hubRetainUsage(const UsageReport &report,const fs::path &archive){
  if(!rows.is_object())throw std::runtime_error("Invalid Hub archive");
  std::map<std::string,UsageEntry> current;
  for(const auto &e:report.entries){auto day=localDay(e.at);auto key=json::array({e.session,day,e.model,e.tier}).dump();auto &r=current[key];if(r.session.empty())r.priced=true;r.at=day;r.session=e.session;r.model=e.model;r.tier=e.tier;r.cost+=e.cost;r.priced=r.priced&&e.priced;
+  if(!e.project.empty())r.project=utf8(fs::path(wide(e.project)).filename().wstring());
   if(!e.tokens.valid()||r.tokens.total()>int64_t(Safe)-e.tokens.total())throw std::runtime_error("Hub archive counter overflow");r.tokens.input+=e.tokens.input;r.tokens.cached+=e.tokens.cached;r.tokens.written+=e.tokens.written;r.tokens.output+=e.tokens.output;r.tokens.reasoning+=e.tokens.reasoning;}
  std::map<std::string,int64_t> before,after;std::map<std::string,std::string> rowGroups;
  for(auto i=rows.begin();i!=rows.end();++i){auto key=json::parse(i.key());auto group=json::array({key.at(0),key.at(1)}).dump();rowGroups[i.key()]=group;auto t=(*i).at(1);auto count=t.at(0).get<int64_t>()+t.at(3).get<int64_t>();if(count<0||before[group]>int64_t(Safe)-count)throw std::runtime_error("Invalid Hub archive counter");before[group]+=count;}
  for(const auto &pair:current){auto group=json::array({pair.second.session,pair.second.at}).dump();if(after[group]>int64_t(Safe)-pair.second.tokens.total())throw std::runtime_error("Hub day counter overflow");after[group]+=pair.second.tokens.total();}
+ for(auto &pair:current)if(pair.second.project.empty()){auto old=rows.find(pair.first);if(old!=rows.end()&&old->is_array()&&old->size()>6&&(*old)[6].is_string())pair.second.project=(*old)[6].get<std::string>();}
  for(const auto &pair:rowGroups)if(after.count(pair.second)&&after[pair.second]>=before[pair.second])rows.erase(pair.first);
- for(const auto &pair:current){const auto &e=pair.second;auto group=json::array({e.session,e.at}).dump();if(after[group]<before[group])continue;auto tokens=json::array({e.tokens.input,e.tokens.cached,e.tokens.written,e.tokens.output,e.tokens.reasoning});rows[pair.first]=json::array({e.at,tokens,e.model,e.tier,e.cost,e.priced});}
+ for(const auto &pair:current){const auto &e=pair.second;auto group=json::array({e.session,e.at}).dump();if(after[group]<before[group])continue;auto tokens=json::array({e.tokens.input,e.tokens.cached,e.tokens.written,e.tokens.output,e.tokens.reasoning});rows[pair.first]=json::array({e.at,tokens,e.model,e.tier,e.cost,e.priced,e.project});}
  if(rows.size()>180000)throw std::runtime_error("Hub archive row limit");
  auto persisted=json{{"schema",1},{"rows",rows}};if(persisted.dump().size()>64*1024*1024)throw std::runtime_error("Hub archive size limit");if(persisted!=saved)saveAnalyticsJson(archive,persisted);
  UsageReport result=report;result.entries.clear();result.titles.clear();
- for(auto i=rows.begin();i!=rows.end();++i){auto v=*i;UsageEntry e;e.at=v.at(0);auto t=v.at(1);e.tokens={t.at(0),t.at(1),t.at(2),t.at(3),t.at(4)};e.model=v.at(2);e.tier=v.at(3);if(!e.tokens.valid())throw std::runtime_error("Invalid Hub archive counters");e.cost=v.size()>4?v.at(4).get<double>():0;e.priced=v.size()>5&&v.at(5).get<bool>();if(!std::isfinite(e.cost)||e.cost<0)throw std::runtime_error("Invalid Hub archive cost");result.entries.push_back(e);}
+ for(auto i=rows.begin();i!=rows.end();++i){auto v=*i;UsageEntry e;e.session=json::parse(i.key()).at(0).get<std::string>();e.at=v.at(0);auto t=v.at(1);e.tokens={t.at(0),t.at(1),t.at(2),t.at(3),t.at(4)};e.model=v.at(2);e.tier=v.at(3);if(!e.tokens.valid())throw std::runtime_error("Invalid Hub archive counters");e.cost=v.size()>4?v.at(4).get<double>():0;e.priced=v.size()>5&&v.at(5).get<bool>();if(v.size()>6&&v[6].is_string())e.project=v[6];if(!std::isfinite(e.cost)||e.cost<0)throw std::runtime_error("Invalid Hub archive cost");result.entries.push_back(e);}
  return result;
 }
-json hubLocalSnapshot(const UsageReport &report,const State &,const std::string &id){
+json hubLocalSnapshot(const UsageReport &report,const State &state,const std::string &id){
  json r={{"deviceId",id},{"hostname",id},{"platform","win32-x64"},{"osName","Windows"},{"agentVersion",VersionUtf8},{"agentRuntime","codex-quota-bar"},{"updatedAt",stamp()},{"trackedClients",{"codex"}},{"projectsEnabled",false},{"historyAvailable",false},{"allTimeTokensUnavailable",true}};
  wchar_t computer[256];DWORD computerLength=256;if(GetComputerNameW(computer,&computerLength))r["hostname"]=utf8(std::wstring(computer,computerLength));
  std::map<std::string,json> daily,monthly;
- for(const auto &e:report.entries){auto date=utf8(usageDate(e.at,true));std::replace(date.begin(),date.end(),'/','-');auto &d=daily[date];if(!d.is_object())d={{"date",date},{"tokens",0LL},{"cost",0.0},{"messages",0},{"cacheReadTokens",0LL},{"cacheWriteTokens",0LL},{"outputTokens",0LL},{"unclassifiedTokens",0},{"tokenComponentsAvailable",true},{"unpricedTokens",0LL}};d["tokens"]=d["tokens"].get<int64_t>()+e.tokens.total();d["cost"]=d["cost"].get<double>()+e.cost;d["cacheReadTokens"]=d["cacheReadTokens"].get<int64_t>()+e.tokens.cached;d["cacheWriteTokens"]=d["cacheWriteTokens"].get<int64_t>()+e.tokens.written;d["outputTokens"]=d["outputTokens"].get<int64_t>()+e.tokens.output;if(!e.priced)d["unpricedTokens"]=d["unpricedTokens"].get<int64_t>()+e.tokens.total();
+ for(const auto &e:report.entries){auto date=utf8(usageDate(e.at,true));std::replace(date.begin(),date.end(),'/','-');auto &d=daily[date];if(!d.is_object())d={{"date",date},{"tokens",0LL},{"cost",0.0},{"cacheReadTokens",0LL},{"cacheWriteTokens",0LL},{"outputTokens",0LL},{"unclassifiedTokens",0},{"tokenComponentsAvailable",true},{"unpricedTokens",0LL}};d["tokens"]=d["tokens"].get<int64_t>()+e.tokens.total();d["cost"]=d["cost"].get<double>()+e.cost;d["cacheReadTokens"]=d["cacheReadTokens"].get<int64_t>()+e.tokens.cached;d["cacheWriteTokens"]=d["cacheWriteTokens"].get<int64_t>()+e.tokens.written;d["outputTokens"]=d["outputTokens"].get<int64_t>()+e.tokens.output;if(!e.priced)d["unpricedTokens"]=d["unpricedTokens"].get<int64_t>()+e.tokens.total();
  json part={{"tokens",e.tokens.total()},{"cost",e.cost},{"cacheReadTokens",e.tokens.cached},{"cacheWriteTokens",e.tokens.written},{"outputTokens",e.tokens.output},{"unclassifiedTokens",0},{"unpricedTokens",e.priced?0:e.tokens.total()}};
  for(auto pair:std::vector<std::pair<std::string,std::string>>{{"perClient","codex"},{"perModel",e.model.empty()?"unknown":e.model}}){if(!d.contains(pair.first))d[pair.first]=json::object();if(!d[pair.first].contains(pair.second))d[pair.first][pair.second]=json::object();sum(d[pair.first][pair.second],part);}}
 
@@ -244,13 +246,79 @@ json hubLocalSnapshot(const UsageReport &report,const State &,const std::string 
  for(auto name:{"today","month","allTime"}){auto p=period(json::object());p["capabilities"]["tokenComponents"]=true;int64_t begin=std::string(name)=="today"?today:std::string(name)=="month"?month:0;auto v=report.total(begin);p["totalTokens"]=v.tokens.total();p["costUsd"]=v.cost;p["cacheReadTokens"]=v.tokens.cached;p["cacheWriteTokens"]=v.tokens.written;p["outputTokens"]=v.tokens.output;p["clients"]["codex"]=v.tokens.total();p["clientCosts"]["codex"]=v.cost;p["clientCacheReads"]["codex"]=v.tokens.cached;p["clientCacheWrites"]["codex"]=v.tokens.written;p["clientOutputs"]["codex"]=v.tokens.output;for(const auto &e:report.entries)if(e.at>=begin){auto m=e.model.empty()?"unknown":e.model;p["models"][m]=p["models"].value(m,0LL)+e.tokens.total();p["modelCosts"][m]=p["modelCosts"].value(m,0.)+e.cost;p["modelCacheReads"][m]=p["modelCacheReads"].value(m,0LL)+e.tokens.cached;p["modelCacheWrites"][m]=p["modelCacheWrites"].value(m,0LL)+e.tokens.written;p["modelOutputs"][m]=p["modelOutputs"].value(m,0LL)+e.tokens.output;p["clientModels"]["codex"][m]=p["models"][m];p["clientModelCosts"]["codex"][m]=p["modelCosts"][m];}p["unpricedTokens"]=0LL;for(const auto &e:report.entries)if(e.at>=begin&&!e.priced)p["unpricedTokens"]=p["unpricedTokens"].get<int64_t>()+e.tokens.total();r[name]=p;}
  auto date=utf8(usageDate(today,true));std::replace(date.begin(),date.end(),'/','-');t.tm_mon++;auto monthEnd=_mktime64(&t);
  r["periodWindows"]={{"today",{{"key",date},{"endsAt",stamp(shiftLocalDay(today,1))}}},{"month",{{"key",date.substr(0,7)},{"endsAt",stamp(monthEnd)}}}};
+ r["syncUploadIntervalMs"]=10000;r["deviceKind"]="computer";
+ auto liveTokens=report.total(today).tokens.total();
+ r["clientStatus"]={{"codex",liveTokens>0?"active":report.available?"waiting":"missing"}};
+ r["clientHealth"]={{"version",1},{"observedAt",stamp()},{"clients",{{"codex",{{"source",{{"checkedCount",report.partial?0:1},{"detectedCount",!report.partial&&report.available?1:0}}},{"collection",{{"state","direct"}}},{"data",{{"liveTokens",liveTokens}}}}}}}};
+ using VersionFn=LONG(WINAPI *)(OSVERSIONINFOW *);auto versionFn=reinterpret_cast<VersionFn>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"),"RtlGetVersion"));OSVERSIONINFOW os{};os.dwOSVersionInfoSize=sizeof(os);
+ if(versionFn&&versionFn(&os)==0)r["osVersion"]=std::to_string(os.dwMajorVersion)+"."+std::to_string(os.dwMinorVersion)+"."+std::to_string(os.dwBuildNumber);
+ // The archive has day-level observations, not message timing or context facts.
+ // Publish evidenced usage and attribution without inventing those optional fields.
+ bool projectsIncomplete=false;
+ for(auto name:{"today","month","allTime"}){
+  auto &p=r[name];auto begin=std::string(name)=="today"?today:std::string(name)=="month"?month:0;
+  for(const auto &e:report.entries)if(e.at>=begin){
+   std::string label=e.project.empty()?"":utf8(fs::path(wide(e.project)).filename().wstring());
+   std::string projectKey=label;for(auto &ch:projectKey)if(ch>='A'&&ch<='Z')ch=char(ch-'A'+'a');
+   auto projectId=projectKey.empty()?"":"sha256:"+privateKey("project:"+projectKey);
+   if(projectKey.empty())projectsIncomplete=true;
+   if(!e.priced){p["clientUnpricedTokens"]["codex"]=p["clientUnpricedTokens"].value("codex",0LL)+e.tokens.total();if(!p["clientModelUnpricedTokens"]["codex"].is_object())p["clientModelUnpricedTokens"]["codex"]=json::object();p["clientModelUnpricedTokens"]["codex"][e.model]=p["clientModelUnpricedTokens"]["codex"].value(e.model,0LL)+e.tokens.total();}
+   if(!projectKey.empty()){
+    auto &project=p["projects"][projectKey];if(!project.is_object())project={{"label",label},{"tokens",0LL},{"costUsd",0.0},{"clients",json::object()},{"models",json::object()}};
+    project["tokens"]=project["tokens"].get<int64_t>()+e.tokens.total();project["costUsd"]=project["costUsd"].get<double>()+e.cost;
+    if(!e.priced)project["unpricedTokens"]=project.value("unpricedTokens",0LL)+e.tokens.total();
+    project["clients"]["codex"]=project["clients"].value("codex",0LL)+e.tokens.total();project["models"][e.model]=project["models"].value(e.model,0LL)+e.tokens.total();
+   }
+   if(std::string(name)=="allTime"||e.session.empty())continue;
+   auto key="codex:"+e.session;auto &session=p["sessions"][key];
+   if(!session.is_object())session={{"client","codex"},{"sessionId",e.session},{"totalTokens",0LL},{"costUsd",0.0},{"inputTokens",0LL},{"cacheReadTokens",0LL},{"cacheWriteTokens",0LL},{"outputTokens",0LL},{"reasoningTokens",0LL},{"models",json::object()},{"modelCosts",json::object()}};
+   for(auto pair:std::vector<std::pair<const char *,int64_t>>{{"totalTokens",e.tokens.total()},{"inputTokens",e.tokens.input-e.tokens.cached-e.tokens.written},{"cacheReadTokens",e.tokens.cached},{"cacheWriteTokens",e.tokens.written},{"outputTokens",e.tokens.output},{"reasoningTokens",e.tokens.reasoning}})session[pair.first]=session[pair.first].get<int64_t>()+pair.second;
+   session["costUsd"]=session["costUsd"].get<double>()+e.cost;session["models"][e.model]=session["models"].value(e.model,0LL)+e.tokens.total();session["modelCosts"][e.model]=session["modelCosts"].value(e.model,0.)+e.cost;
+   if(!e.priced)session["unpricedTokens"]=session.value("unpricedTokens",0LL)+e.tokens.total();
+   if(!session.contains("modelTokenComponents"))session["modelTokenComponents"]=json::object();auto &components=session["modelTokenComponents"][e.model];if(!components.is_object())components=json::object();
+   for(auto pair:std::vector<std::pair<const char *,int64_t>>{{"totalTokens",e.tokens.total()},{"inputTokens",e.tokens.input-e.tokens.cached-e.tokens.written},{"cacheReadTokens",e.tokens.cached},{"cacheWriteTokens",e.tokens.written},{"outputTokens",e.tokens.output}})components[pair.first]=components.value(pair.first,0LL)+pair.second;
+   if(!projectId.empty()){session["projectId"]=projectId;session["projectLabel"]=label;}
+  }
+ }
+ r["projectsEnabled"]=true;r["allTimeProjectsIncomplete"]=projectsIncomplete;
+ int64_t lifetime=0;double lifetimeCost=0;for(const auto &row:hist["monthly"]){lifetime+=int64_t(number(row,"tokens"));lifetimeCost+=number(row,"cost");}
+ r["history"]["summary"]["totalTokens"]=lifetime;r["history"]["summary"]["totalCost"]=lifetimeCost;
+ if(state.updated&&!state.stale()&&!state.q.accountKey.empty()){
+  json provider={{"provider","codex"},{"accountKey","sha256:"+state.q.accountKey},{"accountLabel","Windows · "+state.q.accountKey.substr(0,6)},{"planLabel",state.q.plan},{"status","ok"},{"updatedAt",stamp(state.updated)},{"windows",json::array()}};
+  for(const auto &window:allQuotaWindows(state.q)){auto remaining=window.window.remaining;if(!std::isfinite(remaining)||remaining<0||remaining>100)continue;
+   auto minutes=window.window.minutes;if(minutes<=0)continue;const char *kind=minutes<=720?"session":minutes<=1440?"daily":minutes<=10080?"weekly":"billing";
+   provider["windows"].push_back({{"kind",kind},{"limitId",window.id},{"label",window.label},{"additional",window.id!="hour"&&window.id!="week"},{"usedPercent",100-remaining},{"remainingPercent",remaining},{"resetsAt",window.window.resets?stamp(window.window.resets):""},{"windowMinutes",minutes}});
+  }
+  if(!provider["windows"].empty())r["limits"]={{"updatedAt",stamp(state.updated)},{"providers",json::array({provider})}};
+ }
+ // Keep authoritative totals/history when a large live session list exceeds the wire budget.
+ for(auto name:{"month","today"})if(r.dump().size()>BodyLimit){auto &sessions=r[name]["sessions"];r["sessionDetailsOmitted"][name]=sessions.size();sessions=json::object();}
+ if(r.dump().size()>BodyLimit){r["allTime"]["projects"]=json::object();r["allTimeProjectsOmitted"]=true;}
  return r;
+}
+json hubNormalizeRemote(const json &stats,const json &deviceResponse,const json &history){
+ if(!stats.is_object()||!stats.contains("periods")||!stats["periods"].is_object())throw std::runtime_error("Invalid Hub stats schema");
+ json safe={{"periods",json::object()},{"devices",json::array()},{"receivedAt",stamp()}};
+ for(auto name:{"today","month","allTime"})safe["periods"][name]=period(stats["periods"].at(name));
+ auto copy=[&](json &to,const json &from,const char *key){if(from.contains(key)){try{to[key]=sanitize(from[key]);}catch(...){}}};
+ for(auto key:{"updatedAt","staleAfterMs","limits","allTimeTokensUnavailable","projectsIncomplete","historyRevision","deviceHistoryRevision","subscriptionsUpdatedAt","syncSettingsRevisions"})copy(safe,stats,key);
+ auto devices=deviceResponse.is_object()?deviceResponse.value("devices",json::array()):stats.value("devices",json::array());
+ if(!devices.is_array())throw std::runtime_error("Invalid Hub stats schema");
+ if(devices.size()>128)throw std::runtime_error("Hub array limit");
+ for(const auto &d:devices){if(!d.is_object()||!d.contains("deviceId")||!d["deviceId"].is_string())continue;json out;
+  for(auto key:{"deviceId","hostname","platform","osName","osVersion","deviceKind","agentVersion","agentRuntime","updatedAt","receivedAt","stale","ageMs","limits","trackedClients","projectsEnabled","historyAvailable","history","periodWindows","syncUploadIntervalMs","clientHealth","clientStatus","wslStatus","allTimeTokensUnavailable","allTimeProjectsIncomplete","sessionDetailsOmitted"})copy(out,d,key);
+  if(d.contains("periods")&&d["periods"].is_object()){out["periods"]=json::object();for(auto name:{"today","month","allTime"})out["periods"][name]=period(d["periods"].value(name,json::object()));}
+  if(!out.contains("stale")){bool matched=false;for(const auto &summary:stats.value("devices",json::array()))if(summary.value("deviceId",std::string())==d.value("deviceId",std::string())&&summary.contains("stale")&&summary["stale"].is_boolean()){out["stale"]=summary["stale"];matched=true;break;}if(!matched)out["stale"]=parseUsageTime(d.value("receivedAt",std::string()))+std::max(120.,number(stats,"staleAfterMs")/1000)<utcNow();}
+  safe["devices"].push_back(std::move(out));
+ }
+ if(history.is_object())safe["historyPreview"]=sanitize(history);else copy(safe,stats,"historyPreview");
+ return safe;
 }
 struct HubRuntime::Impl {
  HubSettings settings;std::string secret;fs::path directory;std::unique_ptr<HubStore> store;
- std::atomic<bool> stopping{false};std::atomic<int> streams{0};bool wsa=false;std::atomic<SOCKET> listener{INVALID_SOCKET};std::vector<std::thread> workers;std::thread collector;
+ std::atomic<bool> stopping{false};std::atomic<int> streams{0};bool wsa=false;std::atomic<SOCKET> listener{INVALID_SOCKET};std::vector<std::thread> workers;std::thread collector,receiver;std::atomic<uint64_t> version{0};std::atomic<bool> refreshWanted{false};State latestState;
  mutable std::mutex lock;json remote;std::wstring message=L"仅本机";
- void setMessage(std::wstring text){std::lock_guard<std::mutex> g(lock);message=std::move(text);}
+ void setMessage(std::wstring text){std::lock_guard<std::mutex> g(lock);if(message!=text){message=std::move(text);++version;}}
  static bool sendAll(SOCKET s,const std::string &text){size_t n=0;auto deadline=GetTickCount64()+5000;while(n<text.size()){if(GetTickCount64()>deadline)return false;int k=send(s,text.data()+n,int(std::min<size_t>(16384,text.size()-n)),0);if(k<=0)return false;n+=size_t(k);}return true;}
  void connection(SOCKET s){DWORD timeout=2500;setsockopt(s,SOL_SOCKET,SO_RCVTIMEO,reinterpret_cast<char *>(&timeout),sizeof(timeout));setsockopt(s,SOL_SOCKET,SO_SNDTIMEO,reinterpret_cast<char *>(&timeout),sizeof(timeout));
   const auto deadline=GetTickCount64()+5000;auto reply=[&](int status,const json &j){auto body=j.dump();sendAll(s,"HTTP/1.1 "+std::to_string(status)+" Result\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: "+std::to_string(body.size())+"\r\n\r\n"+body);};
@@ -265,27 +333,59 @@ struct HubRuntime::Impl {
     if(streams.fetch_add(1)>=4){--streams;reply(503,{{"error","stream_limit"}});return;}struct Slot{std::atomic<int>&n;~Slot(){--n;}}slot{streams};if(!sendAll(s,"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"))return;std::string previous;int tick=0;while(!stopping){json stats;{std::lock_guard<std::mutex>g(lock);stats=store->stats();}auto comparable=stats;comparable.erase("updatedAt");for(auto &d:comparable["devices"])d.erase("ageMs");auto payload=comparable.dump();if(payload!=previous){if(!sendAll(s,"event: "+std::string(previous.empty()?"snapshot":"stats")+"\ndata: "+json({{"stats",stats}}).dump()+"\n\n"))return;previous=payload;}else if(++tick%30==0&&!sendAll(s,": hb\n\n"))return;for(int n=0;n<10&&!stopping;++n)Sleep(100);}return;
    }
    auto body=request.substr(end+4);while(body.size()<length){if(stopping||GetTickCount64()>deadline)return;int n=recv(s,b,int(std::min<size_t>(sizeof(b),length-body.size())),0);if(n<=0)return;body.append(b,n);}json j=length?json::parse(body.substr(0,length),nullptr,false):json();if(j.is_discarded()){reply(400,{{"error","invalid_json"}});return;}
-   HubResponse result;{std::lock_guard<std::mutex>g(lock);result=store->request(method,path,j);}reply(result.status,result.body);
+   HubResponse result;{std::lock_guard<std::mutex>g(lock);result=store->request(method,path,j);if(method=="POST"&&result.status==200)++this->version;}reply(result.status,result.body);
   }catch(...){reply(400,{{"error","invalid_request"}});}
  }
  void serve(){while(!stopping){auto s=listener.load();if(s==INVALID_SOCKET)break;fd_set f;FD_ZERO(&f);FD_SET(s,&f);timeval t{0,200000};if(select(0,&f,nullptr,nullptr,&t)<=0)continue;SOCKET c=accept(s,nullptr,nullptr);if(c==INVALID_SOCKET)continue;u_long blocking=0;ioctlsocket(c,FIONBIO,&blocking);connection(c);closesocket(c);}}
- void upload(const json &snapshot){if(settings.mode==2){std::lock_guard<std::mutex>g(lock);auto result=store->request("POST","/api/ingest",snapshot);if(result.status==200){message=L"Hub 已启动";return;}throw std::runtime_error(result.status==507?"Hub storage full":"Hub snapshot rejected");}else{if(snapshot.dump().size()>BodyLimit)throw std::runtime_error("Snapshot too large");auto uploaded=hubHttp(settings.url,secret,"POST","/api/ingest",snapshot);if(stopping)throw std::runtime_error("Hub stopped");if(uploaded.status==401)throw std::runtime_error("Hub secret rejected");if(uploaded.status==400)throw std::runtime_error("Hub snapshot rejected");if(uploaded.status==413)throw std::runtime_error("Hub payload too large");if(uploaded.status==507)throw std::runtime_error("Hub storage full");if(uploaded.status!=200)throw std::runtime_error("Hub ingest failed");auto fetched=hubHttp(settings.url,secret,"GET","/api/stats");if(stopping)throw std::runtime_error("Hub stopped");if(fetched.status==401)throw std::runtime_error("Hub secret rejected");if(fetched.status!=200)throw std::runtime_error("Hub stats rejected");auto history=hubHttp(settings.url,secret,"GET","/api/history");if(stopping)throw std::runtime_error("Hub stopped");if(history.status==200)fetched.body["historyPreview"]=history.body;std::lock_guard<std::mutex>g(lock);if(!fetched.body.is_object()||!fetched.body.contains("periods")||!fetched.body["periods"].is_object()||!fetched.body.value("devices",json::array()).is_array())throw std::runtime_error("Invalid Hub stats schema");
- json safe={{"periods",json::object()},{"devices",json::array()}};for(auto name:{"today","month","allTime"})safe["periods"][name]=period(fetched.body["periods"].at(name));
- for(const auto &d:fetched.body.value("devices",json::array())){if(!d.is_object())continue;safe["devices"].push_back({{"deviceId",d.value("deviceId",std::string())},{"hostname",d.value("hostname",std::string())},{"stale",d.value("stale",false)}});}
- if(fetched.body.contains("historyPreview")&&fetched.body["historyPreview"].is_object())safe["historyPreview"]=sanitize(fetched.body["historyPreview"]);
- remote=std::move(safe);saveAnalyticsJson(directory/L"hub-remote-cache.json",{{"schema",1},{"origin",settings.url},{"stats",remote}});message=L"已连接 Hub";}}
- void collect(){std::atomic<bool> cancel{false};while(!stopping){try{UsageScanOptions o;o.cache=directory/L"hub-scan-cache.json";auto report=scanCodexUsage(o,stopping);if(stopping)break;if(report.pending){setMessage(L"正在补齐本地历史，保留上次同步结果");for(int n=0;n<15&&!stopping;++n)Sleep(100);continue;}auto retained=hubRetainUsage(report,directory/L"hub-local-history.json");auto snapshot=hubLocalSnapshot(retained,State{},settings.deviceId);upload(snapshot);}catch(const std::exception &e){setMessage(L"同步失败："+explain(e.what())+L"；保留上次结果");}catch(...){setMessage(L"同步失败，请检查网络、配置或存储空间；保留上次结果");}for(int n=0;n<100&&!stopping;++n)Sleep(100);}}
+ void receive(){
+  auto fetched=hubHttp(settings.url,secret,"GET","/api/stats");
+  if(stopping)throw std::runtime_error("Hub stopped");
+  if(fetched.status==401)throw std::runtime_error("Hub secret rejected");
+  if(fetched.status!=200)throw std::runtime_error("Hub stats rejected");
+  json devices,history;
+  try{auto d=hubHttp(settings.url,secret,"GET","/api/devices");if(d.status==200)devices=d.body;}catch(...){}
+  try{auto h=hubHttp(settings.url,secret,"GET","/api/history");if(h.status==200)history=h.body;}catch(...){}
+  if(stopping)throw std::runtime_error("Hub stopped");
+  auto safe=hubNormalizeRemote(fetched.body,devices,history);
+  saveAnalyticsJson(directory/L"hub-remote-cache.json",{{"schema",1},{"origin",settings.url},{"stats",safe}});
+  std::lock_guard<std::mutex>g(lock);remote=std::move(safe);message=L"已接收 "+std::to_wstring(remote["devices"].size())+L" 台设备的统计";++version;
+ }
+ void receiveLoop(){while(!stopping){try{receive();}catch(const std::exception &e){setMessage(L"接收失败："+explain(e.what())+L"；保留上次结果");}catch(...){setMessage(L"接收失败；保留上次结果");}
+  for(int n=0;n<100&&!stopping&&!refreshWanted;++n)Sleep(100);refreshWanted=false;
+ }}
+ void upload(const json &snapshot){
+  if(settings.mode==2){std::lock_guard<std::mutex>g(lock);auto result=store->request("POST","/api/ingest",snapshot);if(result.status==200){message=L"Hub 已启动";++version;return;}throw std::runtime_error(result.status==507?"Hub storage full":"Hub snapshot rejected");}
+  if(snapshot.dump().size()>BodyLimit)throw std::runtime_error("Snapshot too large");
+  auto result=hubHttp(settings.url,secret,"POST","/api/ingest",snapshot);
+  if(stopping)throw std::runtime_error("Hub stopped");
+  if(result.status==401)throw std::runtime_error("Hub secret rejected");
+  if(result.status==400)throw std::runtime_error("Hub snapshot rejected");
+  if(result.status==413)throw std::runtime_error("Hub payload too large");
+  if(result.status==507)throw std::runtime_error("Hub storage full");
+  if(result.status!=200)throw std::runtime_error("Hub ingest failed");
+ }
+ void collect(){while(!stopping){try{
+  UsageScanOptions options;options.cache=directory/L"hub-scan-cache.json";
+  auto report=scanCodexUsage(options,stopping);if(stopping)break;
+  if(!report.pending){auto retained=hubRetainUsage(report,directory/L"hub-local-history.json");State state;{std::lock_guard<std::mutex>g(lock);state=latestState;}upload(hubLocalSnapshot(retained,state,settings.deviceId));}
+ }catch(const std::exception &e){setMessage(L"上传失败："+explain(e.what())+L"；远端读取继续");}catch(...){setMessage(L"本机采集失败；远端读取继续");}
+  for(int n=0;n<100&&!stopping;++n)Sleep(100);
+ }}
 };
 HubRuntime::HubRuntime():impl(std::make_unique<Impl>()){}
 HubRuntime::~HubRuntime(){stop();}
-void HubRuntime::stop(){impl->stopping=true;auto s=impl->listener.exchange(INVALID_SOCKET);if(s!=INVALID_SOCKET)closesocket(s);if(impl->collector.joinable())impl->collector.join();for(auto &w:impl->workers)if(w.joinable())w.join();impl->workers.clear();if(impl->wsa){WSACleanup();impl->wsa=false;}}
-void HubRuntime::start(const HubSettings &s,const std::string &secret,const fs::path &dir,bool fixture){try{validateHubSettings(s,secret,fixture);}catch(...){impl->setMessage(L"同步配置无效，请重新应用设置");throw;}stop();impl->remote=json();impl->store.reset();impl->settings=s;impl->secret=secret;impl->directory=dir;if(!s.mode){impl->setMessage(L"仅本机");return;}impl->stopping=false;if(s.mode==1){auto cached=read(dir/L"hub-remote-cache.json",32*1024*1024);if(cached.is_object()&&cached.value("schema",0)==1&&cached.value("origin",std::string())==s.url&&cached.contains("stats")&&cached["stats"].is_object())impl->remote=cached["stats"];impl->setMessage(L"正在连接 Hub；显示上次缓存");}try{
+void HubRuntime::stop(){impl->stopping=true;auto s=impl->listener.exchange(INVALID_SOCKET);if(s!=INVALID_SOCKET)closesocket(s);if(impl->collector.joinable())impl->collector.join();if(impl->receiver.joinable())impl->receiver.join();for(auto &w:impl->workers)if(w.joinable())w.join();impl->workers.clear();if(impl->wsa){WSACleanup();impl->wsa=false;}}
+void HubRuntime::start(const HubSettings &s,const std::string &secret,const fs::path &dir,bool fixture){try{validateHubSettings(s,secret,fixture);}catch(...){impl->setMessage(L"同步配置无效，请重新应用设置");throw;}stop();impl->remote=json();impl->store.reset();impl->settings=s;impl->secret=secret;impl->directory=dir;if(!s.mode){impl->setMessage(L"仅本机");return;}impl->stopping=false;impl->refreshWanted=false;++impl->version;if(s.mode==1){auto cached=read(dir/L"hub-remote-cache.json",32*1024*1024);if(cached.is_object()&&cached.value("schema",0)==1&&cached.value("origin",std::string())==s.url&&cached.contains("stats")&&cached["stats"].is_object())impl->remote=cached["stats"];impl->setMessage(L"正在连接 Hub；显示上次缓存");}try{
  if(s.mode==2){WSADATA data{};if(WSAStartup(MAKEWORD(2,2),&data))throw std::runtime_error("Network unavailable");impl->wsa=true;impl->store=std::make_unique<HubStore>(dir/L"hub-devices.json");SOCKET socket=::socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);if(socket==INVALID_SOCKET)throw std::runtime_error("Cannot create Hub socket");BOOL exclusive=TRUE;setsockopt(socket,SOL_SOCKET,SO_EXCLUSIVEADDRUSE,reinterpret_cast<char *>(&exclusive),sizeof(exclusive));sockaddr_in address{};address.sin_family=AF_INET;address.sin_addr.s_addr=fixture?htonl(INADDR_LOOPBACK):INADDR_ANY;address.sin_port=htons(u_short(s.port));if(bind(socket,reinterpret_cast<sockaddr *>(&address),sizeof(address))||listen(socket,16)){closesocket(socket);throw std::runtime_error("Hub port unavailable");}int addressLength=sizeof(address);getsockname(socket,reinterpret_cast<sockaddr *>(&address),&addressLength);impl->settings.port=ntohs(address.sin_port);u_long nonblocking=1;ioctlsocket(socket,FIONBIO,&nonblocking);impl->listener=socket;for(int n=0;n<8;++n)impl->workers.emplace_back([this]{impl->serve();});impl->setMessage(L"Hub 已启动");}
- if(!fixture)impl->collector=std::thread([this]{impl->collect();});
+ if(!fixture){if(s.mode==1)impl->receiver=std::thread([this]{impl->receiveLoop();});impl->collector=std::thread([this]{impl->collect();});}
  }catch(...){stop();impl->setMessage(L"Hub 启动失败，请检查设置和端口");throw;}
 }
 int HubRuntime::port()const{return impl->settings.port;}
-void HubRuntime::publish(const json &j){impl->upload(j);}
+void HubRuntime::publish(const json &j){impl->upload(j);if(impl->settings.mode==1)impl->receive();}
+void HubRuntime::refresh(){if(impl->settings.mode==1)impl->receive();}
+void HubRuntime::observe(const State &state){std::lock_guard<std::mutex>g(impl->lock);impl->latestState=state;}
+uint64_t HubRuntime::revision()const{return impl->version.load();}
+void HubRuntime::requestRefresh(){impl->refreshWanted=true;}
 json HubRuntime::view()const{std::lock_guard<std::mutex>g(impl->lock);if(impl->settings.mode==2&&impl->store){auto view=impl->store->stats();view["historyPreview"]=impl->store->history();return view;}return impl->remote;}
 std::wstring HubRuntime::status()const{std::lock_guard<std::mutex>g(impl->lock);return impl->message;}
 }

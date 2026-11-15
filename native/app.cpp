@@ -315,8 +315,11 @@ void Overlay::update(const State &value) {
         showDetails();
 }
 void Overlay::hideDetails() {
-    if (details)
+    if (details) {
+        KillTimer(details, 1);
         ShowWindow(details, SW_HIDE);
+    }
+    codexCard.todayTokens = {};
     detailFrost.reset();
     detailImage.reset();
     chartHover = -1;
@@ -335,6 +338,8 @@ void Overlay::showDetails(const fs::path &capture) {
         showDeepSeekDetails(capture);
         return;
     }
+    bool opening = !IsWindowVisible(details);
+    if (opening) codexCard.todayTokens = {};
     float d = monitor.dpi / 96.f;
     int width = int(440 * d), height = int(quotaCardHeight(state, settings,
         int((monitor.work.bottom - monitor.work.top) / d) - 24, codexCard.history) * d);
@@ -345,7 +350,7 @@ void Overlay::showDetails(const fs::path &capture) {
     app->refreshPopupUsage();
     bool simulated = app->testing || app->preview || !capture.empty();
     if (simulated && !detailFrost) detailFrost = previewFrost(width, height);
-    detailBackdrop = configureBackdrop(details, settings.darkAppearance);
+    if (opening) detailBackdrop = configureBackdrop(details, settings.darkAppearance);
     const auto &colors = glassPalette(settings.darkAppearance);
     auto rendered = std::make_unique<Surface>(width, height);
     auto &image = *rendered;
@@ -357,11 +362,14 @@ void Overlay::showDetails(const fs::path &capture) {
         if (simulated) paintFrost(g, glass, 16 * d, colors, detailFrost.get(), glass);
         else paintBackdrop(g, colors, detailBackdrop);
         g.ScaleTransform(d, d);
-        paintQuotaCard(g, width / d, height / d, state, settings, app->quotaHistory, codexCard, simulated, &app->popupUsage);
+        paintQuotaCard(g, width / d, height / d, state, settings, app->quotaHistory, codexCard, simulated, &app->popupUsage,
+                       -1, capture.empty());
     }
     if (!capture.empty())
         image.save(capture);
     presentDetails(std::move(rendered), left, top);
+    if (codexCard.todayTokens.running(GetTickCount64())) SetTimer(details, 1, 16, nullptr);
+    else KillTimer(details, 1);
 }
 void Overlay::tick(const POINT *simulatedPointer) {
     if (blocked || slideStart >= 0) {
@@ -478,6 +486,11 @@ LRESULT CALLBACK Overlay::detailProcedure(HWND w, UINT msg, WPARAM wp, LPARAM lp
     if (msg == WM_NCCREATE)
         SetWindowLongPtrW(w, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams));
     auto self = reinterpret_cast<Overlay *>(GetWindowLongPtrW(w, GWLP_USERDATA));
+    if (self && self->kind == WidgetKind::Codex && msg == WM_TIMER && wp == 1) {
+        if (IsWindowVisible(w)) self->showDetails();
+        else KillTimer(w, 1);
+        return 0;
+    }
     if (self && self->kind == WidgetKind::Codex && msg == WM_LBUTTONUP) {
         float d = self->monitor.dpi / 96.f;
         for (const auto &hit : self->codexCard.hits) if (hit.rect.Contains(GET_X_LPARAM(lp) / d, GET_Y_LPARAM(lp) / d)) {
@@ -581,6 +594,7 @@ Application::Application(bool previewMode, bool test) : preview(previewMode), te
     if(!testing&&!preview){try{hubConfig=HubSettings::load();hub.start(hubConfig,hubSecret(),dataDirectory());}catch(...){}}
     if (!testing && !preview) {
         try { quotaHistory.load(dataDirectory() / L"codex-quota-history.json"); } catch (...) {}
+        try {auto archive=dataDirectory()/L"codex-restored-data.csv";if(fs::exists(archive))mergeQuotaHistory(quotaHistory,readAnalyticsCsv(archive).history);}catch(...){}
     }
     registerClass(L"CodexQuotaBar.Native.Controller", procedure);
     controller = CreateWindowExW(WS_EX_TOOLWINDOW, L"CodexQuotaBar.Native.Controller",
@@ -898,6 +912,7 @@ void Application::runTaskbarWorker() {
     if (SUCCEEDED(initialized)) CoUninitialize();
 }
 void Application::apply(const State &value) {
+    hub.observe(value);
     quotaHistory.observe(value);
     bool layoutChanged = value.active != state.active ||
                          settings.visibility(value.q) != settings.visibility(state.q);

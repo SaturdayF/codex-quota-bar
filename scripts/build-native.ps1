@@ -14,7 +14,7 @@ try {
     $signatureFile = Join-Path $output 'build-options.txt'
     $sameOptions = (Test-Path -LiteralPath $signatureFile) -and (Get-Content -LiteralPath $signatureFile -Raw).Trim() -eq $signature
     $headers = @(Get-ChildItem -LiteralPath . -Filter '*.hpp' -File) + @(Get-Item -LiteralPath 'vendor/json.hpp')
-    foreach ($source in @('core.cpp','hub.cpp','hub_ui.cpp','hub_tests.cpp','analytics.cpp','analytics_ui.cpp','analytics_tests.cpp','uninstall.cpp','update.cpp','update_ui_tests.cpp','taskbar.cpp','deepseek.cpp','deepseek_ui.cpp','deepseek_tests.cpp','browser_token.cpp','drawing.cpp','app.cpp','settings.cpp','platform_login.cpp','tests.cpp','glass_tests.cpp','main.cpp')) {
+    foreach ($source in @('core.cpp','hub.cpp','hub_ui.cpp','hub_tests.cpp','shared_usage.cpp','shared_usage_ui.cpp','shared_usage_tests.cpp','analytics.cpp','analytics_csv.cpp','analytics_ui.cpp','analytics_tests.cpp','uninstall.cpp','update.cpp','update_ui_tests.cpp','taskbar.cpp','deepseek.cpp','deepseek_ui.cpp','deepseek_tests.cpp','browser_token.cpp','drawing.cpp','app.cpp','settings.cpp','platform_login.cpp','tests.cpp','glass_tests.cpp','main.cpp')) {
         $object = Join-Path $output ($source + '.o')
         $needsBuild = -not $sameOptions -or -not (Test-Path -LiteralPath $object)
         if (-not $needsBuild) {
@@ -33,7 +33,7 @@ try {
 } finally { Pop-Location }
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $output -Force
 Copy-Item -LiteralPath (Join-Path $root 'native/vendor/LICENSE-json.txt') -Destination (Join-Path $output 'LICENSE-json.txt') -Force
-'{"version":"0.4.2","runtime":"native-win32","architecture":"x64"}' | Set-Content -LiteralPath (Join-Path $output 'version.json') -Encoding UTF8
+'{"version":"0.4.3","runtime":"native-win32","architecture":"x64"}' | Set-Content -LiteralPath (Join-Path $output 'version.json') -Encoding UTF8
 Copy-Item -LiteralPath (Join-Path $root 'native/USER_GUIDE.md') -Destination (Join-Path $output 'README.md') -Force
 Copy-Item -LiteralPath (Join-Path $root 'CHANGELOG.md') -Destination $output -Force
 $manifestFiles = [ordered]@{}

@@ -198,6 +198,16 @@ struct SettingsWindow {
     std::future<fs::path> updateDownload;
     UsageReport usageReport;
     UsageView usageView;
+    std::string usageSource;
+    std::vector<std::string> usageSources;
+    json sharedUsage, sharedRows;
+    uint64_t usageHubRevision = UINT64_MAX;
+    int sharedPeriod = 0;
+    void syncUsageSources(bool force = false);
+    void prepareSharedUsage();
+    void drawSharedUsage(Graphics &g, const GlassPalette &colors);
+    void sharedUsageCommand(int id);
+    void sharedUsageClick(float x,float y);
     std::future<UsageReport> usageTask;
     std::atomic<bool> usageCancel{false};
     ULONGLONG usageNextScan = 0;

@@ -71,6 +71,12 @@ public:
     json toJson() const;
     void load(const fs::path &file);
 };
+struct AnalyticsBackup { UsageReport usage; QuotaHistory history; };
+void writeAnalyticsCsv(const fs::path &file, const AnalyticsBackup &backup);
+AnalyticsBackup readAnalyticsCsv(const fs::path &file);
+void mergeUsageReport(UsageReport &current, const UsageReport &restored);
+void mergeQuotaHistory(QuotaHistory &current, const QuotaHistory &restored);
+int analyticsCsvTests(std::ostream &log, const fs::path &fixture);
 void saveAnalyticsJson(const fs::path &file, const json &value);
 std::vector<NamedQuota> allQuotaWindows(const Quotas &q, bool hour = true, bool week = true);
 int analyticsTests(std::ostream &log, const fs::path &fixture);

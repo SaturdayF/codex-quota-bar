@@ -97,6 +97,7 @@ int analyticsTests(std::ostream &log,const fs::path &rootFixture) {
     check(restored.samples.size()==history.samples.size()&&!restored.dirty,"quota history atomically persists and restores validated samples");
     check(!history.toJson().dump().empty()&&history.toJson().dump().find("synthetic-account")==std::string::npos,"quota history never persists raw account identifiers");
     UsageReport empty;check(empty.total().tokens.total()==0&&empty.total().sessions.empty(),"empty usage aggregation stays empty");
+    checks+=analyticsCsvTests(log,fixture);
     return checks;
 }
 } // namespace quota
