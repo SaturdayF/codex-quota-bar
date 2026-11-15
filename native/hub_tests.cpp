@@ -38,6 +38,8 @@ int hubTests(std::ostream &log,const fs::path &dir){
  HubSettings clientCfg;clientCfg.mode=1;clientCfg.deviceId="fixture-client";clientCfg.url=url;auto clientDir=dir/(L"client-"+std::to_wstring(GetCurrentProcessId()));HubRuntime client;client.start(clientCfg,"synthetic-test-secret-only",clientDir,true);auto clientBody=body;clientBody["deviceId"]="fixture-client";clientBody["allTime"]["totalTokens"]=500;client.publish(clientBody);check(client.view()["periods"]["allTime"]["totalTokens"]==1500,"native client uploads and reads the shared aggregate through HTTP");
  runtime.stop();check(true,"Hub shuts down all idle socket workers");
  bool offline=false;try{client.publish(clientBody);}catch(...){offline=true;}check(offline&&client.view()["periods"]["allTime"]["totalTokens"]==1500,"network failure preserves the last successful aggregate");client.stop();client.start(clientCfg,"synthetic-test-secret-only",clientDir,true);check(client.view()["periods"]["allTime"]["totalTokens"]==1500,"client restores its cached aggregate after restarting offline");client.stop();
+ check(!usableHubAddress(0xC6120001u)&&!usableHubAddress(0xA9FE0101u)&&usableHubAddress(0x0A55EF10u),"virtual and link-local addresses are not offered as Hub addresses");
+ check(hubAddressRank(L"Realtek PCIe GbE Family Controller")<hubAddressRank(L"Mihomo")&&hubAddressRank(L"Tailscale Tunnel")<hubAddressRank(L"vEthernet (WSL)"),"physical and VPN adapters are offered before virtual ones");
  log<<count<<" Hub checks passed.\n";return count;
 }
 }

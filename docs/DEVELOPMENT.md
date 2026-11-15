@@ -84,6 +84,8 @@ Start-Process $app -ArgumentList '--ui-test-synthetic --output codex_tmp/ui-synt
 
 `--self-test` 包含 `native/analytics_tests.cpp` 的日志、定价、缓存及历史归属检查。`--analytics-ui-test` 使用模拟数据生成原生预览。`--analytics-glass-test` 只对隔离背景窗口上的新页面/浮窗采样，需正常桌面合成环境；检查窗口背景是否实时变化。`--ui-test-synthetic` 显式跳过原有实时合成测试，继续执行其余原生 UI 检查；默认 `--ui-test` 仍包含全部严格检查。验证记录留在 `codex_tmp/`。
 
+`--update-ui-test --output codex_tmp/update-ui` 使用模拟下载任务检查真实按钮的百分比、悬停取消、移出恢复、点击取消及完成交接前的取消清理，并导出浅色/深色预览；不访问网络或执行安装。下载线程只写原子进度，按钮由 UI 线程刷新。
+
 0.3.6 通过 472 项核心检查与 54 项 DeepSeek UI 检查。检查覆盖额度解析、配置、子进程通信、多 DPI 绘图、滚动重绘、悬浮与右键、布局避让、拖动交换和会话取消；DeepSeek 覆盖北京时间小时分桶、凭证弹窗生命周期、Edge 本地存储、自动保存与失败处理及 DSH 标识。集成测试覆盖自定义路径安装、安装版卸载、便携版卸载及无关文件保留。完整 UI 回归需在常规桌面环境执行，本机虚拟显示会限制实时毛玻璃验证。
 
 UI 与协议回归使用模拟数据。安装卸载测试使用独立目录，禁止对用户真实安装进行卸载测试。
@@ -95,7 +97,7 @@ UI 与协议回归使用模拟数据。安装卸载测试使用独立目录，�
 发布前核对版本、ZIP 内容、PE 系统依赖和 SHA-256。发布脚本校验远端标签指向及上传文件摘要。已发布标签和下载文件保持固定，后续功能修改使用新版本。
 
 ```powershell
-python scripts/github-release.py v0.3.4 <commit> <setup> <zip> <sha256-file>
+python scripts/github-release.py v0.4.2 <commit> <setup> <zip> <sha256-file>
 ```
 
 ## 验证范围

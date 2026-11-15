@@ -11,6 +11,30 @@ void divider(Graphics &g,const GlassPalette &c,float y,float width) { Pen p(c.bo
 void quietButton(Graphics &g,RectF r,const std::wstring &label,const GlassPalette &c,bool selected=false,float size=13) {
     fillRound(g,r,6,selected?c.active:c.hover);drawUiText(g,label,r,size,c.ink,selected,true);
 }
+std::wstring exactTokens(int64_t count){auto value=std::to_wstring(count);for(int i=int(value.size())-3;i>0;i-=3)value.insert(size_t(i),L",");return value;}
+void usageTip(Graphics &g,RectF rect,const std::wstring &text,const GlassPalette &colors){
+    drawUiText(g,text,RectF(rect.X+9,rect.Y+3,rect.Width-18,rect.Height-6),11,colors.ink,false,true);
+}
+void smoothLine(Graphics &g,const std::vector<PointF> &samples,Color color,float width=2.2f) {
+    std::vector<PointF> points;
+    for(const auto &p:samples){if(points.empty()||p.X>points.back().X)points.push_back(p);else if(p.X==points.back().X)points.back()=p;}
+    if(points.empty())return;
+    if(points.size()==1){SolidBrush dot(color);g.FillEllipse(&dot,points[0].X-1.5f,points[0].Y-1.5f,3.f,3.f);return;}
+    std::vector<float> slope(points.size()-1),tangent(points.size());
+    for(size_t i=0;i<slope.size();++i)slope[i]=(points[i+1].Y-points[i].Y)/(points[i+1].X-points[i].X);
+    tangent.front()=slope.front();tangent.back()=slope.back();
+    for(size_t i=1;i+1<points.size();++i)tangent[i]=slope[i-1]*slope[i]<=0?0:2*slope[i-1]*slope[i]/(slope[i-1]+slope[i]);
+    // Limit tangents to keep monotone intervals within their observed range.
+    for(size_t i=0;i<slope.size();++i){if(slope[i]==0){tangent[i]=tangent[i+1]=0;continue;}
+        float a=tangent[i]/slope[i],b=tangent[i+1]/slope[i],norm=a*a+b*b;
+        if(norm>9){float scale=3/std::sqrt(norm);tangent[i]*=scale;tangent[i+1]*=scale;}
+    }
+    GraphicsPath path;
+    for(size_t i=1;i<points.size();++i){auto a=points[i-1],b=points[i];float dx=(b.X-a.X)/3;
+        path.AddBezier(a,PointF(a.X+dx,a.Y+dx*tangent[i-1]),PointF(b.X-dx,b.Y-dx*tangent[i]),b);
+    }
+    Pen pen(color,width);pen.SetStartCap(LineCapRound);pen.SetEndCap(LineCapRound);g.DrawPath(&pen,&path);
+}
 std::wstring windowValue(const WindowQuota &q) {
     if(!q.minutes)return L"--";std::wostringstream s;s<<std::fixed<<std::setprecision(0)<<q.remaining<<L"%";return s.str();
 }
@@ -43,6 +67,9 @@ void UsageView::prepare(const UsageReport &report) {
     std::sort(groups.begin(),groups.end(),[](const auto &a,const auto &b){return a.total.cost!=b.total.cost?a.total.cost>b.total.cost:a.total.tokens.total()>b.total.tokens.total();});
 }
 
+int usageRowsEnd(const UsageView &v){size_t first=std::min(v.groups.size(),size_t(std::max(0,v.groupPage))*5);size_t shown=std::min<size_t>(5,v.groups.size()-first);return shown?802+int(shown)*57:890;}
+int usagePageHeight(const UsageView &v,const UsageReport &r){return usageRowsEnd(v)+(v.groups.size()>5?48:0)+(r.partial||!r.error.empty()||v.total.unpriced?62:0)+86;}
+bool quotaCardHover(QuotaCardView &v,float x,float y){int day=-1;for(const auto &hit:v.hits)if(hit.action==6&&hit.rect.Contains(x,y)){day=int(hit.value);break;}if(day==v.hoveredDay)return false;v.hoveredDay=day;return true;}
 void SettingsWindow::startUsageScan() {
     if(usageTask.valid())return;
     if(simulatedGlass){usageReport=demoUsageReport(utcNow());usageView.dirty=true;return;}
@@ -122,15 +149,37 @@ void SettingsWindow::drawUsage(Graphics &g,const GlassPalette &c) {
     if(!usageView.bins.empty()){
         float step=plot.Width/usageView.bins.size(),bw=std::min(32.f,step*.64f);
         int labelsEvery=usageView.bins.size()<=7?1:usageView.hourly?6:int(std::ceil(usageView.bins.size()/5.));
-        for(size_t i=0;i<usageView.bins.size();++i){const auto &b=usageView.bins[i];double value=usageView.tokens?double(b.total.tokens.total()):b.total.cost;float x=plot.X+step*i+(step-bw)/2,h=float(value/ceiling*plot.Height);
-            if(h>0)fillRound(g,RectF(x,plot.GetBottom()-h,bw,std::max(1.f,h)),2,int(i)==usageView.hovered?blue:green);
-            else if(!usageView.tokens&&b.total.unpriced){SolidBrush brush(c.muted);g.FillEllipse(&brush,x+bw/2-2,plot.GetBottom()-4,4.f,4.f);}
+        for(size_t i=0;i<usageView.bins.size();++i){const auto &b=usageView.bins[i];float x=plot.X+step*i+(step-bw)/2;
+            if(!usageView.tokens&&b.total.unpriced){SolidBrush brush(c.muted);g.FillEllipse(&brush,x+bw/2-2,plot.GetBottom()-4,4.f,4.f);}
             usageView.hits.push_back({RectF(plot.X+step*i,plot.Y,step,plot.Height+22),20,int64_t(i),{}});
             if(int(i)%labelsEvery==0||i+1==usageView.bins.size())drawUiText(g,b.label,RectF(plot.X+step*i-12,plot.GetBottom()+8,step+24,20),10.5f,c.secondary,false,true);
         }
     }
-    std::wstring inspected=usageView.hourly?usageDate(usageView.selectedDay?usageView.selectedDay:today)+L" · 每小时明细":L"移动到柱形上查看数值";
-    if(usageView.hovered>=0&&usageView.hovered<int(usageView.bins.size())){const auto &b=usageView.bins[size_t(usageView.hovered)];inspected=b.label+L" · "+costText(b.total)+L" · "+compactTokens(b.total.tokens.total())+L" Token";}
+    {
+        int64_t peak=1;for(const auto &bin:usageView.bins)peak=std::max(peak,bin.total.tokens.total());
+        if(usageView.tokens)peak=int64_t(ceiling);
+        std::vector<PointF> segment;auto stroke=[&]{smoothLine(g,segment,blue);segment.clear();};
+        float step=usageView.bins.empty()?0:plot.Width/usageView.bins.size();
+        for(size_t i=0;i<usageView.bins.size();++i){const auto &bin=usageView.bins[i];
+            bool known=(!usageReport.partial&&usageReport.oldest&&(usageView.hourly||bin.at>=localDay(usageReport.oldest)))||bin.total.requests>0||bin.total.tokens.total()>0;
+            if(!known){stroke();continue;}
+            PointF point(plot.X+step*(i+.5f),plot.GetBottom()-plot.Height*float(double(bin.total.tokens.total())/peak));segment.push_back(point);
+        }stroke();
+        drawUiText(g,(usageView.hourly?L"蓝线：每小时 Token · 顶部 ":L"蓝线：每日 Token · 顶部 ")+compactTokens(peak),RectF(w-290,280,290,22),10.5f,blue,false,true);
+    }
+    if(!usageView.tokens){
+        std::vector<PointF> points;auto stroke=[&]{smoothLine(g,points,green);points.clear();};float step=usageView.bins.empty()?0:plot.Width/usageView.bins.size();
+        for(size_t i=0;i<usageView.bins.size();++i){const auto &bin=usageView.bins[i];if((usageReport.partial&&!bin.total.requests)||bin.total.unpriced){stroke();continue;}
+            points.emplace_back(plot.X+step*(i+.5f),plot.GetBottom()-plot.Height*float(bin.total.cost/ceiling));
+        }stroke();
+    }
+    std::wstring inspected=usageView.hourly?usageDate(usageView.selectedDay?usageView.selectedDay:today)+L" · 每小时明细":L"移动到曲线上查看当日数值";
+    if(usageView.hovered>=0&&usageView.hovered<int(usageView.bins.size())){const auto &b=usageView.bins[size_t(usageView.hovered)];inspected=b.label+L" · "+costText(b.total)+L" · "+exactTokens(b.total.tokens.total())+L" Token";if(usageReport.partial&&!b.total.requests&&!b.total.tokens.total())inspected=b.label+L" · 未覆盖记录";}
+    if(usageView.hovered>=0&&usageView.hovered<int(usageView.bins.size())){
+        const auto &bin=usageView.bins[size_t(usageView.hovered)];bool known=(!usageReport.partial&&usageReport.oldest&&(usageView.hourly||bin.at>=localDay(usageReport.oldest)))||bin.total.requests>0||bin.total.tokens.total()>0;
+        float x=plot.X+plot.Width*(usageView.hovered+.5f)/usageView.bins.size();Pen marker(blue,1);marker.SetDashStyle(DashStyleDash);g.DrawLine(&marker,x,plot.Y,x,plot.GetBottom());
+        usageTip(g,RectF(std::clamp(x-160,plot.X,plot.GetRight()-320),plot.Y+4,320,30),bin.label+L" · "+(known?exactTokens(bin.total.tokens.total())+L" Token":L"未覆盖记录"),c);
+    }
     drawUiText(g,inspected,RectF(43,480,w-43,22),11,c.secondary);
     divider(g,c,516,w);drawHeading(g,L"Token 活跃度",RectF(0,528,200,27),16,c.ink);drawUiText(g,L"过去一年 · 本地记录",RectF(w-200,530,200,24),11,c.secondary,false,true);
     constexpr int weeks=53;float gap=3,cw=std::max(3.f,(w-28-gap*(weeks-1))/weeks),ch=std::min(10.f,cw);float heatY=586;
@@ -169,68 +218,115 @@ void SettingsWindow::drawUsage(Graphics &g,const GlassPalette &c) {
         drawUiText(g,costText(row.total),RectF(w*.78f,rowY+12,w*.22f,25),12,c.ink,false,true);
         usageView.hits.push_back({RectF(0,rowY,w,54),22,int64_t(i),row.key});rowY+=57;
     }
-    if(!shown){drawUiText(g,usageTask.valid()?L"正在读取本地会话日志…":usageReport.error.empty()?L"所选日期没有可统计的本地记录。":usageReport.error,RectF(0,823,w,60),14,c.secondary,false,true);rowY=900;}
-    if(usageView.groups.size()>5)drawUiText(g,L"第 "+std::to_wstring(usageView.groupPage+1)+L" / "+std::to_wstring((usageView.groups.size()+4)/5)+L" 页 · 共 "+std::to_wstring(usageView.groups.size())+L" 项",RectF(0,1102,w-210,24),11,c.secondary);
-    rowY=std::max(rowY,1140.f);
+    if(!shown){drawUiText(g,usageTask.valid()?L"正在读取本地会话日志…":usageReport.error.empty()?L"所选日期没有可统计的本地记录。":usageReport.error,RectF(0,823,w,60),14,c.secondary,false,true);rowY=890;}
+    rowY=float(usageRowsEnd(usageView));
+    if(usageView.groups.size()>5){drawUiText(g,L"第 "+std::to_wstring(usageView.groupPage+1)+L" / "+std::to_wstring((usageView.groups.size()+4)/5)+L" 页",RectF(0,rowY+10,w-210,24),11,c.secondary);rowY+=48;}
     if(usageReport.partial||!usageReport.error.empty()||t.unpriced){
-        auto status=!usageReport.error.empty()?usageReport.error:usageReport.pending?L"正在补齐本地历史，还有 "+std::to_wstring(usageReport.pending)+L" 个文件。":t.unpriced?L"部分记录价格未知，费用仅包含已定价部分。":L"部分记录无法完整解析，统计可能不完整。";
-        drawUiText(g,status,RectF(0,rowY+28,w,40),11,c.warning);
+        auto status=!usageReport.error.empty()?usageReport.error:usageReport.pending?L"正在补齐本地历史记录。":t.unpriced?L"部分记录价格未知，费用仅包含已定价部分。":L"部分记录无法完整解析，统计可能不完整。";
+        drawUiText(g,status,RectF(0,rowY+10,w,40),11,c.warning);rowY+=62;
     }
-    divider(g,c,rowY+79,w);drawUiText(g,L"本地记录的标准 API 等价估算，非订阅实际扣费。",RectF(0,rowY+89,w,22),11,c.secondary);
-    drawUiText(g,L"缓存为输入子集，推理为输出子集。单价核对：2026-11-14。",RectF(0,rowY+112,w,22),11,c.secondary);
+    divider(g,c,rowY+12,w);drawUiText(g,L"本地记录的标准 API 等价估算，非订阅实际扣费。",RectF(0,rowY+22,w,22),11,c.secondary);
+    drawUiText(g,L"缓存为输入子集，推理为输出子集。单价核对：2026-11-14。",RectF(0,rowY+45,w,22),11,c.secondary);
+
 }
 
 int quotaCardHeight(const State &s,const Settings &settings,int maximum,bool history) {
-    return std::min(maximum,std::max(history?440:0,170+100*settings.visibility(s.q).count()+int(s.q.extraWindows.size())*68));
+    (void)settings;(void)history;return std::min(maximum,740+int(s.q.extraWindows.size())*108);
 }
-void paintQuotaCard(Graphics &g,float width,float height,const State &s,const Settings &settings,const QuotaHistory &history,QuotaCardView &view,bool simulated) {
+void paintQuotaCard(Graphics &g,float width,float height,const State &s,const Settings &settings,const QuotaHistory &history,QuotaCardView &view,bool simulated,const UsageReport *usage) {
     const auto &c=glassPalette(settings.darkAppearance);Color green=parseColor(settings.hourColor,Color(255,33,158,134)),blue=parseColor(settings.weekColor,Color(255,100,141,230));
     view.hits.clear();RectF close(width-40,12,24,25);view.hits.push_back({close,5});
-    float half=(width-40)/2;RectF current(20,50,half,29),past(20+half,50,half,29);
-    quietButton(g,current,L"当前额度",c,!view.history,12);quietButton(g,past,L"额度历史",c,view.history,12);view.hits.push_back({current,1});view.hits.push_back({past,2});
+    view.history=false;
+    drawUiText(g,L"当前额度与用量",RectF(20,50,width-40,29),13,c.secondary);
     auto visibility=settings.visibility(s.q);auto windows=allQuotaWindows(s.q,visibility.hour,visibility.week);view.windows=windows;
     if(!view.history){
+        auto body=g.Save();
+        float bodyScale=std::min(1.f,std::max(.35f,(height-170)/570));
+        g.TranslateTransform(0,94);g.ScaleTransform(1,bodyScale);g.TranslateTransform(0,-94);
         float y=94;
-        auto meter=[&](const std::wstring &label,WindowQuota q,Color accent,float yy,bool extra){
-            drawUiText(g,label,RectF(20,yy,width-130,25),extra?13:16,c.ink,!extra);
-            drawUiText(g,windowValue(q),RectF(width-112,yy-3,92,31),extra?20:24,s.stale()?c.secondary:accent,true,true);
-            fillRound(g,RectF(20,yy+32,width-40,extra?4.f:5.f),2,c.active);
-            if(q.minutes&&q.remaining>0)fillRound(g,RectF(20,yy+32,(width-40)*float(q.remaining/100),extra?4.f:5.f),2,s.stale()?c.muted:accent);
-            drawUiText(g,L"重置 "+timeLabel(q.resets),RectF(20,yy+43,width-40,21),11,c.secondary);
+        auto meter=[&](const std::wstring &label,WindowQuota q,Color accent,float x,float yy,float w,bool extra){
+            drawUiText(g,label,RectF(x,yy,w,23),extra?13:15,c.ink,!extra);
+            drawUiText(g,windowValue(q),RectF(x,yy+25,w,33),extra?20:26,s.stale()?c.secondary:accent,true);
+            fillRound(g,RectF(x,yy+65,w,4),2,c.active);
+            if(q.minutes&&q.remaining>0)fillRound(g,RectF(x,yy+65,w*float(std::clamp(q.remaining,0.,100.)/100),4),2,s.stale()?c.muted:accent);
+            drawUiText(g,L"重置 "+timeLabel(q.resets),RectF(x,yy+75,w,21),10.5f,c.secondary);
         };
-        if(visibility.hour){auto q=s.q.hour.value_or(WindowQuota{});if(s.q.hour)q.minutes=300;meter(L"5 小时",q,green,y,false);y+=100;}
-        if(visibility.week){auto q=s.q.week.value_or(WindowQuota{});if(s.q.week)q.minutes=10080;meter(L"每周",q,blue,y,false);y+=100;}
-        int capacity=std::max(0,int((height-76-y+1)/68));
+        float column=visibility.count()==2?(width-56)/2:width-40;
+        if(visibility.hour){auto q=s.q.hour.value_or(WindowQuota{});if(s.q.hour)q.minutes=300;meter(L"5 小时",q,green,20,y,column,false);}
+        if(visibility.week){auto q=s.q.week.value_or(WindowQuota{});if(s.q.week)q.minutes=10080;meter(L"每周",q,blue,visibility.hour?36+column:20,y,column,false);}
+        y+=108;
+        bool ready=usage&&usage->available;
+        UsageView trend;auto today=localDay(utcNow());
+        for(int i=-6;i<=0;++i){auto day=shiftLocalDay(today,i);trend.bins.push_back({day,usageDate(day),{}});}
+        if(ready)for(const auto &entry:usage->entries){
+            if(entry.at<trend.bins.front().at||entry.at>=shiftLocalDay(today,1))continue;
+            auto day=localDay(entry.at);auto bin=std::lower_bound(trend.bins.begin(),trend.bins.end(),day,[](const auto &a,int64_t b){return a.at<b;});
+            if(bin!=trend.bins.end()&&bin->at==day){bin->total.add(entry);trend.total.add(entry);}
+        }
+        auto total=trend.bins.back().total;
+        drawUiText(g,L"今日 Token",RectF(20,y,width/2-20,22),12,c.secondary);
+        drawUiText(g,ready?(total.overflow?L"无法汇总":compactTokens(total.tokens.total())):L"--",RectF(20,y+23,width/2-20,31),24,c.ink,true);
+        drawUiText(g,L"近 7 天 Token",RectF(width/2,y,width/2-20,22),12,c.secondary);
+        drawUiText(g,ready?(trend.total.overflow?L"无法汇总":compactTokens(trend.total.tokens.total())):L"--",RectF(width/2,y+23,width/2-20,31),24,c.ink,true);
+        drawUiText(g,ready?L"输入 "+compactTokens(total.tokens.input)+L"   ·   输出 "+compactTokens(total.tokens.output):L"正在读取本地会话用量…",RectF(20,y+59,width-40,21),11,c.secondary);
+        drawUiText(g,ready?L"缓存输入 "+compactTokens(total.tokens.cached)+L"   ·   "+std::to_wstring(total.requests)+L" 次请求":L"仅统计本机已记录的 Codex 会话",RectF(20,y+81,width-40,21),11,c.secondary);
+        y+=111;
+        drawUiText(g,L"额度历史",RectF(20,y,110,26),13,c.ink,true);
+        if(windows.empty())drawUiText(g,L"尚无可用额度窗口",RectF(20,y+38,width-40,80),12,c.secondary,false,true);
+        else {
+            view.selected=std::clamp(view.selected,0,int(windows.size())-1);const auto &selected=windows[size_t(view.selected)];
+            RectF picker(width-190,y,170,26);quietButton(g,picker,wide(selected.label)+L"  ▾",c,false,11);view.hits.push_back({RectF(picker.X,94+(picker.Y-94)*bodyScale,picker.Width,picker.Height*bodyScale),4});
+            auto samples=history.series(s.q,selected.id);RectF historyPlot(46,y+42,width-68,70);
+            Pen grid(c.border,1);for(int i=0;i<3;++i){float yy=historyPlot.GetBottom()-historyPlot.Height*i/2;g.DrawLine(&grid,historyPlot.X,yy,historyPlot.GetRight(),yy);drawUiText(g,std::to_wstring(i*50)+L"%",RectF(13,yy-9,31,18),9,c.secondary,false,true);}
+            if(samples.empty()||s.q.accountKey.empty())drawUiText(g,L"等待采样以记录额度历史",historyPlot,12,c.secondary,false,true);
+            else {
+                Pen guide(c.muted,1);guide.SetDashStyle(DashStyleDash);g.DrawLine(&guide,historyPlot.X,historyPlot.Y,historyPlot.GetRight(),historyPlot.GetBottom());
+                auto end=selected.window.resets,start=end-int64_t(selected.window.minutes)*60;std::vector<PointF> points;
+                for(const auto &sample:samples)points.emplace_back(historyPlot.X+historyPlot.Width*float(double(sample.at-start)/std::max<int64_t>(1,end-start)),historyPlot.Y+historyPlot.Height*float(1-sample.remaining/100));
+                smoothLine(g,points,blue);
+                drawUiText(g,L"采样 "+timeLabel(samples.back().at)+L" · 曲线止于采样时刻",RectF(20,y+140,width-40,20),10,c.secondary);
+                drawUiText(g,selected.window.minutes<=300?timeLabel(start,false).substr(0,5):usageDate(start),RectF(44,y+115,95,20),10,c.secondary);
+                drawUiText(g,selected.window.minutes<=300?timeLabel(end,false).substr(0,5):usageDate(end),RectF(width-112,y+115,95,20),10,c.secondary,false,true);
+            }
+            drawUiText(g,L"实线：采样间平滑连接   虚线：均匀消耗参考",RectF(20,y+160,width-40,20),10,c.secondary);
+        }
+        y+=180;
+        drawUiText(g,L"每日 Token 消耗 · 近 7 天",RectF(20,y,width-40,24),13,c.ink,true);
+        RectF plot(46,y+40,width-70,75);Pen grid(c.border,1);
+        for(int i=0;i<3;++i){float yy=plot.Y+plot.Height*i/2;g.DrawLine(&grid,plot.X,yy,plot.GetRight(),yy);}
+        if(ready&&!trend.bins.empty()){
+            int64_t peak=1;for(const auto &b:trend.bins)peak=std::max(peak,b.total.tokens.total());
+            drawUiText(g,compactTokens(peak),RectF(16,plot.Y-8,29,18),9,c.secondary);
+            drawUiText(g,L"0",RectF(20,plot.GetBottom()-9,24,18),9,c.secondary);
+            std::vector<PointF> segment;
+            auto stroke=[&]{smoothLine(g,segment,blue);segment.clear();};
+            for(size_t i=0;i<trend.bins.size();++i){const auto &b=trend.bins[i];float x=plot.X+plot.Width*i/std::max<size_t>(1,trend.bins.size()-1);
+                float left=i==0?plot.X: x-plot.Width/12, right=i+1==trend.bins.size()?plot.GetRight():x+plot.Width/12;
+                bool covered=(!usage->partial&&usage->oldest&&b.at>=localDay(usage->oldest))||b.total.requests>0||b.total.tokens.total()>0;
+                auto caption=usageDate(b.at,true)+L" · "+(covered?exactTokens(b.total.tokens.total())+L" Token":L"未覆盖记录");
+                view.hits.push_back({RectF(left,94+(plot.Y-94)*bodyScale,right-left,(plot.Height+22)*bodyScale),6,int64_t(i),utf8(caption)});
+                bool known=(!usage->partial&&usage->oldest&&b.at>=localDay(usage->oldest))||b.total.requests>0||b.total.tokens.total()>0;
+                if(!known)stroke();else {float yy=plot.GetBottom()-plot.Height*float(double(b.total.tokens.total())/peak);segment.emplace_back(x,yy);}
+                if(i==0||i==3||i+1==trend.bins.size())drawUiText(g,b.label,RectF(x-25,plot.GetBottom()+5,50,20),9.5f,c.secondary,false,true);
+            }stroke();
+        }else drawUiText(g,usage&&!usage->error.empty()?L"用量读取失败，请查看统计页":L"暂无可用的本地用量记录",plot,12,c.secondary,false,true);
+        y=plot.GetBottom()+29;
+        drawUiText(g,ready?(!usage->error.empty()?L"用量读取异常 · 显示上次统计":usage->partial||usage->pending?L"本地记录覆盖不完整 · 缓存已包含在输入中":L"本机日志统计 · 缓存已包含在输入中"):L"用量不代表订阅额度或实际账单",RectF(20,y,width-40,20),10,c.secondary);
+        y+=27;
+        int capacity=std::max(0,int(((height-76-94)/bodyScale+94-y+1)/108));
         if(!s.q.extraWindows.empty()){
             view.extraScroll=std::clamp(view.extraScroll,0,std::max(0,int(s.q.extraWindows.size())-capacity));
-            for(int i=view.extraScroll;i<int(s.q.extraWindows.size())&&i<view.extraScroll+capacity;++i){const auto &extra=s.q.extraWindows[size_t(i)];meter(wide(extra.label),extra.window,i%2?blue:green,y,true);y+=68;}
-            if(capacity<int(s.q.extraWindows.size()))drawUiText(g,L"滚轮查看其他额度",RectF(20,height-77,width-40,20),10,c.secondary);
+            for(int i=view.extraScroll;i<int(s.q.extraWindows.size())&&i<view.extraScroll+capacity;++i){const auto &extra=s.q.extraWindows[size_t(i)];meter(wide(extra.label),extra.window,i%2?blue:green,20,y,width-40,true);y+=108;}
+            if(capacity<int(s.q.extraWindows.size()))drawUiText(g,L"滚轮查看其他额度",RectF(20,(height-77-94)/bodyScale+94,width-40,20),10,c.secondary);
         }
-    }else{
-        if(windows.empty()){drawUiText(g,L"尚无可用额度窗口",RectF(20,100,width-40,80),14,c.secondary,false,true);}
-        else{
-            view.selected=std::clamp(view.selected,0,int(windows.size())-1);const auto &selected=windows[size_t(view.selected)];
-            RectF picker(width-187,92,167,29);quietButton(g,picker,wide(selected.label)+L"  ▾",c,false,12);view.hits.push_back({picker,4});
-            drawUiText(g,L"额度窗口",RectF(20,93,100,27),12,c.secondary);
-            drawUiText(g,L"剩余额度",RectF(20,133,width-130,29),13,c.ink);drawUiText(g,windowValue(selected.window),RectF(width-112,130,92,36),26,blue,true,true);
-            auto samples=history.series(s.q,selected.id);
-            RectF plot(47,184,width-68,std::max(36.f,height-330));
-            if(samples.empty()||s.q.accountKey.empty())drawUiText(g,s.q.accountKey.empty()?L"等待确认账户后记录历史":L"开始记录额度历史\n读取到额度后逐步积累采样。",RectF(20,183,width-40,plot.Height+22),13,c.secondary,false,true);
-            else{
-                Pen grid(c.border,1);for(int i=0;i<3;++i){float yy=plot.GetBottom()-plot.Height*i/2;g.DrawLine(&grid,plot.X,yy,plot.GetRight(),yy);drawUiText(g,std::to_wstring(i*50)+L"%",RectF(13,yy-10,31,20),10,c.secondary,false,true);}
-                Pen guide(c.muted,1);guide.SetDashStyle(DashStyleDash);g.DrawLine(&guide,plot.X,plot.Y,plot.GetRight(),plot.GetBottom());
-                std::vector<PointF> points;auto end=selected.window.resets,start=end-int64_t(selected.window.minutes)*60;
-                for(const auto &p:samples){float x=plot.X+plot.Width*float(double(p.at-start)/std::max<int64_t>(1,end-start));float y=plot.Y+plot.Height*float(1-p.remaining/100);points.emplace_back(x,y);}
-                Pen line(blue,2.2f);if(points.size()>1)g.DrawLines(&line,points.data(),INT(points.size()));SolidBrush dot(blue);for(const auto &p:points)g.FillEllipse(&dot,p.X-2,p.Y-2,4.f,4.f);
-                drawUiText(g,selected.window.minutes<=300?timeLabel(start,false).substr(0,5):usageDate(start),RectF(plot.X-4,plot.GetBottom()+6,95,20),10,c.secondary);
-                drawUiText(g,selected.window.minutes<=300?timeLabel(end,false).substr(0,5):usageDate(end),RectF(plot.GetRight()-90,plot.GetBottom()+6,95,20),10,c.secondary,false,true);
-                drawUiText(g,L"采样 "+timeLabel(samples.back().at)+L" · 实线止于采样时刻",RectF(20,height-111,width-40,21),10,c.secondary);
-            }
-            drawUiText(g,L"实线：已记录额度   虚线：均匀消耗参考",RectF(20,height-91,width-40,20),10,c.secondary);
-        }
+        g.Restore(body);
+    }
+    for(const auto &hit:view.hits)if(hit.action==6&&hit.value==view.hoveredDay){
+        float x=hit.rect.X+hit.rect.Width/2;Pen marker(blue,1);marker.SetDashStyle(DashStyleDash);g.DrawLine(&marker,x,hit.rect.Y,x,hit.rect.GetBottom()-15);
+        usageTip(g,RectF(std::clamp(x-160,20.f,std::max(20.f,width-340)),hit.rect.Y+3,320,29),wide(hit.key),c);break;
     }
     RectF open(20,height-57,width-40,29);quietButton(g,open,L"查看用量统计  ›",c,false,12);view.hits.push_back({open,3});
-    auto footer=simulated?L"模拟额度与历史":s.error.empty()?L"更新 "+(s.updated?timeLabel(s.updated,false):L"尚无")+L" · "+std::to_wstring(s.interval)+L" 秒刷新":s.error;
+    auto footer=simulated?L"模拟额度与 Token 数据":s.error.empty()?L"更新 "+(s.updated?timeLabel(s.updated,false):L"尚无")+L" · "+std::to_wstring(s.interval)+L" 秒刷新":s.error;
     drawUiText(g,footer,RectF(20,height-25,width-40,20),10,s.stale()?c.warning:c.secondary);
     drawHeading(g,L"Codex 额度",RectF(20,10,width-160,31),20,c.ink);drawUiText(g,s.q.planLabel(),RectF(width-139,13,85,27),13,c.secondary,false,true);drawUiText(g,L"×",close,18,c.secondary,false,true);
 }
@@ -249,30 +345,55 @@ QuotaPopup::QuotaPopup(Application *a,HWND parent,const Settings &appearance):ap
 }
 QuotaPopup::~QuotaPopup(){if(window)DestroyWindow(window);}
 void QuotaPopup::reveal(){
+    app->refreshPopupUsage();
     auto parent=GetWindow(window,GW_OWNER);RECT owner{};GetWindowRect(parent,&owner);MONITORINFO info{sizeof(info)};GetMonitorInfoW(MonitorFromWindow(parent,MONITOR_DEFAULTTONEAREST),&info);
-    dpi=GetDpiForWindow(parent);float d=dpi/96.f;int width=int(372*d),height=int(quotaCardHeight(app->state,settings,int((info.rcWork.bottom-info.rcWork.top)/d)-40,view.history)*d);
+    dpi=GetDpiForWindow(parent);float d=dpi/96.f;int width=int(440*d),height=int(quotaCardHeight(app->state,settings,int((info.rcWork.bottom-info.rcWork.top)/d)-40,view.history)*d);
     width=std::min(width,int(info.rcWork.right-info.rcWork.left));int x=std::clamp(int(owner.right)-width-30,int(info.rcWork.left),int(info.rcWork.right)-width),y=std::clamp(int(owner.top)+75,int(info.rcWork.top),std::max(int(info.rcWork.top),int(info.rcWork.bottom)-height));
-    frost.reset();SetWindowPos(window,HWND_TOP,x,y,width,height,SWP_SHOWWINDOW);backdrop=configureBackdrop(window,settings.darkAppearance);InvalidateRect(window,nullptr,FALSE);SetTimer(window,1,1000,nullptr);if(!app->testing)SetForegroundWindow(window);
+    frost.reset();SetWindowPos(window,HWND_TOP,x,y,width,height,SWP_SHOWWINDOW);backdrop=configureBackdrop(window,settings.darkAppearance);InvalidateRect(window,nullptr,FALSE);lastInside=GetTickCount64();SetTimer(window,1,50,nullptr);if(!app->testing)SetForegroundWindow(window);
 }
 static void renderQuotaPopup(QuotaPopup &p,Surface &image){Graphics g(image.bitmap.get());g.SetSmoothingMode(SmoothingModeAntiAlias);
     if(p.simulated){if(!p.frost)p.frost=previewFrost(image.width,image.height);paintFrost(g,RectF(0,0,float(image.width),float(image.height)),0,glassPalette(p.settings.darkAppearance),p.frost.get(),RectF(0,0,float(image.width),float(image.height)));}
     else paintBackdrop(g,glassPalette(p.settings.darkAppearance),p.backdrop);
-    float d=p.dpi/96.f;g.ScaleTransform(d,d);paintQuotaCard(g,image.width/d,image.height/d,p.app->state,p.settings,p.app->quotaHistory,p.view,p.simulated||p.app->testing||p.app->preview);g.Flush(FlushIntentionSync);
+    float d=p.dpi/96.f;g.ScaleTransform(d,d);paintQuotaCard(g,image.width/d,image.height/d,p.app->state,p.settings,p.app->quotaHistory,p.view,p.simulated||p.app->testing||p.app->preview,&p.app->popupUsage);g.Flush(FlushIntentionSync);
 }
 void QuotaPopup::draw(HDC dc){RECT client{};GetClientRect(window,&client);Surface image(client.right,client.bottom);renderQuotaPopup(*this,image);BitBlt(dc,0,0,image.width,image.height,image.dc,0,0,SRCCOPY);}
 void QuotaPopup::capture(const fs::path &file){RECT r{};GetClientRect(window,&r);Surface image(r.right,r.bottom);renderQuotaPopup(*this,image);for(int i=0;i<image.width*image.height;++i)image.pixels[i*4+3]=255;image.save(file);}
 LRESULT CALLBACK QuotaPopup::procedure(HWND w,UINT msg,WPARAM wp,LPARAM lp){auto self=reinterpret_cast<QuotaPopup *>(GetWindowLongPtrW(w,GWLP_USERDATA));if(msg==WM_NCCREATE){self=static_cast<QuotaPopup *>(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams);SetWindowLongPtrW(w,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(self));}if(!self)return DefWindowProcW(w,msg,wp,lp);
     switch(msg){case WM_NCCALCSIZE:return 0;case WM_ERASEBKGND:return 1;case WM_PAINT:{PAINTSTRUCT p{};auto dc=BeginPaint(w,&p);self->draw(dc);EndPaint(w,&p);return 0;}
     case WM_PRINTCLIENT:self->draw(reinterpret_cast<HDC>(wp));return 0;
-    case WM_TIMER:if(IsWindowVisible(w))InvalidateRect(w,nullptr,FALSE);return 0;
+    case WM_TIMER:if(IsWindowVisible(w)){
+        POINT pointer{};GetCursorPos(&pointer);RECT bounds{};GetWindowRect(w,&bounds);auto now=GetTickCount64();
+        if(PtInRect(&bounds,pointer))self->lastInside=now;
+        else if(now-self->lastInside>=1500){ShowWindow(w,SW_HIDE);return 0;}
+        if(now-self->lastPaint>=1000){self->lastPaint=now;self->app->refreshPopupUsage();InvalidateRect(w,nullptr,FALSE);}
+    }return 0;
     case WM_NCHITTEST:{POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ScreenToClient(w,&p);RECT r{};GetClientRect(w,&r);return p.y<int(45*self->dpi/96.f)&&p.x<r.right-int(48*self->dpi/96.f)?HTCAPTION:HTCLIENT;}
     case WM_LBUTTONUP:{float d=self->dpi/96.f;for(const auto &h:self->view.hits)if(h.rect.Contains(GET_X_LPARAM(lp)/d,GET_Y_LPARAM(lp)/d)){if(h.action==5)ShowWindow(w,SW_HIDE);else if(h.action==3){ShowWindow(w,SW_HIDE);self->app->showSettings();self->app->settingsWindow->selectPage(4);}else {quotaCardAction(self->view,h.action,w,self->app->state);self->reveal();}InvalidateRect(w,nullptr,FALSE);break;}return 0;}
+    case WM_MOUSEMOVE:{TRACKMOUSEEVENT track{sizeof(track),TME_LEAVE,w,0};TrackMouseEvent(&track);float d=self->dpi/96.f;if(quotaCardHover(self->view,GET_X_LPARAM(lp)/d,GET_Y_LPARAM(lp)/d))InvalidateRect(w,nullptr,FALSE);return 0;}
+    case WM_MOUSELEAVE:if(quotaCardHover(self->view,-1,-1))InvalidateRect(w,nullptr,FALSE);return 0;
     case WM_MOUSEWHEEL:self->view.extraScroll=std::max(0,self->view.extraScroll+(GET_WHEEL_DELTA_WPARAM(wp)<0?1:-1));InvalidateRect(w,nullptr,FALSE);return 0;
     case WM_KEYDOWN:if(wp==VK_ESCAPE){ShowWindow(w,SW_HIDE);return 0;}if(wp==VK_LEFT||wp==VK_RIGHT){self->view.history=wp==VK_RIGHT;self->reveal();InvalidateRect(w,nullptr,FALSE);return 0;}break;
     case WM_CLOSE:ShowWindow(w,SW_HIDE);return 0;
     case WM_DWMCOMPOSITIONCHANGED:case WM_THEMECHANGED:case WM_SETTINGCHANGE:self->backdrop=configureBackdrop(w,self->settings.darkAppearance);InvalidateRect(w,nullptr,FALSE);return 0;
     case WM_NCDESTROY:self->window=nullptr;SetWindowLongPtrW(w,GWLP_USERDATA,0);break;}
     return DefWindowProcW(w,msg,wp,lp);
+}
+
+void Application::refreshPopupUsage() {
+    pollPopupUsage();
+    if(testing||preview){if(!popupUsage.available)popupUsage=demoUsageReport(utcNow());return;}
+    if(popupUsageTask.valid()||GetTickCount64()<popupUsageNextScan)return;
+    popupUsageCancel=false;UsageScanOptions options;options.home=codexHome();
+    options.cache=dataDirectory()/L"codex-popup-usage-cache.json";
+    popupUsageNextScan=GetTickCount64()+120000;
+    try{popupUsageTask=std::async(std::launch::async,[this,options]{return scanCodexUsage(options,popupUsageCancel);});}
+    catch(...){popupUsage.error=L"无法启动本地用量读取";}
+}
+void Application::pollPopupUsage() {
+    if(!popupUsageTask.valid()||popupUsageTask.wait_for(std::chrono::seconds(0))!=std::future_status::ready)return;
+    try{popupUsage=popupUsageTask.get();popupUsageNextScan=GetTickCount64()+(popupUsage.pending?1500:120000);}
+    catch(...){popupUsage.error=L"无法读取本地用量";}
+    for(auto &overlay:overlays)if(overlay->kind==WidgetKind::Codex&&IsWindowVisible(overlay->details))overlay->showDetails();
 }
 
 void Application::flushQuotaHistory(bool final){
@@ -312,6 +433,51 @@ int analyticsUiTests(const fs::path &dir){
     check(std::any_of(ui.usageView.groups.begin(),ui.usageView.groups.end(),[](const auto &r){return r.key.empty();}),"native analytics preserves unknown account attribution");
     ui.usageCommand(UsageTokens);ui.usageCommand(UsageHour);ui.capture(dir/L"usage-hourly-simulated.png");check(ui.usageView.tokens&&ui.usageView.bins.size()==24,"native analytics supports Token and hourly plots");
     ui.usageCommand(UsageQuota);check(ui.quotaPopup&&IsWindowVisible(ui.quotaPopup->window),"native quota popup opens from analytics");ui.quotaPopup->capture(dir/L"quota-current-simulated.png");
+    auto extras=app.state.q.extraWindows;app.state.q.extraWindows.clear();ui.quotaPopup->reveal();
+    ui.quotaPopup->capture(dir/L"quota-standard-simulated.png");
+    RECT normal{};GetWindowRect(ui.quotaPopup->window,&normal);
+    SetWindowPos(ui.quotaPopup->window,nullptr,0,0,int(440*ui.quotaPopup->dpi/96.f),int(440*ui.quotaPopup->dpi/96.f),SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
+    ui.quotaPopup->capture(dir/L"quota-compact-simulated.png");
+    ui.quotaPopup->reveal();app.state.q.extraWindows=extras;
+    check(std::none_of(ui.quotaPopup->view.hits.begin(),ui.quotaPopup->view.hits.end(),[](const auto &hit){return hit.action==2;})&&std::any_of(ui.quotaPopup->view.hits.begin(),ui.quotaPopup->view.hits.end(),[](const auto &hit){return hit.action==4;}),"current quota card includes history picker without a separate history tab");
+    auto dayTarget=std::find_if(ui.quotaPopup->view.hits.begin(),ui.quotaPopup->view.hits.end(),[](const auto &hit){return hit.action==6;});
+    check(dayTarget!=ui.quotaPopup->view.hits.end(),"daily popup curve exposes date hover regions");
+    auto target=*dayTarget;float popupDpi=ui.quotaPopup->dpi/96.f;
+    SendMessageW(ui.quotaPopup->window,WM_MOUSEMOVE,0,MAKELPARAM(int((target.rect.X+2)*popupDpi),int((target.rect.Y+5)*popupDpi)));
+    check(ui.quotaPopup->view.hoveredDay==target.value&&target.key.find("Token")!=std::string::npos,"native popup mouse move selects a date with exact Token tooltip text");
+    ui.quotaPopup->capture(dir/L"quota-hover-simulated.png");
+    SendMessageW(ui.quotaPopup->window,WM_MOUSELEAVE,0,0);check(ui.quotaPopup->view.hoveredDay==-1,"leaving daily popup curve clears the tooltip");
+    auto savedReport=ui.usageReport;auto savedView=ui.usageView;int populatedHeight=ui.pageHeight;
+    ui.usageReport={};ui.usageView.dirty=true;ui.layout();
+    check(ui.pageHeight<populatedHeight&&!IsWindowVisible(GetDlgItem(ui.content,UsageNext)),"empty usage page shrinks to content and hides redundant pagination");
+    ui.scrollTo(INT_MAX);ui.capture(dir/L"usage-empty-bottom-simulated.png");ui.usageReport=savedReport;ui.usageView=savedView;ui.usageView.dirty=true;ui.layout();ui.scrollTo(0);
+    auto plotHit=std::find_if(ui.usageView.hits.begin(),ui.usageView.hits.end(),[](const auto &hit){return hit.action==20;});
+    ui.capture(dir/L"usage-before-hover-simulated.png");
+    plotHit=std::find_if(ui.usageView.hits.begin(),ui.usageView.hits.end(),[](const auto &hit){return hit.action==20;});
+    check(plotHit!=ui.usageView.hits.end(),"settings chart retains hover regions after dynamic layout");
+    if(plotHit!=ui.usageView.hits.end()){auto rect=plotHit->rect;ui.usageHover(rect.X+2,rect.Y+5);check(ui.usageView.hovered>=0,"settings usage curve responds to date hover");ui.capture(dir/L"usage-hover-simulated.png");ui.usageHover(-1,-1);}
+    ui.usageCommand(UsageDay);ui.usageCommand(UsageSeven);ui.usageCommand(UsageModels);ui.capture(dir/L"usage-daily-before-hover-simulated.png");
+    auto dailyHit=std::find_if(ui.usageView.hits.begin(),ui.usageView.hits.end(),[](const auto &hit){return hit.action==20;});
+    check(dailyHit!=ui.usageView.hits.end()&&!ui.usageView.hourly,"settings daily chart exposes per-day hover regions");
+    auto dailyRect=dailyHit->rect;ui.usageHover(dailyRect.X+2,dailyRect.Y+5);ui.capture(dir/L"usage-daily-hover-simulated.png");ui.usageHover(-1,-1);
+    ui.scrollTo(INT_MAX);ui.capture(dir/L"usage-populated-bottom-simulated.png");ui.scrollTo(0);
+    auto usagePixels=[&]{Surface image(440,560);Graphics g(image.bitmap.get());g.Clear(Color::White);QuotaCardView v;paintQuotaCard(g,440,560,app.state,app.settings,app.quotaHistory,v,true,&app.popupUsage);g.Flush(FlushIntentionSync);return std::vector<BYTE>(image.pixels,image.pixels+440*560*4);};
+    auto populated=usagePixels();auto savedUsage=app.popupUsage;app.popupUsage={};
+    check(populated!=usagePixels(),"quota card renders local Token data and daily trend instead of the unavailable state");
+    ui.quotaPopup->capture(dir/L"quota-empty-simulated.png");app.popupUsage=savedUsage;
+    ui.quotaPopup->settings.darkAppearance=true;ui.quotaPopup->capture(dir/L"quota-current-dark-simulated.png");ui.quotaPopup->settings.darkAppearance=false;
+    ShowWindow(ui.window,SW_HIDE);
+    {
+        auto monitor=monitors().front();Overlay overlay(&app,monitor,app.settings,app.state);KillTimer(overlay.window,1);
+        overlay.showDetails();overlay.hover=true;POINT outside{monitor.work.left-100,monitor.work.top-100};
+        overlay.lastInside=GetTickCount64()-1000;overlay.tick(&outside);
+        check(IsWindowVisible(overlay.details),"quota hover remains visible during the 1.5 second leave grace period");
+        RECT card{};GetWindowRect(overlay.details,&card);POINT inside{card.left+10,card.top+10};overlay.tick(&inside);
+        check(GetTickCount64()-overlay.lastInside<100,"returning to quota details resets the leave timer");
+        overlay.lastInside=GetTickCount64()-1600;overlay.tick(&outside);
+        check(!IsWindowVisible(overlay.details),"quota hover closes after the leave grace period");
+    }
+    ShowWindow(ui.window,SW_SHOW);
     ui.quotaPopup->view.history=true;ui.quotaPopup->reveal();ui.quotaPopup->capture(dir/L"quota-history-simulated.png");check(!app.quotaHistory.series(app.state.q,"hour").empty(),"native quota history uses recorded owned samples");
     ui.draft.darkAppearance=true;ui.applyAppearance();ui.usageCommand(UsageSeven);ui.usageCommand(UsageProjects);ui.usageCommand(UsageCost);ui.usageCommand(UsageDay);ui.scrollTo(0);ui.capture(dir/L"usage-dark-simulated.png");
     check(ui.backdrop==BackdropMode::Acrylic||ui.backdrop==BackdropMode::Blur||ui.backdrop==BackdropMode::Solid,"native analytics uses the existing system backdrop with fallback");

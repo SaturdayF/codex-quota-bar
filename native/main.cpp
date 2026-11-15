@@ -49,6 +49,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         }
         else if (has(L"--uninstall-user-data"))
             result = removeUninstallUserData(has(L"-WhatIf")) ? 0 : 1;
+        else if (has(L"--update-ui-test")) {
+            updateUiTests(after(L"--output", L"update-ui-tests"));
+        }
         else if (has(L"--hub-fixture")) {
             auto dir=after(L"--output",L"hub-fixture");fs::create_directories(dir);HubSettings cfg;cfg.mode=2;cfg.port=0;cfg.deviceId="synthetic-host";HubRuntime runtime;runtime.start(cfg,"synthetic-test-secret-only",dir,true);
             saveAnalyticsJson(dir/L"ready.json",{{"port",runtime.port()}});auto deadline=GetTickCount64()+60000;while(GetTickCount64()<deadline&&!fs::exists(dir/L"stop"))Sleep(50);runtime.stop();

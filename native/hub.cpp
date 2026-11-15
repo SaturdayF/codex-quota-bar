@@ -63,6 +63,45 @@ json retainUntrackedHistory(json incoming,const json &previous,const json &track
 bool validId(const std::string &id){return !id.empty()&&id.size()<=128&&std::all_of(id.begin(),id.end(),[](unsigned char c){return std::isalnum(c)||c=='-'||c=='_'||c=='.';});}
 bool equal(const std::string &a,const std::string &b){size_t d=a.size()^b.size();for(size_t i=0;i<std::max(a.size(),b.size());++i)d|=(i<a.size()?a[i]:0)^(i<b.size()?b[i]:0);return d==0;}
 struct Internet {HINTERNET h;~Internet(){if(h)WinHttpCloseHandle(h);}};
+// The settings page has a single status line, so each failure keeps a short,
+// actionable reason instead of collapsing into one catch-all sentence.
+std::wstring explain(const std::string &what){
+ static const std::vector<std::pair<const char *,const wchar_t *>> known={
+  {"Hub unreachable",L"无法连接 Hub；请检查地址、端口、防火墙，以及两台设备是否在同一网络"},
+  {"Hub secret rejected",L"共享密钥不一致；两台设备需使用同一密钥"},
+  {"Hub snapshot rejected",L"Hub 拒绝本机快照；请检查 Hub 端协议版本"},
+  {"Hub ingest failed",L"Hub 未接受上传；请检查 Hub 端状态"},
+  {"Hub stats rejected",L"读取统计被拒绝；请检查共享密钥"},
+  {"Hub payload too large",L"本机快照超过 Hub 的 2 MiB 上限"},
+  {"Hub storage full",L"Hub 存储已满或写入失败"},
+  {"Invalid Hub stats schema",L"Hub 统计格式不兼容"},
+  {"Hub components exceed total",L"Hub 统计数值不一致；请检查 Hub 端版本"},
+  {"Hub classified totals exceed usage",L"Hub 统计数值不一致；请检查 Hub 端版本"},
+  {"Hub response deadline",L"Hub 响应超时；请检查网络与 Hub 负载"},
+  {"Incomplete Hub response",L"Hub 响应中断；请检查网络"},
+  {"Invalid Hub response",L"Hub 返回了无法解析的数据"},
+  {"Invalid Hub number",L"Hub 统计数值超出允许范围"},
+  {"Invalid Hub counter",L"Hub 统计计数不合法"},
+  {"Hub map limit",L"Hub 数据条目超出上限"},
+  {"Hub array limit",L"Hub 数据条目超出上限"},
+  {"Too many Hub groups",L"Hub 数据分组超出上限"},
+  {"Hub text limit",L"Hub 文本字段超出上限"},
+  {"Invalid Hub archive counter",L"本地历史档案数值异常"},
+  {"Invalid Hub archive counters",L"本地历史档案数值异常"},
+  {"Invalid Hub archive cost",L"本地历史档案费用异常"},
+  {"Hub day counter overflow",L"本地历史档案数值溢出"},
+  {"Stored archive is unreadable; file preserved",L"本地历史档案不可读，已保留原文件"},
+  {"Stored Hub data is unreadable; file preserved",L"本地设备档案不可读，已保留原文件"},
+  {"Hub archive row limit",L"本地历史档案达到 180,000 条上限"},
+  {"Hub archive size limit",L"本地历史档案达到 64 MiB 上限"},
+  {"Snapshot too large",L"本机快照超过 2 MiB，无法上传"},
+  {"Cannot save local analytics",L"无法写入本地数据目录；请检查磁盘与权限"},
+  {"Cannot commit local analytics",L"无法写入本地数据目录；请检查磁盘与权限"},
+  {"Hub stopped",L"同步已停止"},
+ };
+ for(const auto &row:known)if(what==row.first)return row.second;
+ return L"未知原因："+wide(what);
+}
 }
 void validateHubSettings(const HubSettings &s,const std::string &secret,bool fixture){
  if(s.mode<0||s.mode>2||s.port<0||s.port>65535||(!fixture&&s.port==0)||!validId(s.deviceId))throw std::runtime_error("Invalid Hub configuration");
@@ -75,7 +114,39 @@ void HubSettings::save()const{if(mode<0||mode>2||port<1||port>65535||!validId(de
 std::string hubSecret(){PCREDENTIALW c=nullptr;if(!CredReadW(L"CodexQuotaBar.SyncHub.Secret",CRED_TYPE_GENERIC,0,&c))return {};std::string s(reinterpret_cast<char *>(c->CredentialBlob),c->CredentialBlobSize);SecureZeroMemory(c->CredentialBlob,c->CredentialBlobSize);CredFree(c);return s;}
 void saveHubSecret(const std::string &s){if(s.size()<16||s.size()>256||s.find_first_of("\r\n")!=std::string::npos)throw std::runtime_error("Hub secret needs 16-256 characters");CREDENTIALW c{};c.Type=CRED_TYPE_GENERIC;c.TargetName=const_cast<wchar_t *>(L"CodexQuotaBar.SyncHub.Secret");c.UserName=const_cast<wchar_t *>(L"Hub");c.Persist=CRED_PERSIST_LOCAL_MACHINE;c.CredentialBlobSize=DWORD(s.size());c.CredentialBlob=reinterpret_cast<BYTE *>(const_cast<char *>(s.data()));if(!CredWriteW(&c,0))throw std::runtime_error("Cannot save Hub secret");}
 std::string newHubSecret(){HCRYPTPROV p=0;if(!CryptAcquireContextW(&p,nullptr,nullptr,PROV_RSA_AES,CRYPT_VERIFYCONTEXT))throw std::runtime_error("Random generator unavailable");BYTE b[24];bool ok=CryptGenRandom(p,sizeof(b),b);CryptReleaseContext(p,0);if(!ok)throw std::runtime_error("Random generator unavailable");const char *h="0123456789abcdef";std::string s;for(BYTE v:b){s+=h[v>>4];s+=h[v&15];}return s;}
-std::vector<std::wstring> hubAddresses(int port){ULONG n=16384;std::vector<BYTE>b(n);auto p=reinterpret_cast<IP_ADAPTER_ADDRESSES *>(b.data());if(GetAdaptersAddresses(AF_INET,GAA_FLAG_SKIP_ANYCAST|GAA_FLAG_SKIP_MULTICAST|GAA_FLAG_SKIP_DNS_SERVER,nullptr,p,&n)==ERROR_BUFFER_OVERFLOW){b.resize(n);p=reinterpret_cast<IP_ADAPTER_ADDRESSES *>(b.data());}std::vector<std::wstring>r;if(GetAdaptersAddresses(AF_INET,GAA_FLAG_SKIP_ANYCAST|GAA_FLAG_SKIP_MULTICAST|GAA_FLAG_SKIP_DNS_SERVER,nullptr,p,&n)==NO_ERROR)for(auto a=p;a;a=a->Next)if(a->OperStatus==IfOperStatusUp&&a->IfType!=IF_TYPE_SOFTWARE_LOOPBACK)for(auto u=a->FirstUnicastAddress;u;u=u->Next){wchar_t address[64];auto s=reinterpret_cast<sockaddr_in *>(u->Address.lpSockaddr);if(s->sin_family==AF_INET&&InetNtopW(AF_INET,&s->sin_addr,address,64))r.push_back(L"http://"+std::wstring(address)+L":"+std::to_wstring(port));}return r;}
+// Adapters that only exist inside this PC (Clash/Mihomo TUN, Hyper-V/WSL, VMware,
+// VPN clients) must not be offered as the address other devices should dial.
+int hubAddressRank(const std::wstring &name){
+ std::wstring n=name;for(auto &c:n)if(c>=L'A'&&c<=L'Z')c=wchar_t(c+L'a'-L'A');
+ auto has=[&](const wchar_t *text){return n.find(text)!=std::wstring::npos;};
+ if(has(L"tailscale")||has(L"zerotier")||has(L"wireguard"))return 1;
+ if(has(L"vmware")||has(L"virtualbox")||has(L"hyper-v")||has(L"vethernet")||has(L"wsl")||has(L"mihomo")||has(L"clash")||has(L"tunnel")||has(L"bluetooth")||has(L"蓝牙")||has(L"sangfor")||has(L"atrust")||has(L"tap-")||has(L"vpn")||has(L"virtual"))return 2;
+ return 0;
+}
+bool usableHubAddress(uint32_t ip){
+ if(ip<0x01000000u||(ip&0xFF000000u)==0x7F000000u)return false; // 0/8 and 127/8
+ if((ip&0xFFFF0000u)==0xA9FE0000u)return false;                 // 169.254/16 link-local
+ if((ip&0xFFFE0000u)==0xC6120000u)return false;                 // 198.18/15 fake-IP range
+ return (ip&0xF0000000u)!=0xE0000000u;                          // 224/4 multicast
+}
+std::vector<std::wstring> hubAddresses(int port){
+ ULONG n=16384;std::vector<BYTE>b(n);auto p=reinterpret_cast<IP_ADAPTER_ADDRESSES *>(b.data());
+ if(GetAdaptersAddresses(AF_INET,GAA_FLAG_SKIP_ANYCAST|GAA_FLAG_SKIP_MULTICAST|GAA_FLAG_SKIP_DNS_SERVER,nullptr,p,&n)==ERROR_BUFFER_OVERFLOW){b.resize(n);p=reinterpret_cast<IP_ADAPTER_ADDRESSES *>(b.data());}
+ std::vector<std::pair<int,std::wstring>> found;
+ if(GetAdaptersAddresses(AF_INET,GAA_FLAG_SKIP_ANYCAST|GAA_FLAG_SKIP_MULTICAST|GAA_FLAG_SKIP_DNS_SERVER,nullptr,p,&n)==NO_ERROR)for(auto a=p;a;a=a->Next){
+  if(a->OperStatus!=IfOperStatusUp||a->IfType==IF_TYPE_SOFTWARE_LOOPBACK)continue;
+  auto rank=hubAddressRank(a->FriendlyName?a->FriendlyName:L"");
+  if(a->IfType==IF_TYPE_TUNNEL&&rank<2)rank=2;
+  for(auto u=a->FirstUnicastAddress;u;u=u->Next){wchar_t address[64];auto s=reinterpret_cast<sockaddr_in *>(u->Address.lpSockaddr);
+   if(!s||s->sin_family!=AF_INET||!usableHubAddress(ntohl(s->sin_addr.s_addr)))continue;
+   if(InetNtopW(AF_INET,&s->sin_addr,address,64))found.push_back({rank,L"http://"+std::wstring(address)+L":"+std::to_wstring(port)});}
+ }
+ std::stable_sort(found.begin(),found.end(),[](const std::pair<int,std::wstring> &x,const std::pair<int,std::wstring> &y){return x.first<y.first;});
+ bool reachable=false;for(const auto &entry:found)if(entry.first<2)reachable=true;
+ std::vector<std::wstring>r;
+ for(const auto &entry:found){if(reachable&&entry.first>1)continue;if(std::find(r.begin(),r.end(),entry.second)==r.end())r.push_back(entry.second);}
+ return r;
+}
 HubStore::HubStore(fs::path p):file(std::move(p)){auto j=read(file,64*1024*1024);if(!file.empty()&&fs::exists(file)&&(!j.is_object()||j.value("schema",0)!=1||!j.contains("devices")||!j["devices"].is_object()))throw std::runtime_error("Stored Hub data is unreadable; file preserved");if(j.is_object()&&j.value("schema",0)==1&&j.contains("devices")&&j["devices"].is_object())for(auto i=j["devices"].begin();i!=j["devices"].end()&&devices.size()<128;++i)if(validId(i.key())&&i->is_object())devices[i.key()]=*i;}
 json HubStore::list()const{json a=json::array();for(const auto &d:devices){auto v=d.second;auto age=std::max<int64_t>(0,utcNow()-parseUsageTime(v.value("receivedAt",std::string())))*1000;v["ageMs"]=age;v["stale"]=age>120000;a.push_back(v);}return a;}
 json HubStore::history()const{
@@ -198,12 +269,12 @@ struct HubRuntime::Impl {
   }catch(...){reply(400,{{"error","invalid_request"}});}
  }
  void serve(){while(!stopping){auto s=listener.load();if(s==INVALID_SOCKET)break;fd_set f;FD_ZERO(&f);FD_SET(s,&f);timeval t{0,200000};if(select(0,&f,nullptr,nullptr,&t)<=0)continue;SOCKET c=accept(s,nullptr,nullptr);if(c==INVALID_SOCKET)continue;u_long blocking=0;ioctlsocket(c,FIONBIO,&blocking);connection(c);closesocket(c);}}
- void upload(const json &snapshot){if(settings.mode==2){std::lock_guard<std::mutex>g(lock);auto result=store->request("POST","/api/ingest",snapshot);message=result.status==200?L"Hub 已启动":L"Hub 保存失败";}else{if(snapshot.dump().size()>BodyLimit)throw std::runtime_error("Snapshot too large");auto uploaded=hubHttp(settings.url,secret,"POST","/api/ingest",snapshot);if(stopping)throw std::runtime_error("Hub stopped");if(uploaded.status!=200)throw std::runtime_error("Upload rejected");auto fetched=hubHttp(settings.url,secret,"GET","/api/stats");if(stopping)throw std::runtime_error("Hub stopped");if(fetched.status!=200)throw std::runtime_error("Read rejected");auto history=hubHttp(settings.url,secret,"GET","/api/history");if(stopping)throw std::runtime_error("Hub stopped");if(history.status==200)fetched.body["historyPreview"]=history.body;std::lock_guard<std::mutex>g(lock);if(!fetched.body.is_object()||!fetched.body.contains("periods")||!fetched.body["periods"].is_object()||!fetched.body.value("devices",json::array()).is_array())throw std::runtime_error("Invalid Hub stats schema");
+ void upload(const json &snapshot){if(settings.mode==2){std::lock_guard<std::mutex>g(lock);auto result=store->request("POST","/api/ingest",snapshot);if(result.status==200){message=L"Hub 已启动";return;}throw std::runtime_error(result.status==507?"Hub storage full":"Hub snapshot rejected");}else{if(snapshot.dump().size()>BodyLimit)throw std::runtime_error("Snapshot too large");auto uploaded=hubHttp(settings.url,secret,"POST","/api/ingest",snapshot);if(stopping)throw std::runtime_error("Hub stopped");if(uploaded.status==401)throw std::runtime_error("Hub secret rejected");if(uploaded.status==400)throw std::runtime_error("Hub snapshot rejected");if(uploaded.status==413)throw std::runtime_error("Hub payload too large");if(uploaded.status==507)throw std::runtime_error("Hub storage full");if(uploaded.status!=200)throw std::runtime_error("Hub ingest failed");auto fetched=hubHttp(settings.url,secret,"GET","/api/stats");if(stopping)throw std::runtime_error("Hub stopped");if(fetched.status==401)throw std::runtime_error("Hub secret rejected");if(fetched.status!=200)throw std::runtime_error("Hub stats rejected");auto history=hubHttp(settings.url,secret,"GET","/api/history");if(stopping)throw std::runtime_error("Hub stopped");if(history.status==200)fetched.body["historyPreview"]=history.body;std::lock_guard<std::mutex>g(lock);if(!fetched.body.is_object()||!fetched.body.contains("periods")||!fetched.body["periods"].is_object()||!fetched.body.value("devices",json::array()).is_array())throw std::runtime_error("Invalid Hub stats schema");
  json safe={{"periods",json::object()},{"devices",json::array()}};for(auto name:{"today","month","allTime"})safe["periods"][name]=period(fetched.body["periods"].at(name));
  for(const auto &d:fetched.body.value("devices",json::array())){if(!d.is_object())continue;safe["devices"].push_back({{"deviceId",d.value("deviceId",std::string())},{"hostname",d.value("hostname",std::string())},{"stale",d.value("stale",false)}});}
  if(fetched.body.contains("historyPreview")&&fetched.body["historyPreview"].is_object())safe["historyPreview"]=sanitize(fetched.body["historyPreview"]);
  remote=std::move(safe);saveAnalyticsJson(directory/L"hub-remote-cache.json",{{"schema",1},{"origin",settings.url},{"stats",remote}});message=L"已连接 Hub";}}
- void collect(){std::atomic<bool> cancel{false};while(!stopping){try{UsageScanOptions o;o.cache=directory/L"hub-scan-cache.json";auto report=scanCodexUsage(o,stopping);if(stopping)break;if(report.pending){setMessage(L"正在补齐本地历史，保留上次同步结果");for(int n=0;n<15&&!stopping;++n)Sleep(100);continue;}auto retained=hubRetainUsage(report,directory/L"hub-local-history.json");auto snapshot=hubLocalSnapshot(retained,State{},settings.deviceId);upload(snapshot);}catch(...){setMessage(L"同步失败，请检查网络、配置或存储空间；保留上次结果");}for(int n=0;n<100&&!stopping;++n)Sleep(100);}}
+ void collect(){std::atomic<bool> cancel{false};while(!stopping){try{UsageScanOptions o;o.cache=directory/L"hub-scan-cache.json";auto report=scanCodexUsage(o,stopping);if(stopping)break;if(report.pending){setMessage(L"正在补齐本地历史，保留上次同步结果");for(int n=0;n<15&&!stopping;++n)Sleep(100);continue;}auto retained=hubRetainUsage(report,directory/L"hub-local-history.json");auto snapshot=hubLocalSnapshot(retained,State{},settings.deviceId);upload(snapshot);}catch(const std::exception &e){setMessage(L"同步失败："+explain(e.what())+L"；保留上次结果");}catch(...){setMessage(L"同步失败，请检查网络、配置或存储空间；保留上次结果");}for(int n=0;n<100&&!stopping;++n)Sleep(100);}}
 };
 HubRuntime::HubRuntime():impl(std::make_unique<Impl>()){}
 HubRuntime::~HubRuntime(){stop();}

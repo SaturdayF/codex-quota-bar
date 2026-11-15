@@ -49,11 +49,13 @@ bool hexDigest(const std::string &digest) {
 
 std::wstring assetName(const std::string &tag) { return L"CodexQuotaBar-" + wide(tag) + L"-Setup.exe"; }
 
-std::string fetch(std::wstring url, size_t limit, bool download, const std::atomic<bool> &cancel) {
+std::string fetch(std::wstring url, size_t limit, bool download, const std::atomic<bool> &cancel,
+                  std::atomic<int> *progress = nullptr) {
+    if (progress) *progress = 0;
     HttpHandle session(WinHttpOpen(L"CodexQuotaBar", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0));
     if (!WinHttpSetTimeouts(session.value, 4000, 4000, 4000, 4000))
         throw std::runtime_error("Cannot set update timeouts");
-    auto deadline = GetTickCount64() + 45000;
+    auto deadline = GetTickCount64() + (download ? UpdateDownloadTimeoutMs : 45000);
     auto check = [&] {
         if (cancel || GetTickCount64() >= deadline) throw std::runtime_error("Update request cancelled or timed out");
     };
@@ -105,6 +107,7 @@ std::string fetch(std::wstring url, size_t limit, bool download, const std::atom
             if (!read) return bytes;
             if (read > limit - bytes.size()) throw std::runtime_error("Update response exceeds size limit");
             bytes.append(buffer, read);
+            if (progress && limit) *progress = int(bytes.size() * 100 / limit);
         }
     }
     throw std::runtime_error("Too many update redirects");
@@ -202,9 +205,10 @@ std::optional<UpdateRelease> checkForUpdate(const std::atomic<bool> &cancel) {
                                                 1024 * 1024, false, cancel)), VersionUtf8);
 }
 
-fs::path downloadUpdate(const UpdateRelease &release, const std::atomic<bool> &cancel) {
+fs::path downloadUpdate(const UpdateRelease &release, const std::atomic<bool> &cancel,
+                        std::atomic<int> *progress) {
     auto url = L"https://github.com" + std::wstring(RepoPath) + wide(release.tag) + L"/" + assetName(release.tag);
-    auto bytes = fetch(url, release.size, true, cancel);
+    auto bytes = fetch(url, release.size, true, cancel, progress);
     if (cancel || bytes.size() != release.size) throw std::runtime_error("Incomplete installer download");
     auto base = dataDirectory();
     fs::create_directories(base);

@@ -1,5 +1,6 @@
 #pragma once
 #include "analytics.hpp"
+#include <cstdint>
 namespace quota {
 struct HubSettings {
     int mode = 0, port = 17321;
@@ -11,6 +12,8 @@ void validateHubSettings(const HubSettings &settings,const std::string &secret,b
 std::string hubSecret();
 void saveHubSecret(const std::string &secret);
 std::string newHubSecret();
+int hubAddressRank(const std::wstring &name);
+bool usableHubAddress(uint32_t ip);
 std::vector<std::wstring> hubAddresses(int port);
 UsageReport hubRetainUsage(const UsageReport &report,const fs::path &archive);
 json hubLocalSnapshot(const UsageReport &report, const State &state, const std::string &deviceId);

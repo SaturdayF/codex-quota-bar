@@ -25,13 +25,16 @@ struct UsageView {
 };
 struct QuotaCardView {
     bool history = false;
-    int selected = 0, extraScroll = 0;
+    int selected = 0, extraScroll = 0, hoveredDay = -1;
     std::vector<AnalyticsHit> hits;
     std::vector<NamedQuota> windows;
 };
+bool quotaCardHover(QuotaCardView &view, float x, float y);
+int usageRowsEnd(const UsageView &view);
+int usagePageHeight(const UsageView &view, const UsageReport &report);
 int quotaCardHeight(const State &state, const Settings &settings, int maximum, bool history = false);
 void paintQuotaCard(Graphics &g, float width, float height, const State &state, const Settings &settings,
-                    const QuotaHistory &history, QuotaCardView &view, bool simulated);
+                    const QuotaHistory &history, QuotaCardView &view, bool simulated, const UsageReport *usage = nullptr);
 bool quotaCardAction(QuotaCardView &view, int action, HWND window, const State &state);
 struct QuotaPopup {
     Application *app;
@@ -42,6 +45,7 @@ struct QuotaPopup {
     std::unique_ptr<Surface> frost;
     int dpi = 96;
     bool simulated = false;
+    ULONGLONG lastInside = 0, lastPaint = 0;
     QuotaPopup(Application *owner, HWND parent, const Settings &appearance);
     ~QuotaPopup();
     void reveal();

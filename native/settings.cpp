@@ -196,10 +196,14 @@ static LRESULT CALLBACK controlSkin(HWND w, UINT msg, WPARAM wp, LPARAM lp, UINT
         TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, w, 0};
         if (TrackMouseEvent(&track)) {
             SetPropW(w, L"VibrancyHover", reinterpret_cast<HANDLE>(1));
+            if (GetDlgCtrlID(w) == CheckUpdate)
+                if (auto owner = controlOwner(w)) owner->refreshUpdateButton();
             InvalidateRect(w, nullptr, FALSE);
         }
     } else if (msg == WM_MOUSELEAVE && (skin == ControlSkin::Button || skin == ControlSkin::Combo)) {
         RemovePropW(w, L"VibrancyHover");
+        if (GetDlgCtrlID(w) == CheckUpdate)
+            if (auto owner = controlOwner(w)) owner->refreshUpdateButton();
         InvalidateRect(w, nullptr, FALSE);
     } else if (msg == WM_ERASEBKGND && skin != ControlSkin::Button) {
         return 1;
@@ -561,7 +565,7 @@ void SettingsWindow::layout() {
     contentWidth = int(c.right * 96. / dpi);
     contentHeight = int(c.bottom * 96. / dpi);
     if(page==4){usageView.prepare(usageReport);usageView.groupPage=std::clamp(usageView.groupPage,0,std::max(0,(int(usageView.groups.size())-1)/5));}
-    int needed = pageHeight = page == 5 ? 1640 : page == 4 ? 1320 : page == 0 ? 836 : page == 1 ? 620 : page == 3 ? 748 : 672;
+    int needed = pageHeight = page == 5 ? 1640 : page == 4 ? usagePageHeight(usageView,usageReport) : page == 0 ? 836 : page == 1 ? 620 : page == 3 ? 748 : 672;
     scroll = std::clamp(scroll, 0, std::max(0, needed - contentHeight));
     contentWidth = int(std::max(1, int(c.right) - px(14)) * 96. / dpi);
     SetWindowPos(content, nullptr, 0, -px(scroll), std::max(1, int(c.right) - px(14)), std::max<int>(c.bottom, px(needed)),
@@ -573,6 +577,7 @@ void SettingsWindow::layout() {
         int ownerPage = int(reinterpret_cast<INT_PTR>(GetPropW(ctrl, L"QuotaPage"))) - 2;
         if (ownerPage == page) {
             bool visible = id != UsageClear || usageView.selectedDay || !usageView.project.empty();
+            if(id==UsagePrevious||id==UsageNext)visible=usageView.groups.size()>5;
             placements.push_back({ctrl,px(x),px(y),px(ww),px(hh),visible});
         }
     };
@@ -635,7 +640,7 @@ void SettingsWindow::layout() {
     place(704,0,444,contentWidth-14,32);place(706,0,504,160,34);
     auto hubMode=int(SendDlgItemMessageW(content,700,CB_GETCURSEL,0,0));EnableWindow(GetDlgItem(content,701),hubMode==1);EnableWindow(GetDlgItem(content,702),hubMode==2);EnableWindow(GetDlgItem(content,703),hubMode!=0);EnableWindow(GetDlgItem(content,705),hubMode!=0);
     place(707,172,504,110,34);place(708,0,1128,116,30);place(709,128,1128,104,30);place(710,244,1128,104,30);
-    place(UsagePrevious,contentWidth-202,1098,88,29);place(UsageNext,contentWidth-104,1098,88,29);
+    place(UsagePrevious,contentWidth-202,usageRowsEnd(usageView)+6,88,29);place(UsageNext,contentWidth-104,usageRowsEnd(usageView)+6,88,29);
     EnableWindow(GetDlgItem(content,UsagePrevious),usageView.groupPage>0);
     EnableWindow(GetDlgItem(content,UsageNext),size_t((usageView.groupPage+1)*5)<usageView.groups.size());
     UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS | SWP_SHOWWINDOW;
@@ -1093,23 +1098,35 @@ void SettingsWindow::command(int id, int notice) {
 void SettingsWindow::beginUpdateCheck() {
     if (updateCheck.valid() || updateDownload.valid()) {
         updateCancel = true;
+        refreshUpdateButton();
         return;
     }
     updateCancel = false;
     try {
         updateCheck = std::async(std::launch::async, [this] { return checkForUpdate(updateCancel); });
-        SetWindowTextW(GetDlgItem(content, CheckUpdate), L"取消检查");
+        refreshUpdateButton();
     } catch (const std::exception &) {
         openHelp(L"检查更新失败", L"无法开始检查，请稍后重试。");
     }
 }
+void SettingsWindow::refreshUpdateButton() {
+    auto button = GetDlgItem(content, CheckUpdate);
+    bool cancelling = (updateDownloading || updateCheck.valid()) && updateCancel;
+    std::wstring text = L"检查更新";
+    if (cancelling) text = L"正在取消…";
+    else if (updateDownloading)
+        text = GetPropW(button, L"VibrancyHover") ? L"取消" :
+               std::to_wstring(std::clamp(updateProgress.load(), 0, 100)) + L"%";
+    else if (updateCheck.valid()) text = L"取消检查";
+    if (controlText(button) != text) SetWindowTextW(button, text.c_str());
+    if (bool(IsWindowEnabled(button)) != !cancelling) EnableWindow(button, !cancelling);
+}
 void SettingsWindow::pollUpdate() {
     using namespace std::chrono_literals;
-    auto button = GetDlgItem(content, CheckUpdate);
     if (updateCheck.valid() && updateCheck.wait_for(0ms) == std::future_status::ready) {
-        SetWindowTextW(button, L"检查更新");
         try {
             auto release = updateCheck.get();
+            refreshUpdateButton();
             if (updateCancel || !IsWindowVisible(window)) return;
             if (!release) {
                 openHelp(L"暂无更新", L"当前版本 " + std::wstring(Version) + L"。暂无可安装的较新正式版。");
@@ -1129,20 +1146,25 @@ void SettingsWindow::pollUpdate() {
             if (MessageBoxW(window, message.c_str(), L"确认安装更新", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
                 return;
             updateOffer = *release;
+            updateProgress = 0;
+            updateDownloading = true;
             updateDownload = std::async(std::launch::async, [this, offer = *release] {
-                return downloadUpdate(offer, updateCancel);
+                return downloadUpdate(offer, updateCancel, &updateProgress);
             });
-            SetWindowTextW(button, L"取消下载");
+            refreshUpdateButton();
         } catch (const std::exception &) {
+            updateDownloading = false;
+            refreshUpdateButton();
             if (!updateCancel && IsWindowVisible(window))
                 openHelp(L"检查更新失败", L"无法读取 GitHub 正式发布或找到可验证的安装包。请稍后重试。");
         }
     }
     if (updateDownload.valid() && updateDownload.wait_for(0ms) == std::future_status::ready) {
-        SetWindowTextW(button, L"检查更新");
+        updateDownloading = false;
         fs::path stage;
         try {
             stage = updateDownload.get();
+            refreshUpdateButton();
             if (updateCancel || !IsWindowVisible(window)) {
                 discardUpdate(stage);
                 return;
@@ -1155,6 +1177,7 @@ void SettingsWindow::pollUpdate() {
                 openHelp(L"无法安装更新", L"下载、校验或启动安装程序失败。请检查网络和目录权限后重试。");
         }
     }
+    refreshUpdateButton();
 }
 bool SettingsWindow::save() {
     auto newToken = normalizeDeepSeekCredential(utf8(controlText(deepSeekToken)));
@@ -1668,7 +1691,11 @@ LRESULT CALLBACK SettingsWindow::contentProcedure(HWND w, UINT msg, WPARAM wp, L
     if (!self)
         return DefWindowProcW(w, msg, wp, lp);
     switch (msg) {
+    case WM_MOUSELEAVE:
+        if(self->page==4)self->usageHover(-1,-1);
+        break;
     case WM_MOUSEMOVE:
+        if(self->page==4){TRACKMOUSEEVENT track{sizeof(track),TME_LEAVE,w,0};TrackMouseEvent(&track);}
         if (self->page == 4) self->usageHover(GET_X_LPARAM(lp) * 96.f / self->dpi, GET_Y_LPARAM(lp) * 96.f / self->dpi);
         break;
     case WM_LBUTTONUP:

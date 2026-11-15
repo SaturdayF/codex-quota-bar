@@ -336,12 +336,13 @@ void Overlay::showDetails(const fs::path &capture) {
         return;
     }
     float d = monitor.dpi / 96.f;
-    int width = int(372 * d), height = int(quotaCardHeight(state, settings,
+    int width = int(440 * d), height = int(quotaCardHeight(state, settings,
         int((monitor.work.bottom - monitor.work.top) / d) - 24, codexCard.history) * d);
     width = std::min(width, int(monitor.work.right - monitor.work.left));
     int left =
         std::clamp<LONG>(x, monitor.work.left, std::max(monitor.work.left, monitor.work.right - width));
     int top = std::max(int(monitor.work.top), y - height - int(12 * d));
+    app->refreshPopupUsage();
     bool simulated = app->testing || app->preview || !capture.empty();
     if (simulated && !detailFrost) detailFrost = previewFrost(width, height);
     detailBackdrop = configureBackdrop(details, settings.darkAppearance);
@@ -356,7 +357,7 @@ void Overlay::showDetails(const fs::path &capture) {
         if (simulated) paintFrost(g, glass, 16 * d, colors, detailFrost.get(), glass);
         else paintBackdrop(g, colors, detailBackdrop);
         g.ScaleTransform(d, d);
-        paintQuotaCard(g, width / d, height / d, state, settings, app->quotaHistory, codexCard, simulated);
+        paintQuotaCard(g, width / d, height / d, state, settings, app->quotaHistory, codexCard, simulated, &app->popupUsage);
     }
     if (!capture.empty())
         image.save(capture);
@@ -397,7 +398,7 @@ void Overlay::tick(const POINT *simulatedPointer) {
         }
         if (on && !dragging && now - hoverStart >= 225 && !IsWindowVisible(details))
             showDetails();
-    } else if (hover && now - lastInside > 180) {
+    } else if (hover && now - lastInside >= (kind == WidgetKind::Codex ? 1500 : 180)) {
         hover = false;
         hideDetails();
         render();
@@ -487,6 +488,12 @@ LRESULT CALLBACK Overlay::detailProcedure(HWND w, UINT msg, WPARAM wp, LPARAM lp
             } else { quotaCardAction(self->codexCard, hit.action, w, self->state); self->showDetails(); }
             return 0;
         }
+    }
+    if(self&&self->kind==WidgetKind::Codex&&(msg==WM_MOUSEMOVE||msg==WM_MOUSELEAVE)){
+        float d=self->monitor.dpi/96.f;
+        if(msg==WM_MOUSEMOVE){TRACKMOUSEEVENT track{sizeof(track),TME_LEAVE,w,0};TrackMouseEvent(&track);}
+        if(quotaCardHover(self->codexCard,msg==WM_MOUSELEAVE?-1:GET_X_LPARAM(lp)/d,msg==WM_MOUSELEAVE?-1:GET_Y_LPARAM(lp)/d))self->showDetails();
+        return 0;
     }
     if (self && self->kind == WidgetKind::Codex && msg == WM_MOUSEWHEEL) {
         self->codexCard.extraScroll = std::max(0, self->codexCard.extraScroll + (GET_WHEEL_DELTA_WPARAM(wp) < 0 ? 1 : -1));
@@ -604,6 +611,8 @@ Application::Application(bool previewMode, bool test) : preview(previewMode), te
     }
 }
 Application::~Application() {
+    popupUsageCancel = true;
+    if (popupUsageTask.valid()) popupUsageTask.wait();
     hub.stop();
     removeTrayIcon();
     stopping = true;
@@ -1067,6 +1076,9 @@ LRESULT CALLBACK Application::procedure(HWND w, UINT msg, WPARAM wp, LPARAM lp) 
             self->stop();
             return 0;
         }
+        self->pollPopupUsage();
+        for (const auto &overlay : self->overlays)
+            if (overlay->kind == WidgetKind::Codex && IsWindowVisible(overlay->details)) { self->refreshPopupUsage(); break; }
         self->checkSettingsFile();
         self->flushQuotaHistory();
         self->checkHarness();

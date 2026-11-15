@@ -103,6 +103,12 @@ struct Application {
     HubRuntime hub;
     HubSettings hubConfig;
     State state;
+    UsageReport popupUsage;
+    std::future<UsageReport> popupUsageTask;
+    std::atomic<bool> popupUsageCancel{false};
+    ULONGLONG popupUsageNextScan = 0;
+    void refreshPopupUsage();
+    void pollPopupUsage();
     QuotaHistory quotaHistory;
     std::future<void> quotaHistoryWrite;
     ULONGLONG quotaHistorySaveAt = 0;
@@ -186,6 +192,8 @@ struct SettingsWindow {
     bool layingOut = false;
     bool clearDeepSeekCredentials = false;
     std::atomic<bool> updateCancel{false};
+    std::atomic<int> updateProgress{0};
+    bool updateDownloading = false;
     std::future<std::optional<UpdateRelease>> updateCheck;
     std::future<fs::path> updateDownload;
     UsageReport usageReport;
@@ -202,6 +210,7 @@ struct SettingsWindow {
     void usageHover(float x, float y);
     std::optional<UpdateRelease> updateOffer;
     void beginUpdateCheck();
+    void refreshUpdateButton();
     void pollUpdate();
     int64_t previewStart = -1;
     int contentWidth = 700, contentHeight = 600;
@@ -257,4 +266,5 @@ struct SettingsWindow {
     static LRESULT CALLBACK helpProcedure(HWND, UINT, WPARAM, LPARAM);
 };
 int uiTests(const fs::path &dir);
+int updateUiTests(const fs::path &dir);
 } // namespace quota

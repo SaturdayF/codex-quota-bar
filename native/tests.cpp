@@ -558,7 +558,7 @@ static int runUiTests(const fs::path &dir, bool liveGlass) {
             overlay.showDetails(dir / wide(std::string("details-") + plan + "-monitor-" + std::to_string(i) + ".png"));
             RECT card{};
             GetWindowRect(overlay.details, &card);
-            check(card.bottom - card.top == int(270 * overlay.monitor.dpi / 96.f),
+            check(overlay.codexCard.windows.size() == 1 && overlay.codexCard.windows.front().id == "week" && card.bottom <= overlay.monitor.work.bottom,
                   std::string("weekly-only details omit 5h row ") + plan);
             overlay.hideDetails();
         }
@@ -593,8 +593,8 @@ static int runUiTests(const fs::path &dir, bool liveGlass) {
     hourOnly.showDetails(dir / L"details-manual-hour-only.png");
     RECT hourCard{};
     GetWindowRect(hourOnly.details, &hourCard);
-    check(hourCard.bottom - hourCard.top == int(270 * hourOnly.monitor.dpi / 96.f),
-          "hour-only details have one row even for a Pro account");
+    check(std::none_of(hourOnly.codexCard.windows.begin(), hourOnly.codexCard.windows.end(), [](const auto &w) { return w.id == "week"; }) && hourCard.bottom <= hourOnly.monitor.work.bottom,
+          "hour-only details expose only the hour quota and fit the work area");
     hourOnly.hideDetails();
     settings.command(222, BN_CLICKED);
     app.saved(settings.draft);
